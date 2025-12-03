@@ -11,7 +11,7 @@ return function(C, R, UI)
 
     local AMOUNT_TO_BRING       = 500
     local CONVEYOR_MAX_ACTIVE   = 10
-    local LIMIT_PER_NAME        = true
+    local LIMIT_PER_NAME        = false
     local COLLIDE_OFF_SEC       = 0.22
     local DROP_ABOVE_HEAD_STUDS = 10
     local FALLBACK_UP           = 4
