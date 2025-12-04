@@ -137,6 +137,20 @@ return function(C, R, UI)
         return false
     end
 
+    -- helper to ascend from a part to its tree model (small or big)
+    local function findTreeModelFromPart(part)
+        local current = part and part.Parent
+        while current do
+            if current:IsA("Model") then
+                if isSmallTreeModel(current) or isBigTreeName(current.Name) then
+                    return current
+                end
+            end
+            current = current.Parent
+        end
+        return nil
+    end
+
     local function attrBucket(treeModel)
         local hr = treeModel and treeModel:FindFirstChild("HitRegisters")
         return (hr and hr:IsA("Instance")) and hr or treeModel
@@ -161,137 +175,95 @@ return function(C, R, UI)
         return tostring(nextN) .. "_" .. TUNE.UID_SUFFIX
     end
 
-    -- small-tree only radius collector
+    --------------------------------------------------------------------
+    -- TREE COLLECTION VIA SPATIAL QUERY
+    --------------------------------------------------------------------
+
+    -- Small-tree radius collector using Workspace:GetPartBoundsInRadius
     local function collectSmallTreesInRadius(roots, origin, radius)
-        local out, n = {}, 0
-
-        local function walk(node)
-            if not node then return end
-            if node:IsA("Model") and isSmallTreeModel(node) then
-                local trunk = bestTreeHitPart(node)
-                if trunk then
-                    local d = (trunk.Position - origin).Magnitude
-                    if d <= radius then
-                        n = n + 1
-                        out[n] = node
-                    end
-                end
-            end
-            local ok, children = pcall(node.GetChildren, node)
-            if ok and children then
-                for _, ch in ipairs(children) do
-                    walk(ch)
-                end
-            end
-        end
-
-        for _, root in ipairs(roots) do
-            walk(root)
-        end
-
-        table.sort(out, function(a, b)
-            local pa, pb = bestTreeHitPart(a), bestTreeHitPart(b)
-            local da = pa and (pa.Position - origin).Magnitude or math.huge
-            local db = pb and (pb.Position - origin).Magnitude or math.huge
-            if da == db then return (a.Name or "") < (b.Name or "") end
-            return da < db
-        end)
-
-        return out
-    end
-
-    -- big-tree helpers + cache
-    local bigTreeCache = { list = {}, lastBuild = 0 }
-
-    local function collectBigTreesInRadius(roots, origin, radius)
-        local out, n = {}, 0
-
-        local function walk(node)
-            if not node then return end
-            if node:IsA("Model") and isBigTreeName(node.Name) then
-                local trunk = bestTreeHitPart(node)
-                if trunk then
-                    local d = (trunk.Position - origin).Magnitude
-                    if d <= radius then
-                        n = n + 1
-                        out[n] = node
-                    end
-                end
-            end
-            local ok, children = pcall(node.GetChildren, node)
-            if ok and children then
-                for _, ch in ipairs(children) do
-                    walk(ch)
-                end
-            end
-        end
-
-        for _, root in ipairs(roots) do
-            walk(root)
-        end
-
-        table.sort(out, function(a, b)
-            local pa, pb = bestTreeHitPart(a), bestTreeHitPart(b)
-            local da = pa and (pa.Position - origin).Magnitude or math.huge
-            local db = pb and (pb.Position - origin).Magnitude or math.huge
-            if da == db then return (a.Name or "") < (b.Name or "") end
-            return da < db
-        end)
-
-        return out
-    end
-
-    local function rebuildBigTreeCache()
-        local roots = { WS, RS:FindFirstChild("Assets"), RS:FindFirstChild("CutsceneSets") }
         local out = {}
-        local function walk(node)
-            if not node then return end
-            if node:IsA("Model") and isBigTreeName(node.Name) then
-                local trunk = bestTreeHitPart(node)
-                if trunk then
-                    out[#out + 1] = node
-                end
-            end
-            local ok, children = pcall(node.GetChildren, node)
-            if ok and children then
-                for _, ch in ipairs(children) do
-                    walk(ch)
+        if not origin or not radius or radius <= 0 then return out end
+
+        local includeRoots = {}
+        if roots then
+            for _, r in ipairs(roots) do
+                if r then
+                    includeRoots[#includeRoots + 1] = r
                 end
             end
         end
-        for _, root in ipairs(roots) do
-            walk(root)
+        if #includeRoots == 0 then
+            includeRoots[1] = WS
         end
-        bigTreeCache.list = out
-        bigTreeCache.lastBuild = os.clock()
+
+        local params = OverlapParams.new()
+        params.FilterType = Enum.RaycastFilterType.Include
+        params.FilterDescendantsInstances = includeRoots
+
+        local parts = WS:GetPartBoundsInRadius(origin, radius, params)
+        if not parts then return out end
+
+        local seen = {}
+
+        for _, part in ipairs(parts) do
+            if part and part:IsA("BasePart") then
+                local tree = findTreeModelFromPart(part)
+                if tree and tree.Parent and isSmallTreeModel(tree) and not seen[tree] then
+                    seen[tree] = true
+                    out[#out + 1] = tree
+                end
+            end
+        end
+
+        table.sort(out, function(a, b)
+            local pa, pb = bestTreeHitPart(a), bestTreeHitPart(b)
+            local da = pa and (pa.Position - origin).Magnitude or math.huge
+            local db = pb and (pb.Position - origin).Magnitude or math.huge
+            if da == db then return (a.Name or "") < (b.Name or "") end
+            return da < db
+        end)
+
+        return out
     end
 
+    -- Big-tree collector using Workspace:GetPartBoundsInRadius
     local function getBigTreesInRadius(origin, radius)
         local out = {}
+        if not origin or not radius or radius <= 0 then return out end
 
-        local function addFrom(source)
-            for _, m in ipairs(source) do
-                if m and m.Parent then
-                    local trunk = bestTreeHitPart(m)
-                    if trunk then
-                        local d = (trunk.Position - origin).Magnitude
-                        if d <= radius then
-                            out[#out + 1] = m
-                        end
-                    end
-                end
+        local roots = {
+            WS,
+            RS:FindFirstChild("Assets"),
+            RS:FindFirstChild("CutsceneSets")
+        }
+
+        local includeRoots = {}
+        for _, r in ipairs(roots) do
+            if r then
+                includeRoots[#includeRoots + 1] = r
             end
         end
+        if #includeRoots == 0 then
+            includeRoots[1] = WS
+        end
 
-        if C.State.Toggles.BigTreeCaching then
-            if not bigTreeCache.list or #bigTreeCache.list == 0 then
-                rebuildBigTreeCache()
+        local params = OverlapParams.new()
+        params.FilterType = Enum.RaycastFilterType.Include
+        params.FilterDescendantsInstances = includeRoots
+
+        local parts = WS:GetPartBoundsInRadius(origin, radius, params)
+        if not parts then return out end
+
+        local seen = {}
+
+        for _, part in ipairs(parts) do
+            if part and part:IsA("BasePart") then
+                local tree = findTreeModelFromPart(part)
+                if tree and tree.Parent and isBigTreeName(tree.Name) and not seen[tree] then
+                    seen[tree] = true
+                    out[#out + 1] = tree
+                end
             end
-            addFrom(bigTreeCache.list or {})
-        else
-            local roots = { WS, RS:FindFirstChild("Assets"), RS:FindFirstChild("CutsceneSets") }
-            local dynamic = collectBigTreesInRadius(roots, origin, radius)
-            addFrom(dynamic)
         end
 
         table.sort(out, function(a, b)
@@ -436,22 +408,39 @@ return function(C, R, UI)
         end
     end
 
+    --------------------------------------------------------------------
+    -- CHARACTER COLLECTION VIA SPATIAL QUERY
+    --------------------------------------------------------------------
+
     local function collectCharactersInRadius(charsFolder, origin, radius)
         local out = {}
-        if not charsFolder then return out end
-        for _, mdl in ipairs(charsFolder:GetChildren()) do
-            repeat
-                if not mdl:IsA("Model") then break end
-                local n = mdl.Name or ""
-                local nameLower = n:lower()
-                if string.find(nameLower, "horse", 1, true) then break end
-                if n == "Deer" or n == "Ram" or n == "Owl" or n == "Pelt Trader" or n == "Furniture Trader" or n == "Horse" then break end
-                local distPart = charDistancePart(mdl)
-                if not distPart then break end
-                if (distPart.Position - origin).Magnitude > radius then break end
-                out[#out + 1] = mdl
-            until true
+        if not charsFolder or not origin or not radius or radius <= 0 then return out end
+
+        local params = OverlapParams.new()
+        params.FilterType = Enum.RaycastFilterType.Include
+        params.FilterDescendantsInstances = { charsFolder }
+
+        local parts = WS:GetPartBoundsInRadius(origin, radius, params)
+        if not parts then return out end
+
+        local seen = {}
+
+        for _, part in ipairs(parts) do
+            if part and part:IsA("BasePart") then
+                local mdl = modelOf(part)
+                if mdl and isCharacterModel(mdl) and not seen[mdl] then
+                    repeat
+                        local n = mdl.Name or ""
+                        local nameLower = n:lower()
+                        if string.find(nameLower, "horse", 1, true) then break end
+                        if n == "Deer" or n == "Ram" or n == "Owl" or n == "Pelt Trader" or n == "Furniture Trader" or n == "Horse" then break end
+                        seen[mdl] = true
+                        out[#out + 1] = mdl
+                    until true
+                end
+            end
         end
+
         if TUNE.CHAR_SORT then
             table.sort(out, function(a, b)
                 local pa, pb = charDistancePart(a), charDistancePart(b)
@@ -461,6 +450,7 @@ return function(C, R, UI)
                 return da < db
             end)
         end
+
         return out
     end
 
@@ -710,7 +700,8 @@ return function(C, R, UI)
                 else
                     local origin = (getRayOriginFromChar(ch) or hrp.Position)
                     local radius = tonumber(C.State.AuraRadius) or 150
-                    local targets = collectCharactersInRadius(WS:FindFirstChild("Characters"), origin, radius)
+                    local charsFolder = WS:FindFirstChild("Characters")
+                    local targets = collectCharactersInRadius(charsFolder, origin, radius)
                     if #targets > 0 then
                         local hopsChar = tonumber(TUNE.RAY_MAX_HOPS_CHAR) or 0
                         local filtered = {}
@@ -1246,18 +1237,6 @@ return function(C, R, UI)
             else
                 C.State.Toggles.BigTreeAura = false
                 stopBigTreeAura()
-            end
-        end
-    })
-
-    CombatTab:Toggle({
-        Title = "Big tree caching",
-        Value = C.State.Toggles.BigTreeCaching or false,
-        Callback = function(on)
-            C.State.Toggles.BigTreeCaching = on
-            if not on then
-                bigTreeCache.list = {}
-                bigTreeCache.lastBuild = 0
             end
         end
     })
