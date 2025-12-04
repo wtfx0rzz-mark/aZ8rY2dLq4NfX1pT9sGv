@@ -1031,9 +1031,6 @@ return function(C, R, UI)
         end
         enableNoStreamingPause()
 
-        --========================
-        -- Sapling helpers (drop / plant all)
-        --========================
         local function itemsFolder() return WS:FindFirstChild("Items") end
         local function collectSaplingsSnapshot()
             local items = itemsFolder(); if not items then return {} end
@@ -1159,7 +1156,6 @@ return function(C, R, UI)
             end
         end
 
-        -- NEW: buttons to expose sapling actions on the Auto tab
         tab:Button({
             Title = "Drop All Saplings At Feet",
             Callback = function()
@@ -1175,7 +1171,7 @@ return function(C, R, UI)
         })
 
         ----------------------------------------------------------------
-        -- Chest finder
+        -- Chest finder (merged: per-user open attr, LootTable priority, diamond logic)
         ----------------------------------------------------------------
 
         local chestFinderOn = false
@@ -1232,6 +1228,9 @@ return function(C, R, UI)
             end
 
             local chests = {}
+            local diamondModel = nil
+            local DIAMOND_PAIR_DIST   = 9.8
+            local DIAMOND_PAIR_TOL    = 2.0
             local EXCLUDE_NAMES = { ["Stronghold Diamond Chest"] = true }
 
             local function isChestName2(n)
@@ -1246,6 +1245,7 @@ return function(C, R, UI)
                 if type(n) ~= "string" then return false end
                 return (n == "Halloween Chest") or (n:match("^Halloween Chest%d+$") ~= nil)
             end
+
             local function getChestLootTable(m)
                 if not m then return nil end
                 local ok, attr = pcall(function() return m:GetAttribute("LootTable") end)
@@ -1268,6 +1268,7 @@ return function(C, R, UI)
                 end
                 return 0
             end
+
             local function chestOpened2(m)
                 if not m then return false end
                 return m:GetAttribute(UID_OPEN_KEY) == true
@@ -1309,18 +1310,51 @@ return function(C, R, UI)
                         end
                     end)
                 else
-                    rec.pos     = pos
-                    rec.opened  = chestOpened2(m)
+                    rec.pos      = pos
+                    rec.opened   = chestOpened2(m)
                     rec.excluded = excluded
-                    rec.prio    = prio
+                    rec.prio     = prio
+                end
+                if m.Name == "Stronghold Diamond Chest" then
+                    diamondModel = m
                 end
             end
 
             local function initialScan()
                 chests = {}
+                diamondModel = nil
                 local items = itemsFolder2(); if not items then return end
                 for _,m in ipairs(items:GetChildren()) do
                     markChest(m)
+                end
+            end
+
+            local function applyDiamondNeighborExclusion()
+                if not diamondModel then return end
+                local dpos = chestPos(diamondModel); if not dpos then return end
+                for m,r in pairs(chests) do
+                    if m ~= diamondModel and not r.excluded and r.pos then
+                        local dist = (r.pos - dpos).Magnitude
+                        if math.abs(dist - DIAMOND_PAIR_DIST) <= DIAMOND_PAIR_TOL then
+                            r.excluded = true
+                        end
+                    end
+                end
+            end
+
+            local function excludeNearestToDiamond()
+                if not diamondModel then return end
+                local dpos = chestPos(diamondModel); if not dpos then return end
+                local bestM, bestD = nil, math.huge
+                for m,r in pairs(chests) do
+                    if m ~= diamondModel and m and m.Parent and r.pos then
+                        local dist = (r.pos - dpos).Magnitude
+                        if dist < bestD then bestD, bestM = dist, m end
+                    end
+                end
+                if bestM then
+                    local rec = chests[bestM]
+                    if rec then rec.excluded = true end
                 end
             end
 
@@ -1364,43 +1398,96 @@ return function(C, R, UI)
                 return out
             end
 
-            local itemsConn
-
-            local function rescanChests()
-                initialScan()
+            local FRONT_DIST = 4.0
+            local function hingeBackCenter(m)
+                local pts = {}
+                for _,d in ipairs(m:GetDescendants()) do
+                    if d.Name == "Hinge" then
+                        if d:IsA("BasePart") then
+                            table.insert(pts, d.Position)
+                        elseif d:IsA("Model") then
+                            local mp = mainPart2(d)
+                            if mp then table.insert(pts, mp.Position) end
+                        end
+                    end
+                end
+                if #pts == 0 then return nil end
+                local sum = Vector3.new(0,0,0)
+                for _,p in ipairs(pts) do sum += p end
+                return sum / #pts
             end
 
-            local function enable()
+            local function teleportNearChest(m)
+                local mp = mainPart2(m); if not mp then return end
+                local chestCenter = mp.Position
+                local hingePos = hingeBackCenter(m)
+                local dir
+                if hingePos then
+                    dir = (chestCenter - hingePos)
+                    if dir.Magnitude < 1e-3 then dir = -mp.CFrame.LookVector end
+                    dir = dir.Unit
+                else
+                    local root = hrp()
+                    if root then
+                        local vec = root.Position - chestCenter
+                        if vec.Magnitude > 0.001 then
+                            dir = (-vec).Unit
+                        else
+                            dir = (-mp.CFrame.LookVector).Unit
+                        end
+                    else
+                        dir = (-mp.CFrame.LookVector).Unit
+                    end
+                end
+                local desired = chestCenter + dir * FRONT_DIST
+                local ground = groundBelow3(desired)
+                local standPos = Vector3.new(desired.X, ground.Y + 2.5, desired.Z)
+                teleportSticky(CFrame.new(standPos, chestCenter), true)
+            end
+
+            local itemsConnAdded, itemsConnRemoved, heartbeatConn
+
+            local function refreshButton()
+                local list = unopenedList()
+                nextChestBtn.Visible = chestFinderOn and (#list > 0)
+                if #list > 0 then
+                    nextChestBtn.Text = ("Nearest Unopened Chest (%d)"):format(#list)
+                else
+                    nextChestBtn.Text = "Nearest Unopened Chest"
+                end
+            end
+
+            enableChestFinder = function()
                 if chestFinderOn then return end
                 chestFinderOn = true
-                nextChestBtn.Visible = true
-                rescanChests()
-                if itemsConn then itemsConn:Disconnect() itemsConn = nil end
+                nextChestBtn.Visible = false
+                initialScan()
+                applyDiamondNeighborExclusion()
+                excludeNearestToDiamond()
                 local items = itemsFolder2()
                 if items then
-                    itemsConn = items.DescendantAdded:Connect(function(inst)
-                        local m = inst
-                        if not m:IsA("Model") then
-                            m = inst:FindFirstAncestorOfClass("Model")
-                        end
-                        if m then
-                            markChest(m)
-                        end
+                    itemsConnAdded = items.ChildAdded:Connect(function(c)
+                        markChest(c)
+                        applyDiamondNeighborExclusion()
+                        excludeNearestToDiamond()
+                    end)
+                    itemsConnRemoved = items.ChildRemoved:Connect(function(c)
+                        chests[c] = nil
                     end)
                 end
+                heartbeatConn = Run.Heartbeat:Connect(function()
+                    refreshButton()
+                end)
+                refreshButton()
             end
 
-            local function disable()
+            disableChestFinder = function()
                 chestFinderOn = false
+                if heartbeatConn then heartbeatConn:Disconnect(); heartbeatConn = nil end
+                if itemsConnAdded then itemsConnAdded:Disconnect(); itemsConnAdded = nil end
+                if itemsConnRemoved then itemsConnRemoved:Disconnect(); itemsConnRemoved = nil end
                 nextChestBtn.Visible = false
-                if itemsConn then
-                    itemsConn:Disconnect()
-                    itemsConn = nil
-                end
             end
-
-            enableChestFinder  = enable
-            disableChestFinder = disable
 
             nextChestBtn.MouseButton1Click:Connect(function()
                 if not chestFinderOn then return end
@@ -1417,14 +1504,12 @@ return function(C, R, UI)
                 end
 
                 local rec = list[1]
-                local pos = rec.pos
-                if not pos then
-                    return
-                end
+                teleportNearChest(rec.m)
 
-                local groundPos = groundBelow3(pos)
-                local dest = Vector3.new(groundPos.X, groundPos.Y + 3, groundPos.Z)
-                teleportWithDive(CFrame.new(dest, pos))
+                task.delay(0.5, function()
+                    if not chestFinderOn then return end
+                    refreshButton()
+                end)
             end)
         end
     end
