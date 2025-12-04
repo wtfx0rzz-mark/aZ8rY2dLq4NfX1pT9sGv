@@ -864,6 +864,7 @@ return function(C, R, UI)
             if hideConn then hideConn:Disconnect() hideConn = nil end
         end
         tab:Toggle({ Title = "Hide Big Trees (Local)", Value = false, Callback = function(state) if state then enableHideBigTrees() else disableHideBigTrees() end end })
+
         local COIN_RADIUS      = 20
         local COIN_INTERVAL    = 0.12
         local COIN_TTL         = 1.0
@@ -1163,6 +1164,7 @@ return function(C, R, UI)
                 end
             end
         })
+
         do
             local nextChestBtn = stack:FindFirstChild("NextChestEdge") or (function()
                 local b = Instance.new("TextButton")
@@ -1180,6 +1182,7 @@ return function(C, R, UI)
                 local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 8); c.Parent = b
                 return b
             end)()
+
             local function itemsFolder2() return WS:FindFirstChild("Items") end
             local function mainPart2(m)
                 if not m then return nil end
@@ -1200,12 +1203,10 @@ return function(C, R, UI)
                 hit = WS:Raycast(pos + Vector3.new(0, 200, 0), Vector3.new(0, -1000, 0), params)
                 return (hit and hit.Position) or pos
             end
+
             local chests = {}
-            local diamondModel = nil
-            local DIAMOND_PAIR_DIST   = 9.8
-            local DIAMOND_PAIR_TOL    = 2.0
-            local PRIORITY_BONUS      = 8.0
             local EXCLUDE_NAMES = { ["Stronghold Diamond Chest"] = true }
+
             local function isChestName2(n)
                 if type(n) ~= "string" then return false end
                 return n:match("Chest%d*$") ~= nil or n:match("Chest$") ~= nil
@@ -1250,6 +1251,7 @@ return function(C, R, UI)
                 local ok, cf = pcall(function() return m:GetPivot() end)
                 return ok and cf.Position or nil
             end
+
             local function markChest(m)
                 if not (m and m:IsA("Model")) then return end
                 if not isChestName2(m.Name) then return end
@@ -1271,35 +1273,138 @@ return function(C, R, UI)
                             local r = chests[m]; if r then r.prio = chestPriority(m) end
                         end)
                     end
-                    m:GetPropertyChangedSignal("PrimaryPart"):Connect(function() local r=chests[m]; if r then r.pos = chestPos(m) or r.pos end end)
-                    m.AncestryChanged:Connect(function(_, parent) if not parent then chests[m] = nil end end)
+                    m:GetPropertyChangedSignal("PrimaryPart"):Connect(function()
+                        local r = chests[m]; if r then r.pos = chestPos(m) or r.pos end
+                    end)
+                    m.AncestryChanged:Connect(function(_, parent)
+                        if not parent then
+                            chests[m] = nil
+                        end
+                    end)
                 else
-                    rec.pos = pos
-                    rec.opened = chestOpened2(m)
+                    rec.pos     = pos
+                    rec.opened  = chestOpened2(m)
                     rec.excluded = excluded
-                    rec.prio = prio
+                    rec.prio    = prio
                 end
-                if m.Name == "Stronghold Diamond Chest" then diamondModel = m end
             end
+
             local function initialScan()
                 chests = {}
-                diamondModel = nil
                 local items = itemsFolder2(); if not items then return end
-                for _,m in ipairs(items:GetChildren()) do markChest(m) end
+                for _,m in ipairs(items:GetChildren()) do
+                    markChest(m)
+                end
             end
-            local function applyDiamondNeighborExclusion()
-                if not diamondModel then return end
-                local dpos = chestPos(diamondModel); if not dpos then return end
+
+            local function updateChestRecord(m)
+                local r = chests[m]; if not r then return end
+                r.pos = chestPos(m) or r.pos
+                r.opened = chestOpened2(m)
+                if m and m.Parent then
+                    r.excluded = EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name) or r.excluded or false
+                end
+                r.prio = chestPriority(m)
+            end
+
+            local function unopenedList()
+                local out = {}
+                local root = hrp()
+                local rootPos = root and root.Position or nil
                 for m,r in pairs(chests) do
-                    if m ~= diamondModel and not r.excluded then
-                        local dist = (r.pos - dpos).Magnitude
-                        if math.abs(dist - DIAMOND_PAIR_DIST) <= DIAMOND_PAIR_TOL then
-                            r.excluded = true
+                    if m and m.Parent then
+                        updateChestRecord(m)
+                        if not r.opened and not r.excluded then
+                            local pos = r.pos or chestPos(m)
+                            if pos then
+                                local dist = rootPos and (pos - rootPos).Magnitude or math.huge
+                                out[#out+1] = {
+                                    m    = m,
+                                    pos  = pos,
+                                    prio = r.prio or 0,
+                                    dist = dist,
+                                }
+                            end
                         end
                     end
                 end
-            end
-            local function excludeNearestToDiamond()
-                -- no-op for now
+                table.sort(out, function(a, b)
+                    if a.prio ~= b.prio then
+                        return a.prio > b.prio
+                    end
+                    return a.dist < b.dist
+                end)
+                return out
             end
 
+            local itemsConn
+
+            local function rescanChests()
+                initialScan()
+            end
+
+            local function enable()
+                if chestFinderOn then return end
+                chestFinderOn = true
+                nextChestBtn.Visible = true
+                rescanChests()
+                if itemsConn then itemsConn:Disconnect() itemsConn = nil end
+                local items = itemsFolder2()
+                if items then
+                    itemsConn = items.DescendantAdded:Connect(function(inst)
+                        local m = inst
+                        if not m:IsA("Model") then
+                            m = inst:FindFirstAncestorOfClass("Model")
+                        end
+                        if m then
+                            markChest(m)
+                        end
+                    end)
+                end
+            end
+
+            local function disable()
+                chestFinderOn = false
+                nextChestBtn.Visible = false
+                if itemsConn then
+                    itemsConn:Disconnect()
+                    itemsConn = nil
+                end
+            end
+
+            enableChestFinder  = enable
+            disableChestFinder = disable
+
+            nextChestBtn.MouseButton1Click:Connect(function()
+                if not chestFinderOn then return end
+                local list = unopenedList()
+                if #list == 0 then
+                    local old = nextChestBtn.Text
+                    nextChestBtn.Text = "No Unopened Chests"
+                    task.delay(1.5, function()
+                        if nextChestBtn then
+                            nextChestBtn.Text = old
+                        end
+                    end)
+                    return
+                end
+
+                local rec = list[1]
+                local pos = rec.pos
+                if not pos then
+                    return
+                end
+
+                local groundPos = groundBelow3(pos)
+                local dest = Vector3.new(groundPos.X, groundPos.Y + 3, groundPos.Z)
+                teleportWithDive(CFrame.new(dest, pos))
+            end)
+        end
+    end
+
+    if not R or R.RunNow ~= false then
+        run()
+    else
+        R.Run = run
+    end
+end
