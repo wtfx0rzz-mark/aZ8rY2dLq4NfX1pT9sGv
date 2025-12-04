@@ -49,7 +49,6 @@ return function(C, R, UI)
         local TELEPORT_UP_NUDGE = 0.05
         local SAFE_DROP_UP      = 4.0
 
-        -- per-user chest-open attribute key
         local UID_OPEN_KEY = tostring(lp.UserId) .. "Opened"
 
         local STREAM_TIMEOUT    = 6.0
@@ -300,7 +299,6 @@ return function(C, R, UI)
             return nil
         end
 
-        -- campfire teleport clamped so you are at/above campfire height
         local function campfireTeleportCF()
             local fire = resolveCampfireModel(); if not fire then return nil end
             local center = fireCenterPart(fire); if not center then return fire:GetPivot() end
@@ -644,7 +642,6 @@ return function(C, R, UI)
             promptDurations[prompt] = nil
         end
 
-        -- tag chests opened by THIS player when a prompt fires
         local function tagChestFromPrompt(prompt)
             if not prompt then return end
             local node = prompt
@@ -675,7 +672,6 @@ return function(C, R, UI)
             trigConn   = PPS.PromptTriggered:Connect(function(prompt, player)
                 if player ~= lp or shouldSkipPrompt(prompt) then return end
 
-                -- mark chest as opened by this user
                 tagChestFromPrompt(prompt)
 
                 pcall(function() prompt.Enabled = false end)
@@ -1208,6 +1204,7 @@ return function(C, R, UI)
             local diamondModel = nil
             local DIAMOND_PAIR_DIST   = 9.8
             local DIAMOND_PAIR_TOL    = 2.0
+            local PRIORITY_BONUS      = 8.0
             local EXCLUDE_NAMES = { ["Stronghold Diamond Chest"] = true }
             local function isChestName2(n)
                 if type(n) ~= "string" then return false end
@@ -1221,7 +1218,28 @@ return function(C, R, UI)
                 if type(n) ~= "string" then return false end
                 return (n == "Halloween Chest") or (n:match("^Halloween Chest%d+$") ~= nil)
             end
-            -- chest opened for THIS user only
+            local function getChestLootTable(m)
+                if not m then return nil end
+                local ok, attr = pcall(function() return m:GetAttribute("LootTable") end)
+                if ok and type(attr) == "string" then
+                    return attr
+                end
+                local ltObj = m:FindFirstChild("LootTable")
+                if ltObj and ltObj:IsA("StringValue") then
+                    return ltObj.Value
+                end
+                return nil
+            end
+            local function chestPriority(m)
+                local lt = getChestLootTable(m)
+                if type(lt) ~= "string" then return 0 end
+                local num = lt:match("^ItemChest(%d+)$")
+                if num then
+                    local n = tonumber(num)
+                    if n then return n end
+                end
+                return 0
+            end
             local function chestOpened2(m)
                 if not m then return false end
                 return m:GetAttribute(UID_OPEN_KEY) == true
@@ -1237,18 +1255,29 @@ return function(C, R, UI)
                 if not isChestName2(m.Name) then return end
                 local pos = chestPos(m); if not pos then return end
                 local excluded = EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name) or false
+                local prio = chestPriority(m)
                 local rec = chests[m]
                 if not rec then
-                    chests[m] = { pos = pos, opened = chestOpened2(m), excluded = excluded }
+                    chests[m] = { pos = pos, opened = chestOpened2(m), excluded = excluded, prio = prio }
                     m:GetAttributeChangedSignal(UID_OPEN_KEY):Connect(function()
                         local r = chests[m]; if r then r.opened = chestOpened2(m) end
                     end)
+                    m:GetAttributeChangedSignal("LootTable"):Connect(function()
+                        local r = chests[m]; if r then r.prio = chestPriority(m) end
+                    end)
+                    local ltChild = m:FindFirstChild("LootTable")
+                    if ltChild and ltChild:IsA("StringValue") then
+                        ltChild:GetPropertyChangedSignal("Value"):Connect(function()
+                            local r = chests[m]; if r then r.prio = chestPriority(m) end
+                        end)
+                    end
                     m:GetPropertyChangedSignal("PrimaryPart"):Connect(function() local r=chests[m]; if r then r.pos = chestPos(m) or r.pos end end)
                     m.AncestryChanged:Connect(function(_, parent) if not parent then chests[m] = nil end end)
                 else
                     rec.pos = pos
                     rec.opened = chestOpened2(m)
                     rec.excluded = excluded
+                    rec.prio = prio
                 end
                 if m.Name == "Stronghold Diamond Chest" then diamondModel = m end
             end
@@ -1270,509 +1299,5 @@ return function(C, R, UI)
                     end
                 end
             end
-            local function excludeNearestToDiamond()
-                if not diamondModel then return end
-                local dpos = chestPos(diamondModel); if not dpos then return end
-                local bestM, bestD = nil, math.huge
-                for m,r in pairs(chests) do
-                    if m ~= diamondModel and m and m.Parent then
-                        local dist = (r.pos - dpos).Magnitude
-                        if dist < bestD then bestD, bestM = dist, m end
-                    end
-                end
-                if bestM then
-                    local rec = chests[bestM]
-                    if rec then rec.excluded = true end
-                end
+            private function excludeNearestToDiamond()
             end
-            local function updateChestRecord(m)
-                local r = chests[m]; if not r then return end
-                r.pos = chestPos(m) or r.pos
-                r.opened = chestOpened2(m)
-                if m and m.Parent then
-                    r.excluded = EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name) or r.excluded or false
-                end
-            end
-            local function unopenedList()
-                local list = {}
-                for m,r in pairs(chests) do
-                    if m and m.Parent and not r.opened and not r.excluded then
-                        list[#list+1] = {m=m, pos=r.pos}
-                    end
-                end
-                table.sort(list, function(a,b)
-                    local rp = hrp()
-                    if not rp then return false end
-                    local da = (a.pos - rp.Position).Magnitude
-                    local db = (b.pos - rp.Position).Magnitude
-                    return da < db
-                end)
-                return list
-            end
-            local function hingeBackCenter(m)
-                local pts = {}
-                for _,d in ipairs(m:GetDescendants()) do
-                    if d.Name == "Hinge" then
-                        if d:IsA("BasePart") then
-                            table.insert(pts, d.Position)
-                        elseif d:IsA("Model") then
-                            local mp = mainPart2(d)
-                            if mp then table.insert(pts, mp.Position) end
-                        end
-                    end
-                end
-                if #pts == 0 then return nil end
-                local sum = Vector3.new(0,0,0)
-                for _,p in ipairs(pts) do sum += p end
-                return sum / #pts
-            end
-            local FRONT_DIST = 4.0
-            local function teleportNearChest(m)
-                local mp = mainPart2(m); if not mp then return end
-                local chestCenter = mp.Position
-                local hingePos = hingeBackCenter(m)
-                local dir
-                if hingePos then
-                    dir = (chestCenter - hingePos)
-                    if dir.Magnitude < 1e-3 then dir = -mp.CFrame.LookVector end
-                    dir = dir.Unit
-                else
-                    local root = hrp()
-                    if root then
-                        local vec = root.Position - chestCenter
-                        if vec.Magnitude > 0.001 then
-                            dir = (-vec).Unit
-                        else
-                            dir = (-mp.CFrame.LookVector).Unit
-                        end
-                    else
-                        dir = (-mp.CFrame.LookVector).Unit
-                    end
-                end
-                local desired = chestCenter + dir * FRONT_DIST
-                local ground = groundBelow3(desired)
-                local standPos = Vector3.new(desired.X, ground.Y + 2.5, desired.Z)
-                teleportSticky(CFrame.new(standPos, chestCenter), true)
-            end
-            local cfHB, childAdd, childRem
-            nextChestBtn.MouseButton1Click:Connect(function()
-                local list = unopenedList()
-                if #list == 0 then
-                    nextChestBtn.Text = "Nearest Unopened Chest"
-                    nextChestBtn.Visible = false
-                    return
-                end
-                local target = list[1]
-                teleportNearChest(target.m)
-                task.delay(0.5, function()
-                    local l2 = unopenedList()
-                    nextChestBtn.Visible = chestFinderOn and (#l2 > 0)
-                    if #l2 > 0 then
-                        nextChestBtn.Text = ("Nearest Unopened Chest (%d)"):format(#l2)
-                    else
-                        nextChestBtn.Text = "Nearest Unopened Chest"
-                    end
-                end)
-            end)
-            local function refreshButton()
-                local list = unopenedList()
-                nextChestBtn.Visible = chestFinderOn and (#list > 0)
-                if #list > 0 then
-                    nextChestBtn.Text = ("Nearest Unopened Chest (%d)"):format(#list)
-                else
-                    nextChestBtn.Text = "Nearest Unopened Chest"
-                end
-            end
-            enableChestFinder = function()
-                if chestFinderOn then return end
-                chestFinderOn = true
-                nextChestBtn.Visible = false
-                initialScan()
-                applyDiamondNeighborExclusion()
-                excludeNearestToDiamond()
-                local items = itemsFolder2()
-                if items then
-                    childAdd = items.ChildAdded:Connect(function(c)
-                        markChest(c)
-                        applyDiamondNeighborExclusion()
-                        excludeNearestToDiamond()
-                    end)
-                    childRem = items.ChildRemoved:Connect(function(c) chests[c] = nil end)
-                end
-                cfHB = Run.Heartbeat:Connect(function()
-                    for m,_ in pairs(chests) do if m and m.Parent then updateChestRecord(m) end end
-                    refreshButton()
-                end)
-                refreshButton()
-            end
-            disableChestFinder = function()
-                chestFinderOn = false
-                if cfHB then cfHB:Disconnect() cfHB = nil end
-                if childAdd then childAdd:Disconnect() childAdd = nil end
-                if childRem then childRem:Disconnect() childRem = nil end
-                nextChestBtn.Visible = false
-            end
-        end
-
-        do
-            local deleteOn = false
-            local addConn, remConn, sweepHB
-            local tracked   = setmetatable({}, { __mode = "k" })
-            local deleteExcl = setmetatable({}, { __mode = "k" })
-            local DIAMOND_PAIR_DIST = 9.8
-            local DIAMOND_PAIR_TOL  = 2.0
-            local function isChestName3(n)
-                if type(n) ~= "string" then return false end
-                return n:match("Chest%d*$") ~= nil or n:match("Chest$") ~= nil
-            end
-            local function chestOpened3(m)
-                if not m then return false end
-                return m:GetAttribute(UID_OPEN_KEY) == true
-            end
-            local function safeHideThenDestroy(m)
-                if not (m and m.Parent) then return end
-                for _,d in ipairs(m:GetDescendants()) do
-                    if d:IsA("ProximityPrompt") then
-                        pcall(function() d.Enabled = false end)
-                    elseif d:IsA("ClickDetector") then
-                        pcall(function() d.MaxActivationDistance = 0 end)
-                    elseif d:IsA("BasePart") then
-                        pcall(function()
-                            d.CanCollide = false
-                            d.CanTouch   = false
-                            d.CanQuery   = false
-                            d.Anchored   = true
-                            d.Transparency = 1
-                        end)
-                    end
-                end
-                task.delay((TRIGGER_COOLDOWN or 0.4) + 0.25, function()
-                    if m and m.Parent then pcall(function() m:Destroy() end) end
-                end)
-            end
-            local function locateDiamondAndNeighbor()
-                deleteExcl = setmetatable({}, { __mode = "k" })
-                local items = WS:FindFirstChild("Items"); if not items then return end
-                local diamond, dpos = nil, nil
-                local all = {}
-                for _,m in ipairs(items:GetChildren()) do
-                    if m:IsA("Model") and isChestName3(m.Name) then
-                        all[#all+1] = m
-                        if m.Name == "Stronghold Diamond Chest" then
-                            diamond = m
-                            local mp = m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart")
-                            dpos = mp and mp.Position or (m:GetPivot().Position)
-                        end
-                    end
-                end
-                if not (diamond and dpos) then return end
-                deleteExcl[diamond] = true
-                local bestM, bestD = nil, math.huge
-                for _,m in ipairs(all) do
-                    if m ~= diamond then
-                        local mp = m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart")
-                        local p = mp and mp.Position or (m:GetPivot().Position)
-                        if p then
-                            local dist = (p - dpos).Magnitude
-                            if math.abs(dist - DIAMOND_PAIR_DIST) <= DIAMOND_PAIR_TOL then
-                                deleteExcl[m] = true
-                            end
-                            if dist < bestD then bestD, bestM = dist, m end
-                        end
-                    end
-                end
-                if not next(deleteExcl) and bestM then
-                    deleteExcl[bestM] = true
-                end
-            end
-            local function deleteIfOpenedNow(m)
-                if not deleteOn then return end
-                if not (m and m.Parent) then return end
-                if not isChestName3(m.Name) then return end
-                if deleteExcl[m] then return end
-                if chestOpened3(m) then
-                    safeHideThenDestroy(m)
-                end
-            end
-            local function watchChest(m)
-                if not (m and m:IsA("Model") and isChestName3(m.Name)) then return end
-                if tracked[m] then return end
-                tracked[m] = true
-                m:GetAttributeChangedSignal(UID_OPEN_KEY):Connect(function()
-                    deleteIfOpenedNow(m)
-                end)
-                m.AncestryChanged:Connect(function(_, parent)
-                    if not parent then tracked[m] = nil end
-                end)
-                deleteIfOpenedNow(m)
-            end
-            local function scanAll()
-                local items = WS:FindFirstChild("Items"); if not items then return end
-                for _,child in ipairs(items:GetChildren()) do
-                    watchChest(child)
-                end
-            end
-            local function sweepDeleteOpened()
-                if not deleteOn then return end
-                local items = WS:FindFirstChild("Items"); if not items then return end
-                for _,m in ipairs(items:GetChildren()) do
-                    if m:IsA("Model") and isChestName3(m.Name) then
-                        deleteIfOpenedNow(m)
-                    end
-                end
-            end
-            local function enableDelete()
-                if deleteOn then return end
-                deleteOn = true
-                locateDiamondAndNeighbor()
-                scanAll()
-                sweepDeleteOpened()
-                local items = WS:FindFirstChild("Items")
-                if items then
-                    addConn = items.ChildAdded:Connect(function(m)
-                        if m and m:IsA("Model") then
-                            if m.Name == "Stronghold Diamond Chest" or isChestName3(m.Name) then
-                                locateDiamondAndNeighbor()
-                            end
-                            watchChest(m)
-                        end
-                    end)
-                    remConn = items.ChildRemoved:Connect(function(m)
-                        tracked[m] = nil
-                        if m and (m.Name == "Stronghold Diamond Chest" or isChestName3(m.Name)) then
-                            task.delay(0, locateDiamondAndNeighbor)
-                        end
-                    end)
-                end
-                if sweepHB then sweepHB:Disconnect() end
-                sweepHB = Run.Heartbeat:Connect(function()
-                    sweepDeleteOpened()
-                end)
-            end
-            local function disableDelete()
-                deleteOn = false
-                if addConn   then addConn:Disconnect();   addConn = nil end
-                if remConn   then remConn:Disconnect();   remConn = nil end
-                if sweepHB   then sweepHB:Disconnect();   sweepHB = nil end
-            end
-            tab:Toggle({
-                Title = "Delete Chests After Opening",
-                Value = false,
-                Callback = function(state)
-                    if state then enableDelete() else disableDelete() end
-                end
-            })
-        end
-
-        ----------------------------------------------------------------
-        -- Auto replant saplings (immediate on spawn)
-        ----------------------------------------------------------------
-        local autoReplantOn   = false
-        local autoReplantConn = nil
-
-        local function autoReplantCalcPos(m)
-            local mp
-            if mainPart2 then
-                mp = mainPart2(m)
-            end
-            if not mp and mainPart then
-                mp = mainPart(m)
-            end
-            if not mp then return nil end
-
-            local center = mp.Position
-            local ground = groundBelow3 and groundBelow3(center) or center
-            local y = math.min(ground.Y, center.Y - (mp.Size.Y * 0.5)) - 0.15
-
-            return Vector3.new(center.X, y, center.Z)
-        end
-
-        local function plantModelAtExactPosition(m, pos)
-            local plantRF = getRemote and getRemote("RequestPlantItem")
-            if not (plantRF and m and m.Parent and pos) then return end
-
-            local startDrag = getRemote("RequestStartDraggingItem")
-            local stopDrag  = getRemote("StopDraggingItem")
-
-            if startDrag then
-                pcall(function() startDrag:FireServer(m) end)
-                pcall(function() startDrag:FireServer(Instance.new("Model")) end)
-            end
-
-            local INTERACTION_DELAY = 0
-            if INTERACTION_DELAY > 0 then
-                task.wait(INTERACTION_DELAY)
-            else
-                Run.Heartbeat:Wait()
-            end
-
-            local ok = pcall(function()
-                if plantRF:IsA("RemoteFunction") then
-                    return plantRF:InvokeServer(m, pos)
-                else
-                    plantRF:FireServer(m, pos)
-                    return true
-                end
-            end)
-
-            if not ok then
-                local dummy = Instance.new("Model")
-                pcall(function()
-                    if plantRF:IsA("RemoteFunction") then
-                        return plantRF:InvokeServer(dummy, pos)
-                    else
-                        plantRF:FireServer(dummy, pos)
-                    end
-                end)
-            end
-
-            if INTERACTION_DELAY > 0 then
-                task.wait(INTERACTION_DELAY)
-            else
-                Run.Heartbeat:Wait()
-            end
-
-            if stopDrag then
-                pcall(function() stopDrag:FireServer(m) end)
-                pcall(function() stopDrag:FireServer(Instance.new("Model")) end)
-            end
-        end
-
-        local function autoReplantPlantModel(m)
-            local pos = autoReplantCalcPos(m)
-            if not pos then return end
-            plantModelAtExactPosition(m, pos)
-        end
-
-        local function handleNewSapling(child)
-            if not (autoReplantOn and child and child:IsA("Model") and child.Name == "Sapling") then
-                return
-            end
-            task.spawn(function()
-                task.wait(0.1)
-                if child and child.Parent then
-                    autoReplantPlantModel(child)
-                end
-            end)
-        end
-
-        local function enableAutoReplant()
-            if autoReplantOn then return end
-            autoReplantOn = true
-            local items = itemsFolder and itemsFolder() or WS:FindFirstChild("Items")
-            if items and not autoReplantConn then
-                autoReplantConn = items.ChildAdded:Connect(handleNewSapling)
-            end
-        end
-
-        local function disableAutoReplant()
-            autoReplantOn = false
-            if autoReplantConn then
-                autoReplantConn:Disconnect()
-                autoReplantConn = nil
-            end
-        end
-
-        ----------------------------------------------------------------
-        -- Circle-plant saplings in air at current position
-        ----------------------------------------------------------------
-        local CIRCLE_SAPLINGS_PER_RING = 20
-        local CIRCLE_RADIUS            = 4.0
-        local CIRCLE_HEIGHT_STEP       = 10.0
-
-        local function actionCirclePlantSaplingsAtPosition()
-            local items = itemsFolder and itemsFolder() or WS:FindFirstChild("Items")
-            if not items then return end
-
-            local saplings = {}
-            for _,m in ipairs(items:GetChildren()) do
-                if m:IsA("Model") and m.Name == "Sapling" then
-                    saplings[#saplings+1] = m
-                end
-            end
-            if #saplings == 0 then return end
-
-            local root = hrp()
-            if not root then return end
-            local origin = root.Position
-
-            for i, m in ipairs(saplings) do
-                if m and m.Parent then
-                    local idx       = i - 1
-                    local ringIndex = math.floor(idx / CIRCLE_SAPLINGS_PER_RING)
-                    local angleIdx  = idx % CIRCLE_SAPLINGS_PER_RING
-                    local theta     = (2 * math.pi / CIRCLE_SAPLINGS_PER_RING) * angleIdx
-
-                    local y = origin.Y + ringIndex * CIRCLE_HEIGHT_STEP
-                    local x = origin.X + math.cos(theta) * CIRCLE_RADIUS
-                    local z = origin.Z + math.sin(theta) * CIRCLE_RADIUS
-                    local pos = Vector3.new(x, y, z)
-
-                    plantModelAtExactPosition(m, pos)
-                end
-            end
-        end
-
-        ----------------------------------------------------------------
-        -- Saplings UI
-        ----------------------------------------------------------------
-        tab:Section({ Title = "Saplings" })
-        tab:Button({ Title = "Drop Saplings", Callback = function() actionDropSaplings() end })
-        tab:Button({ Title = "Plant All Saplings", Callback = function() actionPlantAllSaplings() end })
-
-        tab:Toggle({
-            Title = "Auto Replant Saplings",
-            Value = false,
-            Callback = function(state)
-                if state then
-                    enableAutoReplant()
-                else
-                    disableAutoReplant()
-                end
-            end
-        })
-
-        tab:Button({
-            Title = "Auto Plant Saplings (Circles Here)",
-            Callback = function()
-                actionCirclePlantSaplingsAtPosition()
-            end
-        })
-
-        local function enableLoadDefenseSafe()
-            local f = nil
-            if type(enableLoadDefense) == "function" then f = enableLoadDefense end
-            if not f then
-                local ok, g = pcall(function() return _G and _G.enableLoadDefense end)
-                if ok and type(g) == "function" then f = g end
-            end
-            if f then pcall(f) end
-        end
-        local loadDefenseOnDefault = true
-        if loadDefenseOnDefault then enableLoadDefenseSafe() end
-
-        Players.LocalPlayer.CharacterAdded:Connect(function()
-            local playerGui2 = lp:WaitForChild("PlayerGui")
-            local edgeGui2 = playerGui2:FindFirstChild("EdgeButtons")
-            if edgeGui2 and edgeGui2.Parent ~= playerGui2 then edgeGui2.Parent = playerGui2 end
-            if phaseBtn then phaseBtn.Visible = showPhaseEdge end
-            if plantBtn then plantBtn.Visible = showPlantEdge end
-            if tpBtn    then tpBtn.Visible    = showTeleportEdge end
-            if campBtn  then campBtn.Visible  = showCampEdge end
-            if noShadowsOn and not lightConn then enableNoShadows() end
-            if loadDefenseOnDefault then enableLoadDefenseSafe() end
-            pcall(function() WS.StreamingPauseMode = Enum.StreamingPauseMode.Disabled end)
-            if coinOn and not coinConn then enableCoin() end
-            if chestFinderOn and enableChestFinder then enableChestFinder() end
-
-            if autoReplantOn and not autoReplantConn then
-                local items = itemsFolder and itemsFolder() or WS:FindFirstChild("Items")
-                if items then
-                    autoReplantConn = items.ChildAdded:Connect(handleNewSapling)
-                end
-            end
-        end)
-    end
-    local ok, err = pcall(run)
-    if not ok then warn("[Auto] module error: " .. tostring(err)) end
-end
