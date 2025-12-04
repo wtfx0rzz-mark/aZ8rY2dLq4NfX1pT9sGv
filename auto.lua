@@ -1299,5 +1299,7 @@ return function(C, R, UI)
                     end
                 end
             end
-            private function excludeNearestToDiamond()
+            local function excludeNearestToDiamond()
+                -- no-op for now
             end
+
