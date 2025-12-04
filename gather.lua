@@ -427,48 +427,27 @@ return function(C, R, UI)
         return baseCF * CFrame.new(x, y, z)
     end
 
+    -- FIXED: single, clean finalizePileDrop (no duplicate block after it)
     local function finalizePileDrop(items)
-    for _,m in ipairs(items) do
-        if m and m.Parent then
-            dragStop(m)
-            setNoCollideModel(m, false)
-            local mp = mainPart(m)
-            if mp then
-                -- Hand physics back to the server, but keep the original collision group
-                pcall(function() mp:SetNetworkOwner(nil) end)
-                pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
-            end
-            -- Only zero velocities; do NOT touch collision groups or flags again
-            for _,p in ipairs(m:GetDescendants()) do
-                if p:IsA("BasePart") then
-                    p.AssemblyLinearVelocity  = Vector3.new()
-                    p.AssemblyAngularVelocity = Vector3.new()
-                end
-            end
-        end
-    end
-
-    local n = #items
-    local i = 1
-    while i <= n do
-        for j = i, math.min(i + UNANCHOR_BATCH - 1, n) do
-            local m = items[j]
+        for _,m in ipairs(items) do
             if m and m.Parent then
-                setAnchoredModel(m, false)
+                dragStop(m)
+                setNoCollideModel(m, false)
+                local mp = mainPart(m)
+                if mp then
+                    -- Hand physics back to the server, but keep original collision group
+                    pcall(function() mp:SetNetworkOwner(nil) end)
+                    pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
+                end
+                -- Only zero velocities; do NOT touch collision groups or flags again
                 for _,p in ipairs(m:GetDescendants()) do
                     if p:IsA("BasePart") then
-                        p.AssemblyLinearVelocity  = Vector3.new(0, -NUDGE_DOWN, 0)
+                        p.AssemblyLinearVelocity  = Vector3.new()
                         p.AssemblyAngularVelocity = Vector3.new()
                     end
                 end
             end
-            task.wait(0.006 + ((j % 7) * 0.002))
         end
-        task.wait(UNANCHOR_STEP)
-        i = i + UNANCHOR_BATCH
-    end
-end
-
 
         local n = #items
         local i = 1
