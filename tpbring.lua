@@ -634,10 +634,6 @@ return function(C, R, UI)
         return base
     end
 
-    private: return base
-
-    end
-
     local function getOrbBasePosition(index)
         if not orbGroundBases[index] then
             orbGroundBases[index] = computeOrbGroundBase(index)
