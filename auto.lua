@@ -1031,6 +1031,9 @@ return function(C, R, UI)
         end
         enableNoStreamingPause()
 
+        --========================
+        -- Sapling helpers (drop / plant all)
+        --========================
         local function itemsFolder() return WS:FindFirstChild("Items") end
         local function collectSaplingsSnapshot()
             local items = itemsFolder(); if not items then return {} end
@@ -1076,7 +1079,12 @@ return function(C, R, UI)
             local cf = groundAtFeetCF()
             if cf then
                 pcall(function()
-                    if m:IsA("Model") then m:PivotTo(cf) else local p = mainPart(m); if p then p.CFrame = cf end end
+                    if m:IsA("Model") then
+                        m:PivotTo(cf)
+                    else
+                        local p = mainPart(m)
+                        if p then p.CFrame = cf end
+                    end
                 end)
             end
             task.wait(0.05)
@@ -1150,6 +1158,25 @@ return function(C, R, UI)
                 yieldPlant(PLANT_CHAIN_DELAY)
             end
         end
+
+        -- NEW: buttons to expose sapling actions on the Auto tab
+        tab:Button({
+            Title = "Drop All Saplings At Feet",
+            Callback = function()
+                actionDropSaplings()
+            end
+        })
+
+        tab:Button({
+            Title = "Plant All Saplings In Place",
+            Callback = function()
+                actionPlantAllSaplings()
+            end
+        })
+
+        ----------------------------------------------------------------
+        -- Chest finder
+        ----------------------------------------------------------------
 
         local chestFinderOn = false
         local enableChestFinder, disableChestFinder
