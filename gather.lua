@@ -13,6 +13,9 @@ return function(C, R, UI)
         C.State.GatherRadius = tonumber(C.State.AuraRadius) or 150
     end
 
+    --========================
+    -- Item categories
+    --========================
     local junkItems    = {
         "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
         "UFO Junk","UFO Component"
@@ -87,12 +90,19 @@ return function(C, R, UI)
 
     local function dragStart(m)
         if not (m and m.Parent and RF_Start) then return false end
-        if DragActive[m] then DragActive[m].t0 = os.clock(); return true end
+        if DragActive[m] then
+            DragActive[m].t0 = os.clock()
+            return true
+        end
         local ok = pcall(function() RF_Start:FireServer(m) end)
         if not ok then return false end
         local conns = {}
-        conns[#conns+1] = m.AncestryChanged:Connect(function(_, parent) if not parent then dragTrackRelease(m) end end)
-        conns[#conns+1] = m:GetPropertyChangedSignal("Parent"):Connect(function() if not m.Parent then dragTrackRelease(m) end end)
+        conns[#conns+1] = m.AncestryChanged:Connect(function(_, parent)
+            if not parent then dragTrackRelease(m) end
+        end)
+        conns[#conns+1] = m:GetPropertyChangedSignal("Parent"):Connect(function()
+            if not m.Parent then dragTrackRelease(m) end
+        end)
         DragActive[m] = { t0 = os.clock(), conns = conns }
         return true
     end
@@ -126,14 +136,18 @@ return function(C, R, UI)
         end
         return nil
     end
-    local function modelOf(x) return x and (x:IsA("Model") and x or x:FindFirstAncestorOfClass("Model")) or nil end
+    local function modelOf(x)
+        return x and (x:IsA("Model") and x or x:FindFirstAncestorOfClass("Model")) or nil
+    end
     local function isExcludedModel(m)
         if not (m and m:IsA("Model")) then return true end
         local n = (m.Name or ""):lower()
         if n:find("wall", 1, true) then return true end
         return n == "pelt trader" or n:find("trader",1,true) or n:find("shopkeeper",1,true)
     end
-    local function hasHumanoid(m) return m and m:IsA("Model") and m:FindFirstChildOfClass("Humanoid") ~= nil end
+    local function hasHumanoid(m)
+        return m and m:IsA("Model") and m:FindFirstChildOfClass("Humanoid") ~= nil
+    end
     local function isCultist(m)
         if not (m and m:IsA("Model")) then return false end
         local nl = (m.Name or ""):lower()
@@ -158,6 +172,28 @@ return function(C, R, UI)
         end
     end
 
+    --========================
+    -- Aura-style overlap scan setup
+    --========================
+    local function itemsFolder()
+        return WS:FindFirstChild("Items")
+    end
+
+    local overlapParams = OverlapParams.new()
+    overlapParams.MaxParts = 1000
+
+    local function refreshOverlapFilter()
+        local items = itemsFolder()
+        if items then
+            overlapParams.FilterType = Enum.RaycastFilterType.Include
+            overlapParams.FilterDescendantsInstances = { items }
+        else
+            overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+            overlapParams.FilterDescendantsInstances = { lp.Character }
+        end
+    end
+    refreshOverlapFilter()
+
     local gatherOn = false
     local scanConn, hoverConn = nil, nil
     local gathered, list = {}, {}
@@ -167,16 +203,25 @@ return function(C, R, UI)
         if gathered[m] then return end
         gathered[m] = true
         list[#list+1] = m
-        if isCultist(m) then cultistCount = cultistCount + 1 end
+        if isCultist(m) then
+            cultistCount = cultistCount + 1
+        end
     end
     local function removeGather(m)
         if not gathered[m] then return end
-        if isCultist(m) then cultistCount = math.max(0, cultistCount - 1) end
+        if isCultist(m) then
+            cultistCount = math.max(0, cultistCount - 1)
+        end
         gathered[m] = nil
-        for i=#list,1,-1 do if list[i]==m then table.remove(list,i) break end end
+        for i=#list,1,-1 do
+            if list[i] == m then
+                table.remove(list, i)
+                break
+            end
+        end
     end
     local function clearAll()
-        for m,_ in pairs(gathered) do gathered[m]=nil end
+        for m,_ in pairs(gathered) do gathered[m] = nil end
         table.clear(list)
         cultistCount = 0
     end
@@ -211,12 +256,22 @@ return function(C, R, UI)
         local name = m.Name or ""
         local nl   = name:lower()
 
-        if wantMossy and (name == "Mossy Coin" or name:match("^Mossy Coin%d+$")) then return true end
-        if wantCultist and nl:find("cultist",1,true) and hasHumanoid(m) then return true end
-        if wantSapling and name == "Sapling" then return true end
+        if wantMossy and (name == "Mossy Coin" or name:match("^Mossy Coin%d+$")) then
+            return true
+        end
+        if wantCultist and nl:find("cultist",1,true) and hasHumanoid(m) then
+            return true
+        end
+        if wantSapling and name == "Sapling" then
+            return true
+        end
 
-        if wantBlueprint and nl:find("blueprint", 1, true) then return true end
-        if wantForestGem and (name == "Forest Gem" or nl:find("forest gem fragment", 1, true)) then return true end
+        if wantBlueprint and nl:find("blueprint", 1, true) then
+            return true
+        end
+        if wantForestGem and (name == "Forest Gem" or nl:find("forest gem fragment", 1, true)) then
+            return true
+        end
         if wantKey then
             if nl:find(" key", 1, true) then
                 if nl:find("blue key",1,true) or nl:find("yellow key",1,true) or nl:find("red key",1,true)
@@ -232,7 +287,7 @@ return function(C, R, UI)
             return true
         end
 
-        if Selected.Junk["Tyre"] and (nl:find("Tyre",1,true) or nl:find("tyre",1,true)) then
+        if Selected.Junk["Tyre"] and (nl:find("tyre",1,true)) then
             return true
         end
 
@@ -244,18 +299,9 @@ return function(C, R, UI)
     local lastScan = 0
     local START_YIELD = 0.06
 
-    local function captureIfNear()
-        local now = os.clock()
-        if now - lastScan < scanInterval then return end
-        lastScan = now
-        if not gatherOn then return end
-        if not anySelection() then return end
-
-        local root = hrp(); if not root then return end
-        local origin = root.Position
-        local rad = gatherRadius()
-        local pool = WS:FindFirstChild("Items") or WS
-
+    -- Fallback (old) full scan, kept for compatibility if overlap API fails
+    local function captureIfNear_FullScan(origin, rad)
+        local pool = itemsFolder() or WS
         for _,d in ipairs(pool:GetDescendants()) do
             repeat
                 if not (d:IsA("Model") or d:IsA("BasePart")) then break end
@@ -276,8 +322,56 @@ return function(C, R, UI)
         end
     end
 
+    -- Aura-style overlap scan
+    local function captureIfNear()
+        local now = os.clock()
+        if now - lastScan < scanInterval then return end
+        lastScan = now
+        if not gatherOn then return end
+        if not anySelection() then return end
+
+        local root = hrp(); if not root then return end
+        local origin = root.Position
+        local rad = gatherRadius()
+
+        refreshOverlapFilter()
+
+        local ok, parts = pcall(function()
+            return WS:GetPartBoundsInRadius(origin, rad, overlapParams)
+        end)
+
+        if not ok or type(parts) ~= "table" then
+            -- fall back to old behavior if exploit / engine blocks overlap queries
+            captureIfNear_FullScan(origin, rad)
+            return
+        end
+
+        for _,p in ipairs(parts) do
+            repeat
+                if not p or not p.Parent or not p:IsA("BasePart") then break end
+                local m = modelOf(p); if not m then break end
+                if gathered[m] or isExcludedModel(m) or not isSelectedModel(m) then break end
+                if isCultist(m) and cultistCount >= CULTIST_LIMIT then break end
+                local mp = mainPart(m); if not mp then break end
+
+                if not dragStart(m) then break end
+                task.wait(START_YIELD)
+                pcall(function() mp:SetNetworkOwner(lp) end)
+                setNoCollideModel(m, true)
+                setAnchoredModel(m, true)
+                addGather(m)
+                dragStop(m)
+            until true
+        end
+    end
+
     local function pivotModel(m, cf)
-        if m:IsA("Model") then m:PivotTo(cf) else local p=mainPart(m); if p then p.CFrame=cf end end
+        if m:IsA("Model") then
+            m:PivotTo(cf)
+        else
+            local p = mainPart(m)
+            if p then p.CFrame = cf end
+        end
     end
 
     local function hoverFollow()
@@ -287,7 +381,11 @@ return function(C, R, UI)
         local above   = root.Position + Vector3.new(0, hoverHeight, 0)
         local baseCF  = CFrame.lookAt(above, above + forward)
         for _,m in ipairs(list) do
-            if m and m.Parent then pivotModel(m, baseCF) else removeGather(m) end
+            if m and m.Parent then
+                pivotModel(m, baseCF)
+            else
+                removeGather(m)
+            end
         end
     end
 
@@ -330,84 +428,84 @@ return function(C, R, UI)
     end
 
     local function finalizePileDrop(items)
-    for _,m in ipairs(items) do
-        if m and m.Parent then
-            dragStop(m)
-            setNoCollideModel(m, false)
-            local mp = mainPart(m)
-            if mp then
-                pcall(function() mp:SetNetworkOwner(nil) end)
-                pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
-                pcall(function() mp.CollisionGroupId = 0 end)
-            end
-            for _,p in ipairs(m:GetDescendants()) do
-                if p:IsA("BasePart") then
-                    p.AssemblyLinearVelocity  = Vector3.new()
-                    p.AssemblyAngularVelocity = Vector3.new()
-                    p.CanCollide = true
-                    p.CanTouch   = true
-                    p.CanQuery   = true
-                    p.Massless   = false
-                end
-            end
-        end
-    end
-
-    local n = #items
-    local i = 1
-    while i <= n do
-        for j = i, math.min(i + UNANCHOR_BATCH - 1, n) do
-            local m = items[j]
+        for _,m in ipairs(items) do
             if m and m.Parent then
-                setAnchoredModel(m, false)
+                dragStop(m)
+                setNoCollideModel(m, false)
+                local mp = mainPart(m)
+                if mp then
+                    pcall(function() mp:SetNetworkOwner(nil) end)
+                    pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
+                    pcall(function() mp.CollisionGroupId = 0 end)
+                end
                 for _,p in ipairs(m:GetDescendants()) do
                     if p:IsA("BasePart") then
-                        p.AssemblyLinearVelocity  = Vector3.new(0, -NUDGE_DOWN, 0)
+                        p.AssemblyLinearVelocity  = Vector3.new()
                         p.AssemblyAngularVelocity = Vector3.new()
+                        p.CanCollide = true
+                        p.CanTouch   = true
+                        p.CanQuery   = true
+                        p.Massless   = false
                     end
                 end
             end
-            task.wait(0.006 + ((j % 7) * 0.002))
         end
-        task.wait(UNANCHOR_STEP)
-        i = i + UNANCHOR_BATCH
+
+        local n = #items
+        local i = 1
+        while i <= n do
+            for j = i, math.min(i + UNANCHOR_BATCH - 1, n) do
+                local m = items[j]
+                if m and m.Parent then
+                    setAnchoredModel(m, false)
+                    for _,p in ipairs(m:GetDescendants()) do
+                        if p:IsA("BasePart") then
+                            p.AssemblyLinearVelocity  = Vector3.new(0, -NUDGE_DOWN, 0)
+                            p.AssemblyAngularVelocity = Vector3.new()
+                        end
+                    end
+                end
+                task.wait(0.006 + ((j % 7) * 0.002))
+            end
+            task.wait(UNANCHOR_STEP)
+            i = i + UNANCHOR_BATCH
+        end
     end
-end
 
     local function placeDown()
-    local baseCF = groundAheadCF(); if not baseCF then return end
-    if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = false end
-    stopGather()
+        local baseCF = groundAheadCF(); if not baseCF then return end
+        if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = false end
+        stopGather()
 
-    local n = #list
-    if n == 0 then return end
+        local n = #list
+        if n == 0 then return end
 
-    local cfs = table.create(n)
-    for i = 1, n do
-        cfs[i] = pileCF(i, baseCF)
-    end
+        local cfs = table.create(n)
+        for i = 1, n do
+            cfs[i] = pileCF(i, baseCF)
+        end
 
-    local placed = 0
-    for i = 1, n do
-        local m = list[i]
-        if m and m.Parent then
-            dragStart(m)
-            task.wait(0.06)
-            setAnchoredModel(m, true)
-            setNoCollideModel(m, true)
-            pivotModel(m, cfs[i])
-            dragStop(m)
-            placed += 1
-            if placed % PLACE_BATCH == 0 then
-                PLACE_YIELD_FN()
+        local placed = 0
+        for i = 1, n do
+            local m = list[i]
+            if m and m.Parent then
+                dragStart(m)
+                task.wait(0.06)
+                setAnchoredModel(m, true)
+                setNoCollideModel(m, true)
+                pivotModel(m, cfs[i])
+                dragStop(m)
+                placed += 1
+                if placed % PLACE_BATCH == 0 then
+                    PLACE_YIELD_FN()
+                end
             end
         end
-    end
 
-    task.wait(0.05)
-    finalizePileDrop(list)
-    clearAll()
-end
+        task.wait(0.05)
+        finalizePileDrop(list)
+        clearAll()
+    end
 
     C.Gather = C.Gather or {}
     C.Gather.IsOn      = function() return gatherOn end
@@ -560,6 +658,12 @@ end
     lp.CharacterAdded:Connect(function()
         if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = false end
         releaseAll()
-        if gatherOn then task.defer(function() stopGather(); startGather() end) end
+        if gatherOn then
+            task.defer(function()
+                stopGather()
+                startGather()
+            end)
+        end
+        refreshOverlapFilter()
     end)
 end
