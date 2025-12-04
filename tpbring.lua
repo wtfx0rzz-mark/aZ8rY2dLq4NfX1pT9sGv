@@ -634,6 +634,10 @@ return function(C, R, UI)
         return base
     end
 
+    private: return base
+
+    end
+
     local function getOrbBasePosition(index)
         if not orbGroundBases[index] then
             orbGroundBases[index] = computeOrbGroundBase(index)
@@ -680,9 +684,27 @@ return function(C, R, UI)
     }
 
     ----------------------------------------------------------------
-    -- Generic candidate collector (with distance limits)
+    -- Aura-style overlap scan setup
     ----------------------------------------------------------------
-    local function collectCandidatesFromSet(selectedSet, jobId, maxDist)
+    local overlapParams = OverlapParams.new()
+    overlapParams.MaxParts = 1000
+
+    local function refreshOverlapFilter(maxDist)
+        local itemsFolder = itemsRootOrNil()
+        if itemsFolder then
+            overlapParams.FilterType = Enum.RaycastFilterType.Include
+            overlapParams.FilterDescendantsInstances = { itemsFolder }
+        else
+            overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+            overlapParams.FilterDescendantsInstances = { lp.Character }
+        end
+    end
+
+    ----------------------------------------------------------------
+    -- Generic candidate collector (with distance limits)
+    -- (Aura-style GetPartBoundsInRadius + fallback)
+    ----------------------------------------------------------------
+    local function collectCandidatesFromSet_FullScan(selectedSet, jobId, maxDist)
         if not selectedSet then return {} end
         local itemsFolder = itemsRootOrNil()
         if not itemsFolder then return {} end
@@ -709,6 +731,39 @@ return function(C, R, UI)
                         uniq[m] = true
                         out[#out+1] = m
                     end
+                end
+            end
+        end
+        return out
+    end
+
+    local function collectCandidatesFromSet(selectedSet, jobId, maxDist)
+        if not selectedSet then return {} end
+        local itemsFolder = itemsRootOrNil()
+        if not itemsFolder then return {} end
+
+        local root = hrp()
+        if not root then return {} end
+        local origin = root.Position
+        local rad = maxDist or MAX_DIST_DEFAULT
+
+        refreshOverlapFilter(rad)
+
+        local ok, parts = pcall(function()
+            return WS:GetPartBoundsInRadius(origin, rad, overlapParams)
+        end)
+
+        if not ok or type(parts) ~= "table" then
+            return collectCandidatesFromSet_FullScan(selectedSet, jobId, maxDist)
+        end
+
+        local uniq, out = {}, {}
+        for _,p in ipairs(parts) do
+            if p and p.Parent and p:IsA("BasePart") then
+                local m = nearestSelectedModelFromPart(p, selectedSet)
+                if m and not uniq[m] and canPick(m, selectedSet, jobId) then
+                    uniq[m] = true
+                    out[#out+1] = m
                 end
             end
         end
