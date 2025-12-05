@@ -2,7 +2,7 @@ return function(C, R, UI)
     local Players = C.Services.Players
     local RS      = C.Services.RS
     local WS      = C.Services.WS
-    local Run = C.Services.Run or game:GetService("RunService")
+    local Run     = C.Services.Run or game:GetService("RunService")
 
     local lp  = Players.LocalPlayer
     local tab = UI.Tabs and (UI.Tabs.Gather or UI.Tabs.Auto)
@@ -13,12 +13,12 @@ return function(C, R, UI)
         C.State.GatherRadius = tonumber(C.State.AuraRadius) or 150
     end
 
-    local junkItems    = {
+    local junkItems = {
         "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
         "UFO Junk","UFO Component"
     }
-    local fuelItems    = { "Log","Coal","Fuel Canister","Oil Barrel","Chair" }
-    local foodItems    = {
+    local fuelItems = { "Log","Coal","Fuel Canister","Oil Barrel","Chair" }
+    local foodItems = {
         "Cake","Cooked Steak","Cooked Morsel","Steak","Morsel","Berry","Carrot",
         "Chilli","Stew","Ribs","Pumpkin","Hearty Stew","Cooked Ribs","Corn","BBQ ribs","Apple","Mackerel"
     }
@@ -28,20 +28,20 @@ return function(C, R, UI)
         "Chainsaw","Crossbow","Katana","Kunai","Laser cannon","Laser sword","Morningstar","Riot shield","Spear","Tactical Shotgun","Wildfire",
         "Sword","Ice Axe"
     }
-    local ammoMisc     = {
+    local ammoMisc = {
         "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Sapling",
         "Basketball","Blueprint","Diamond","Forest Gem","Key","Flashlight","Taming flute","Cultist Gem","Tusk","Infernal Sack"
     }
-    local pelts        = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"}
+    local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"}
 
     local Selected = { Junk = {}, Fuel = {}, Food = {}, Medical = {}, WA = {}, Misc = {}, Pelts = {} }
     local wantMossy, wantCultist, wantSapling = false, false, false
     local wantBlueprint, wantForestGem, wantKey, wantFlashlight, wantTamingFlute = false, false, false, false, false
 
-    local hoverHeight    = 5
-    local forwardDrop    = 5
-    local upDrop         = 5
-    local scanInterval   = 0.1
+    local hoverHeight  = 5
+    local forwardDrop  = 5
+    local upDrop       = 5
+    local scanInterval = 0.1
 
     local PILE_RADIUS    = 1.25
     local LAYER_SIZE     = 10
@@ -57,7 +57,7 @@ return function(C, R, UI)
     local function getRemote(...)
         local f = RS:FindFirstChild("RemoteEvents")
         if not f then return nil end
-        for i=1,select("#", ...) do
+        for i = 1, select("#", ...) do
             local n = select(i, ...)
             local x = f:FindFirstChild(n)
             if x then return x end
@@ -65,8 +65,8 @@ return function(C, R, UI)
         return nil
     end
 
-    local RF_Start = getRemote("RequestStartDraggingItem","StartDraggingItem")
-    local RF_Stop  = getRemote("RequestStopDraggingItem","StopDraggingItem","StopDraggingItemRemote")
+    local RF_Start  = getRemote("RequestStartDraggingItem","StartDraggingItem")
+    local RF_Stop   = getRemote("RequestStopDraggingItem","StopDraggingItem","StopDraggingItemRemote")
     local HEARTBEAT = Run.Heartbeat
 
     local DragActive = {}
@@ -212,7 +212,6 @@ return function(C, R, UI)
 
     local function buildSelectedSet()
         local set = {}
-
         for name,_ in pairs(Selected.Junk or {})    do set[name] = true end
         for name,_ in pairs(Selected.Fuel or {})    do set[name] = true end
         for name,_ in pairs(Selected.Food or {})    do set[name] = true end
@@ -390,6 +389,7 @@ return function(C, R, UI)
     local scanConn, hoverConn = nil, nil
     local gathered, list = {}, {}
     local cultistCount = 0
+    local itemsChildConn = nil
 
     local function addGather(m)
         if gathered[m] then return end
@@ -406,7 +406,7 @@ return function(C, R, UI)
             cultistCount = math.max(0, cultistCount - 1)
         end
         gathered[m] = nil
-        for i=#list,1,-1 do
+        for i = #list, 1, -1 do
             if list[i] == m then
                 table.remove(list, i)
                 break
@@ -445,7 +445,7 @@ return function(C, R, UI)
         return false
     end
 
-    local lastScan = 0
+    local lastScan   = 0
     local START_YIELD = 0.06
 
     local overlapParams = OverlapParams.new()
@@ -548,6 +548,37 @@ return function(C, R, UI)
         end
     end
 
+    local function onItemsChildAdded(child)
+        if not gatherOn then return end
+        if not child or not child:IsA("Model") then return end
+        local items = itemsRootOrNil()
+        if not items or not child:IsDescendantOf(items) then return end
+        if not anySelection() then return end
+
+        local root = hrp(); if not root then return end
+        local origin = root.Position
+        local rad = gatherRadius()
+        local selectedSet = buildSelectedSet()
+
+        if gathered[child] then return end
+        if isCultist(child) and cultistCount >= CULTIST_LIMIT then return end
+        if not canGather(child, selectedSet, origin, rad) then return end
+
+        local mp = mainPart(child); if not mp then return end
+        if not dragStart(child) then return end
+
+        task.delay(START_YIELD, function()
+            if not gatherOn then dragStop(child); return end
+            if not child or not child.Parent then dragStop(child); return end
+            local mp2 = mainPart(child); if not mp2 then dragStop(child); return end
+            pcall(function() mp2:SetNetworkOwner(lp) end)
+            setNoCollideModel(child, true)
+            setAnchoredModel(child, true)
+            addGather(child)
+            dragStop(child)
+        end)
+    end
+
     local function hoverFollow()
         if not gatherOn then return end
         local root = hrp(); if not root then return end
@@ -568,13 +599,19 @@ return function(C, R, UI)
         gatherOn = true
         scanConn  = Run.Heartbeat:Connect(captureIfNear)
         hoverConn = Run.RenderStepped:Connect(hoverFollow)
+        local items = itemsRootOrNil()
+        if items then
+            if itemsChildConn then pcall(function() itemsChildConn:Disconnect() end) end
+            itemsChildConn = items.ChildAdded:Connect(onItemsChildAdded)
+        end
         if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = true end
     end
 
     local function stopGather()
         gatherOn = false
-        if scanConn  then pcall(function() scanConn:Disconnect()  end) end; scanConn=nil
-        if hoverConn then pcall(function() hoverConn:Disconnect() end) end; hoverConn=nil
+        if scanConn  then pcall(function() scanConn:Disconnect()  end) end; scanConn = nil
+        if hoverConn then pcall(function() hoverConn:Disconnect() end) end; hoverConn = nil
+        if itemsChildConn then pcall(function() itemsChildConn:Disconnect() end) end; itemsChildConn = nil
     end
 
     local function groundAheadCF()
@@ -583,7 +620,7 @@ return function(C, R, UI)
         local ahead   = root.Position + forward * forwardDrop + Vector3.new(0, 40, 0)
         local params  = RaycastParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = {lp.Character}
+        params.FilterDescendantsInstances = { lp.Character }
         local rc = WS:Raycast(ahead, Vector3.new(0, -200, 0), params)
         local hitPos = rc and rc.Position or (root.Position + forward * forwardDrop)
         local drop   = hitPos + Vector3.new(0, upDrop, 0)
