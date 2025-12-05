@@ -2,7 +2,7 @@ return function(C, R, UI)
     local Players = C.Services.Players
     local RS      = C.Services.RS
     local WS      = C.Services.WS
-    local Run     = C.Services.Run
+    local Run = C.Services.Run or game:GetService("RunService")
 
     local lp  = Players.LocalPlayer
     local tab = UI.Tabs and (UI.Tabs.Gather or UI.Tabs.Auto)
@@ -13,9 +13,6 @@ return function(C, R, UI)
         C.State.GatherRadius = tonumber(C.State.AuraRadius) or 150
     end
 
-    --========================
-    -- Item categories
-    --========================
     local junkItems    = {
         "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
         "UFO Junk","UFO Component"
@@ -75,6 +72,99 @@ return function(C, R, UI)
     local DragActive = {}
     local DRAG_TTL   = 3.0
 
+    local function itemsRootOrNil()
+        return WS:FindFirstChild("Items")
+    end
+
+    local function mainPart(obj)
+        if not obj or not obj.Parent then return nil end
+        if obj:IsA("BasePart") then return obj end
+        if obj:IsA("Model") then
+            if obj.PrimaryPart then return obj.PrimaryPart end
+            return obj:FindFirstChildWhichIsA("BasePart")
+        end
+        return nil
+    end
+
+    local function hrp()
+        local ch = lp.Character or lp.CharacterAdded:Wait()
+        return ch and ch:FindFirstChild("HumanoidRootPart")
+    end
+
+    local function gatherRadius()
+        return math.clamp(tonumber(C.State and C.State.GatherRadius) or 150, 0, 500)
+    end
+
+    local function isWallVariant(m)
+        if not (m and m:IsA("Model")) then return false end
+        local n = (m.Name or ""):lower()
+        return n == "logwall" or n == "log wall" or (n:find("log", 1, true) and n:find("wall", 1, true))
+    end
+
+    local function isUnderLogWall(inst)
+        local cur = inst
+        while cur and cur ~= WS do
+            local nm = (cur.Name or ""):lower()
+            if nm == "logwall" or nm == "log wall" or (nm:find("log",1,true) and nm:find("wall",1,true)) then
+                return true
+            end
+            cur = cur.Parent
+        end
+        return false
+    end
+
+    local function hasHumanoid(model)
+        if not (model and model:IsA("Model")) then return false end
+        return model:FindFirstChildOfClass("Humanoid") ~= nil
+    end
+
+    local function isInsideTree(m)
+        local itemsFolder = itemsRootOrNil()
+        local cur = m and m.Parent
+        while cur and cur ~= WS do
+            local nm = (cur.Name or ""):lower()
+            if nm:find("tree",1,true) then return true end
+            if itemsFolder and cur == itemsFolder then break end
+            cur = cur.Parent
+        end
+        return false
+    end
+
+    local function isCultist(m)
+        if not (m and m:IsA("Model")) then return false end
+        local nl = (m.Name or ""):lower()
+        return nl:find("cultist",1,true) and hasHumanoid(m)
+    end
+
+    local function isExcludedModel(m)
+        if not (m and m:IsA("Model")) then return false end
+        local n = (m.Name or ""):lower()
+        if n == "pelt trader" then return true end
+        if n:find("trader",1,true) or n:find("shopkeeper",1,true) then return true end
+        if isWallVariant(m) then return true end
+        if isUnderLogWall(m) then return true end
+        return false
+    end
+
+    local function setNoCollideModel(m, on)
+        for _,d in ipairs(m:GetDescendants()) do
+            if d:IsA("BasePart") then
+                d.CanCollide = not on
+                d.CanQuery   = not on
+                d.CanTouch   = not on
+                d.Massless   = on and true or false
+                d.AssemblyLinearVelocity  = Vector3.new()
+                d.AssemblyAngularVelocity = Vector3.new()
+            end
+        end
+    end
+
+    local function setAnchoredModel(m, on)
+        for _,d in ipairs(m:GetDescendants()) do
+            if d:IsA("BasePart") then d.Anchored = on end
+        end
+    end
+
     local function dragSafeStop(m)
         if not (m and RF_Stop) then return end
         pcall(function() RF_Stop:FireServer(m) end)
@@ -120,79 +210,181 @@ return function(C, R, UI)
         end
     end)
 
-    local function hrp()
-        local ch = lp.Character or lp.CharacterAdded:Wait()
-        return ch and ch:FindFirstChild("HumanoidRootPart")
+    local function buildSelectedSet()
+        local set = {}
+
+        for name,_ in pairs(Selected.Junk or {})    do set[name] = true end
+        for name,_ in pairs(Selected.Fuel or {})    do set[name] = true end
+        for name,_ in pairs(Selected.Food or {})    do set[name] = true end
+        for name,_ in pairs(Selected.Medical or {}) do set[name] = true end
+        for name,_ in pairs(Selected.WA or {})      do set[name] = true end
+        for name,_ in pairs(Selected.Misc or {})    do set[name] = true end
+        for name,_ in pairs(Selected.Pelts or {})   do set[name] = true end
+
+        if wantMossy       then set["Mossy Coin"]   = true end
+        if wantCultist     then set["Cultist"]      = true end
+        if wantSapling     then set["Sapling"]      = true end
+        if wantBlueprint   then set["Blueprint"]    = true end
+        if wantForestGem   then set["Forest Gem"]   = true end
+        if wantKey         then set["Key"]          = true end
+        if wantFlashlight  then set["Flashlight"]   = true end
+        if wantTamingFlute then set["Taming flute"] = true end
+
+        return set
     end
-    local function gatherRadius()
-        return math.clamp(tonumber(C.State and C.State.GatherRadius) or 150, 0, 500)
+
+    local function nameMatches(selectedSet, m)
+        local itemsFolder = itemsRootOrNil()
+        if itemsFolder and not m:IsDescendantOf(itemsFolder) then
+            return false
+        end
+
+        local nm = m and m.Name or ""
+        local l  = nm:lower()
+
+        if selectedSet["Apple"] and nm == "Apple" then
+            if itemsFolder and m.Parent ~= itemsFolder then return false end
+            if isInsideTree(m) then return false end
+            return true
+        end
+
+        if selectedSet["Berry"] and nm == "Berry" then
+            if itemsFolder and m.Parent ~= itemsFolder then return false end
+            if isInsideTree(m) then return false end
+            return true
+        end
+
+        if selectedSet[nm] then return true end
+
+        if selectedSet["Mossy Coin"] and (nm == "Mossy Coin" or nm:match("^Mossy Coin%d+$")) then
+            return true
+        end
+
+        if selectedSet["Cultist"] and m:IsA("Model") and l:find("cultist",1,true) and hasHumanoid(m) then
+            return true
+        end
+
+        if selectedSet["Sapling"] and nm == "Sapling" then
+            return true
+        end
+
+        if selectedSet["Alpha Wolf Pelt"] and l:find("alpha",1,true) and l:find("wolf",1,true) then
+            return true
+        end
+
+        if selectedSet["Bear Pelt"] and l:find("bear",1,true) and not l:find("polar",1,true) then
+            return true
+        end
+
+        if selectedSet["Wolf Pelt"] and nm == "Wolf Pelt" then
+            return true
+        end
+
+        if selectedSet["Bunny Foot"] and nm == "Bunny Foot" then
+            return true
+        end
+
+        if selectedSet["Polar Bear Pelt"] and nm == "Polar Bear Pelt" then
+            return true
+        end
+
+        if selectedSet["Arctic Fox Pelt"] and nm == "Arctic Fox Pelt" then
+            return true
+        end
+
+        if selectedSet["Spear"] and l:find("spear",1,true) and not hasHumanoid(m) then
+            return true
+        end
+
+        if selectedSet["Sword"] and l:find("sword",1,true) and not hasHumanoid(m) then
+            return true
+        end
+
+        if selectedSet["Crossbow"] and l:find("crossbow",1,true) and not l:find("cultist",1,true) and not hasHumanoid(m) then
+            return true
+        end
+
+        if selectedSet["Blueprint"] and l:find("blueprint",1,true) then
+            return true
+        end
+
+        if selectedSet["Flashlight"] and l:find("flashlight",1,true) and not hasHumanoid(m) then
+            return true
+        end
+
+        if selectedSet["Cultist Gem"] and l:find("cultist",1,true) and l:find("gem",1,true) then
+            return true
+        end
+
+        if selectedSet["Forest Gem"] and (l:find("forest gem",1,true) or (l:find("forest",1,true) and l:find("fragment",1,true))) then
+            return true
+        end
+
+        if selectedSet["Tusk"] and l:find("tusk",1,true) then
+            return true
+        end
+
+        return false
     end
-    local function mainPart(obj)
-        if not obj then return nil end
-        if obj:IsA("BasePart") then return obj end
-        if obj:IsA("Model") then
-            if obj.PrimaryPart then return obj.PrimaryPart end
-            return obj:FindFirstChildWhichIsA("BasePart")
+
+    local function topModelUnderItems(part, itemsFolder)
+        local cur = part
+        local lastModel = nil
+        while cur and cur ~= WS and cur ~= itemsFolder do
+            if cur:IsA("Model") then
+                lastModel = cur
+            end
+            cur = cur.Parent
+        end
+        if lastModel and lastModel.Parent == itemsFolder then
+            return lastModel
+        end
+        return lastModel
+    end
+
+    local function nearestSelectedModelFromPart(part, selectedSet)
+        if not part or not part:IsA("BasePart") then return nil end
+        local itemsFolder = itemsRootOrNil()
+        local m = topModelUnderItems(part, itemsFolder) or part:FindFirstAncestorOfClass("Model")
+        if m and nameMatches(selectedSet, m) then
+            return m
         end
         return nil
     end
-    local function modelOf(x)
-        return x and (x:IsA("Model") and x or x:FindFirstAncestorOfClass("Model")) or nil
-    end
-    local function isExcludedModel(m)
-        if not (m and m:IsA("Model")) then return true end
-        local n = (m.Name or ""):lower()
-        if n:find("wall", 1, true) then return true end
-        return n == "pelt trader" or n:find("trader",1,true) or n:find("shopkeeper",1,true)
-    end
-    local function hasHumanoid(m)
-        return m and m:IsA("Model") and m:FindFirstChildOfClass("Humanoid") ~= nil
-    end
-    local function isCultist(m)
-        if not (m and m:IsA("Model")) then return false end
-        local nl = (m.Name or ""):lower()
-        return nl:find("cultist",1,true) and hasHumanoid(m)
-    end
 
-    local function setNoCollideModel(m, on)
-        for _,d in ipairs(m:GetDescendants()) do
-            if d:IsA("BasePart") then
-                d.CanCollide = not on
-                d.CanQuery   = not on
-                d.CanTouch   = not on
-                d.Massless   = on and true or false
-                d.AssemblyLinearVelocity  = Vector3.new()
-                d.AssemblyAngularVelocity = Vector3.new()
+    local function canGather(m, selectedSet, origin, rad)
+        if not (m and m.Parent and m:IsA("Model")) then return false end
+
+        local itemsFolder = itemsRootOrNil()
+        if itemsFolder and not m:IsDescendantOf(itemsFolder) then
+            return false
+        end
+
+        if isExcludedModel(m) or isUnderLogWall(m) then
+            return false
+        end
+
+        if m.Name == "Log" and isWallVariant(m) then
+            return false
+        end
+
+        local mp = mainPart(m)
+        if not mp or mp.Anchored then
+            return false
+        end
+
+        if origin and rad then
+            if (mp.Position - origin).Magnitude > rad then
+                return false
             end
         end
-    end
-    local function setAnchoredModel(m, on)
-        for _,d in ipairs(m:GetDescendants()) do
-            if d:IsA("BasePart") then d.Anchored = on end
+
+        if not nameMatches(selectedSet, m) then
+            return false
         end
-    end
 
-    --========================
-    -- Aura-style overlap scan setup
-    --========================
-    local function itemsFolder()
-        return WS:FindFirstChild("Items")
+        return true
     end
-
-    local overlapParams = OverlapParams.new()
-    overlapParams.MaxParts = 1000
-
-    local function refreshOverlapFilter()
-        local items = itemsFolder()
-        if items then
-            overlapParams.FilterType = Enum.RaycastFilterType.Include
-            overlapParams.FilterDescendantsInstances = { items }
-        else
-            overlapParams.FilterType = Enum.RaycastFilterType.Exclude
-            overlapParams.FilterDescendantsInstances = { lp.Character }
-        end
-    end
-    refreshOverlapFilter()
 
     local gatherOn = false
     local scanConn, hoverConn = nil, nil
@@ -207,6 +399,7 @@ return function(C, R, UI)
             cultistCount = cultistCount + 1
         end
     end
+
     local function removeGather(m)
         if not gathered[m] then return end
         if isCultist(m) then
@@ -220,6 +413,7 @@ return function(C, R, UI)
             end
         end
     end
+
     local function clearAll()
         for m,_ in pairs(gathered) do gathered[m] = nil end
         table.clear(list)
@@ -251,65 +445,53 @@ return function(C, R, UI)
         return false
     end
 
-    local function isSelectedModel(m)
-        if not m or not m:IsA("Model") then return false end
-        local name = m.Name or ""
-        local nl   = name:lower()
-
-        if wantMossy and (name == "Mossy Coin" or name:match("^Mossy Coin%d+$")) then
-            return true
-        end
-        if wantCultist and nl:find("cultist",1,true) and hasHumanoid(m) then
-            return true
-        end
-        if wantSapling and name == "Sapling" then
-            return true
-        end
-
-        if wantBlueprint and nl:find("blueprint", 1, true) then
-            return true
-        end
-        if wantForestGem and (name == "Forest Gem" or nl:find("forest gem fragment", 1, true)) then
-            return true
-        end
-        if wantKey then
-            if nl:find(" key", 1, true) then
-                if nl:find("blue key",1,true) or nl:find("yellow key",1,true) or nl:find("red key",1,true)
-                or nl:find("gray key",1,true) or nl:find("grey key",1,true) or nl:find("frog key",1,true) then
-                    return true
-                end
-            end
-        end
-        if wantFlashlight and nl:find("flashlight",1,true) and (nl:find("old",1,true) or nl:find("strong",1,true)) then
-            return true
-        end
-        if wantTamingFlute and nl:find("taming flute",1,true) and (nl:find("old",1,true) or nl:find("good",1,true) or nl:find("strong",1,true)) then
-            return true
-        end
-
-        if Selected.Junk["Tyre"] and (nl:find("tyre",1,true)) then
-            return true
-        end
-
-        return Selected.Junk[name] or Selected.Fuel[name] or Selected.Food[name]
-            or Selected.Medical[name] or Selected.WA[name] or Selected.Misc[name]
-            or Selected.Pelts[name] or false
-    end
-
     local lastScan = 0
     local START_YIELD = 0.06
 
-    -- Fallback (old) full scan, kept for compatibility if overlap API fails
-    local function captureIfNear_FullScan(origin, rad)
-        local pool = itemsFolder() or WS
+    local overlapParams = OverlapParams.new()
+    overlapParams.MaxParts = 1000
+
+    local function refreshOverlapFilter()
+        local items = itemsRootOrNil()
+        if items then
+            overlapParams.FilterType = Enum.RaycastFilterType.Include
+            overlapParams.FilterDescendantsInstances = { items }
+        else
+            overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+            overlapParams.FilterDescendantsInstances = { lp.Character }
+        end
+    end
+
+    refreshOverlapFilter()
+
+    local function pivotModel(m, cf)
+        if m:IsA("Model") then
+            m:PivotTo(cf)
+        else
+            local p = mainPart(m)
+            if p then p.CFrame = cf end
+        end
+    end
+
+    local function captureIfNear_FullScan(origin, rad, selectedSet)
+        local pool = itemsRootOrNil() or WS
         for _,d in ipairs(pool:GetDescendants()) do
             repeat
                 if not (d:IsA("Model") or d:IsA("BasePart")) then break end
-                local m = modelOf(d); if not m then break end
-                if gathered[m] or isExcludedModel(m) or not isSelectedModel(m) then break end
+
+                local m
+                if d:IsA("Model") then
+                    if not nameMatches(selectedSet, d) then break end
+                    m = d
+                else
+                    m = nearestSelectedModelFromPart(d, selectedSet)
+                    if not m then break end
+                end
+
+                if gathered[m] then break end
                 if isCultist(m) and cultistCount >= CULTIST_LIMIT then break end
+                if not canGather(m, selectedSet, origin, rad) then break end
                 local mp = mainPart(m); if not mp then break end
-                if (mp.Position - origin).Magnitude > rad then break end
 
                 if not dragStart(m) then break end
                 task.wait(START_YIELD)
@@ -322,7 +504,6 @@ return function(C, R, UI)
         end
     end
 
-    -- Aura-style overlap scan
     local function captureIfNear()
         local now = os.clock()
         if now - lastScan < scanInterval then return end
@@ -333,6 +514,7 @@ return function(C, R, UI)
         local root = hrp(); if not root then return end
         local origin = root.Position
         local rad = gatherRadius()
+        local selectedSet = buildSelectedSet()
 
         refreshOverlapFilter()
 
@@ -341,17 +523,18 @@ return function(C, R, UI)
         end)
 
         if not ok or type(parts) ~= "table" then
-            -- fall back to old behavior if exploit / engine blocks overlap queries
-            captureIfNear_FullScan(origin, rad)
+            captureIfNear_FullScan(origin, rad, selectedSet)
             return
         end
 
         for _,p in ipairs(parts) do
             repeat
                 if not p or not p.Parent or not p:IsA("BasePart") then break end
-                local m = modelOf(p); if not m then break end
-                if gathered[m] or isExcludedModel(m) or not isSelectedModel(m) then break end
+                local m = nearestSelectedModelFromPart(p, selectedSet)
+                if not m then break end
+                if gathered[m] then break end
                 if isCultist(m) and cultistCount >= CULTIST_LIMIT then break end
+                if not canGather(m, selectedSet, origin, rad) then break end
                 local mp = mainPart(m); if not mp then break end
 
                 if not dragStart(m) then break end
@@ -362,15 +545,6 @@ return function(C, R, UI)
                 addGather(m)
                 dragStop(m)
             until true
-        end
-    end
-
-    local function pivotModel(m, cf)
-        if m:IsA("Model") then
-            m:PivotTo(cf)
-        else
-            local p = mainPart(m)
-            if p then p.CFrame = cf end
         end
     end
 
@@ -396,6 +570,7 @@ return function(C, R, UI)
         hoverConn = Run.RenderStepped:Connect(hoverFollow)
         if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = true end
     end
+
     local function stopGather()
         gatherOn = false
         if scanConn  then pcall(function() scanConn:Disconnect()  end) end; scanConn=nil
@@ -427,7 +602,6 @@ return function(C, R, UI)
         return baseCF * CFrame.new(x, y, z)
     end
 
-    -- FIXED: single, clean finalizePileDrop (no duplicate block after it)
     local function finalizePileDrop(items)
         for _,m in ipairs(items) do
             if m and m.Parent then
@@ -435,11 +609,9 @@ return function(C, R, UI)
                 setNoCollideModel(m, false)
                 local mp = mainPart(m)
                 if mp then
-                    -- Hand physics back to the server, but keep original collision group
                     pcall(function() mp:SetNetworkOwner(nil) end)
                     pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
                 end
-                -- Only zero velocities; do NOT touch collision groups or flags again
                 for _,p in ipairs(m:GetDescendants()) do
                     if p:IsA("BasePart") then
                         p.AssemblyLinearVelocity  = Vector3.new()
