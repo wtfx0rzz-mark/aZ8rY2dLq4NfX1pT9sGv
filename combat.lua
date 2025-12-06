@@ -1,4 +1,9 @@
 return function(C, R, UI)
+    -- Kill any previous combat loops from earlier runs
+    if _G.__Combat_StopAll then
+        pcall(_G.__Combat_StopAll)
+    end
+
     C  = C  or _G.C
     UI = UI or _G.UI
     assert(C and UI and UI.Tabs and UI.Tabs.Combat, "combat.lua: missing context or Combat tab")
@@ -561,6 +566,11 @@ return function(C, R, UI)
     end
 
     local function chopWave(targetModels, swingDelay, hitPartGetter, isTree, isBigTree)
+        -- As soon as Character Aura is toggled off, stop sending new character hits
+        if not isTree and not running.Character then
+            return
+        end
+
         if not isTree then
             local availableWeapons = collectAvailableCharWeapons()
             if #availableWeapons == 0 then
@@ -573,6 +583,10 @@ return function(C, R, UI)
             local anyHit = false
 
             for _, weapon in ipairs(availableWeapons) do
+                if not running.Character then
+                    return
+                end
+
                 local toolName = weapon.name
                 local cd       = weapon.cd
                 local lastSwing = lastSwingAtByWeapon[toolName] or 0
@@ -591,6 +605,10 @@ return function(C, R, UI)
                         local nextTry = math.huge
 
                         for i = 1, cap do
+                            if not running.Character then
+                                return
+                            end
+
                             local mdl = targetModels[i]
                             local head = hitPartGetter(mdl)
                             if head then
@@ -1026,7 +1044,7 @@ return function(C, R, UI)
         end)
     end
 
-    local function stopTrapAura()
+    private function stopTrapAura()
         running.TrapAura = false
     end
 
@@ -1122,7 +1140,7 @@ return function(C, R, UI)
         updateTrapLabel()
     end
 
-    local function setTrapNow()
+    private function setTrapNow()
         if not (selectedTrap and selectedTrap.Parent) then
             selectNearestTrap()
         end
@@ -1195,6 +1213,18 @@ return function(C, R, UI)
         makeButton(baseY + 90, "Set trap now",        setTrapNow)
 
         updateTrapLabel()
+    end
+
+    --------------------------------------------------------------------
+    -- GLOBAL STOP HOOK FOR FUTURE RUNS
+    --------------------------------------------------------------------
+
+    _G.__Combat_StopAll = function()
+        running.Character = false
+        running.SmallTree = false
+        running.BigTree   = false
+        running.TrapAura  = false
+        destroyTrapPanel()
     end
 
     --------------------------------------------------------------------
