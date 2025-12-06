@@ -484,6 +484,328 @@ return function(C, R, UI)
     end
 
     ----------------------------------------------------------------
+    -- Corpse movement (my body only)
+    ----------------------------------------------------------------
+    local CORPSE_Enable = false
+    local CORPSE_SPEED = 6.0
+
+    local corpseGui = nil
+    local corpseBody = nil
+    local corpsePrepared = nil
+
+    local corpseForward = false
+    local corpseBack    = false
+    local corpseLeft    = false
+    local corpseRight   = false
+
+    local function isMyBody(m)
+        if not (m and m:IsA("Model")) then return false end
+        local char = lp.Character
+        if char and (m == char or m:IsDescendantOf(char)) then
+            return false
+        end
+
+        local name = m.Name or ""
+        local lower = name:lower()
+        local corpseLike = false
+
+        if name == (lp.Name .. " Body") or name == (lp.DisplayName .. " Body") then
+            corpseLike = true
+        elseif lower:find("1337b00g", 1, true) then
+            corpseLike = true
+        elseif name:match("%sBody$") then
+            corpseLike = true
+        end
+
+        if not corpseLike then
+            return false
+        end
+
+        local uid = lp.UserId
+        local uidStr = tostring(uid)
+        local owner = m:GetAttribute("Owner")
+        local last  = m:GetAttribute("LastOwner")
+
+        if owner == uid or owner == uidStr or last == uid or last == uidStr then
+            return true
+        end
+
+        if name == (lp.Name .. " Body") or name == (lp.DisplayName .. " Body") then
+            return true
+        end
+
+        if lower:find("1337b00g", 1, true) then
+            return true
+        end
+
+        return false
+    end
+
+    local function findMyBody()
+        local best, bestD
+        local char = lp.Character
+        local refPos = nil
+        if char then
+            local h = char:FindFirstChild("HumanoidRootPart")
+            if h then
+                refPos = h.Position
+            end
+        end
+
+        local container = WS:FindFirstChild("Characters") or WS
+        for _,m in ipairs(container:GetChildren()) do
+            if m:IsA("Model") and isMyBody(m) then
+                local p = mainPart(m)
+                if p then
+                    if not refPos then
+                        return m
+                    end
+                    local d = (p.Position - refPos).Magnitude
+                    if not best or d < bestD then
+                        best, bestD = m, d
+                    end
+                end
+            end
+        end
+
+        if best then
+            return best
+        end
+
+        for _,inst in ipairs(WS:GetDescendants()) do
+            if inst:IsA("Model") and isMyBody(inst) then
+                return inst
+            end
+        end
+
+        return nil
+    end
+
+    local function prepBodyForNetwork(m)
+        if not m or not m.Parent then return end
+        local root = mainPart(m); if not root then return end
+
+        local snap = snapshotCollision(m)
+        setCollisionOff(m)
+
+        if RF_Start then
+            pcall(function() RF_Start:FireServer(m) end)
+        end
+
+        Run.Heartbeat:Wait()
+
+        local cf = (m:IsA("Model") and m:GetPivot()) or root.CFrame
+        pcall(function()
+            if m:IsA("Model") then
+                m:PivotTo(cf)
+            else
+                root.CFrame = cf
+            end
+        end)
+
+        Run.Heartbeat:Wait()
+
+        restoreCollision(m, snap)
+
+        if RF_Stop then
+            pcall(function() RF_Stop:FireServer(m) end)
+        end
+
+        setPhysicsRestore(m)
+        Run.Heartbeat:Wait()
+    end
+
+    local function getCorpse()
+        if corpseBody and corpseBody.Parent and isMyBody(corpseBody) then
+            return corpseBody
+        end
+        local found = findMyBody()
+        corpseBody = found
+        if found and found ~= corpsePrepared then
+            prepBodyForNetwork(found)
+            corpsePrepared = found
+        end
+        return found
+    end
+
+    local function moveCorpseDelta(body, delta)
+        if not body or not body.Parent then return end
+        local p = mainPart(body); if not p then return end
+        local cf = (body:IsA("Model") and body:GetPivot()) or p.CFrame
+        local newCF = cf + delta
+        if body:IsA("Model") then
+            body:PivotTo(newCF)
+        else
+            p.CFrame = newCF
+        end
+    end
+
+    local function computeCorpseDir()
+        local cam = workspace.CurrentCamera
+        if not cam then
+            return Vector3.new(0,0,0)
+        end
+
+        local look = cam.CFrame.LookVector
+        local right = cam.CFrame.RightVector
+
+        local f = Vector3.new(look.X, 0, look.Z)
+        local r = Vector3.new(right.X, 0, right.Z)
+
+        if f.Magnitude < 1e-4 then
+            f = Vector3.new(0,0,-1)
+        else
+            f = f.Unit
+        end
+
+        if r.Magnitude < 1e-4 then
+            r = Vector3.new(1,0,0)
+        else
+            r = r.Unit
+        end
+
+        local dir = Vector3.new(0,0,0)
+        if corpseForward then dir += f end
+        if corpseBack    then dir -= f end
+        if corpseRight   then dir += r end
+        if corpseLeft    then dir -= r end
+
+        if dir.Magnitude <= 0 then
+            return Vector3.new(0,0,0)
+        end
+        return dir.Unit
+    end
+
+    local function bindCorpseButton(btn, setter)
+        btn.MouseButton1Down:Connect(function()
+            setter(true)
+        end)
+        btn.MouseButton1Up:Connect(function()
+            setter(false)
+        end)
+        btn.MouseLeave:Connect(function()
+            setter(false)
+        end)
+    end
+
+    local function createCorpseGui()
+        if corpseGui then return end
+
+        local pg = lp:FindFirstChildOfClass("PlayerGui") or lp:WaitForChild("PlayerGui")
+
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "CorpseMoveGui"
+        gui.ResetOnSpawn = false
+        gui.Enabled = false
+        gui.Parent = pg
+
+        local frame = Instance.new("Frame")
+        frame.Name = "Pad"
+        frame.Size = UDim2.new(0, 200, 0, 140)
+        frame.Position = UDim2.new(0, 20, 0, 240)
+        frame.BackgroundColor3 = Color3.fromRGB(20,20,20)
+        frame.BorderSizePixel = 0
+        frame.Active = true
+        frame.Draggable = true
+        frame.Parent = gui
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 8)
+        corner.Parent = frame
+
+        local title = Instance.new("TextLabel")
+        title.Name = "Title"
+        title.Size = UDim2.new(1, -10, 0, 22)
+        title.Position = UDim2.new(0, 5, 0, 5)
+        title.BackgroundTransparency = 1
+        title.Font = Enum.Font.SourceSansBold
+        title.TextSize = 16
+        title.TextColor3 = Color3.fromRGB(255,255,255)
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.Text = "Corpse Move (Hold)"
+        title.Parent = frame
+
+        local grid = Instance.new("Frame")
+        grid.Name = "Grid"
+        grid.Size = UDim2.new(1, -10, 1, -32)
+        grid.Position = UDim2.new(0, 5, 0, 30)
+        grid.BackgroundTransparency = 1
+        grid.Parent = frame
+
+        local layout = Instance.new("UIGridLayout")
+        layout.CellSize = UDim2.new(0, 90, 0, 30)
+        layout.CellPadding = UDim2.new(0, 5, 0, 5)
+        layout.FillDirection = Enum.FillDirection.Horizontal
+        layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        layout.VerticalAlignment = Enum.VerticalAlignment.Top
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.Parent = grid
+
+        local function makeBtn(text, order)
+            local b = Instance.new("TextButton")
+            b.Name = text.."Button"
+            b.LayoutOrder = order or 0
+            b.Size = UDim2.new(0, 90, 0, 30)
+            b.BackgroundColor3 = Color3.fromRGB(40,40,40)
+            b.BorderSizePixel = 0
+            b.TextColor3 = Color3.fromRGB(255,255,255)
+            b.TextSize = 14
+            b.Font = Enum.Font.SourceSansBold
+            b.Text = text
+            b.Parent = grid
+            local c = Instance.new("UICorner")
+            c.CornerRadius = UDim.new(0, 6)
+            c.Parent = b
+            return b
+        end
+
+        local btnForward = makeBtn("Forward", 1)
+        local btnBack    = makeBtn("Back",    2)
+        local btnLeft    = makeBtn("Left",    3)
+        local btnRight   = makeBtn("Right",   4)
+
+        bindCorpseButton(btnForward, function(v) corpseForward = v end)
+        bindCorpseButton(btnBack,    function(v) corpseBack    = v end)
+        bindCorpseButton(btnLeft,    function(v) corpseLeft    = v end)
+        bindCorpseButton(btnRight,   function(v) corpseRight   = v end)
+
+        corpseGui = gui
+    end
+
+    local function destroyCorpseGui()
+        if corpseGui then
+            pcall(function() corpseGui:Destroy() end)
+        end
+        corpseGui = nil
+        corpseForward, corpseBack, corpseLeft, corpseRight = false,false,false,false
+    end
+
+    Run.Heartbeat:Connect(function(dt)
+        if not CORPSE_Enable then
+            if corpseGui then
+                corpseGui.Enabled = false
+            end
+            return
+        end
+
+        local body = getCorpse()
+        if corpseGui then
+            corpseGui.Enabled = (body ~= nil)
+        end
+        if not body then
+            return
+        end
+
+        local dir = computeCorpseDir()
+        if dir.Magnitude <= 0 then
+            return
+        end
+
+        local step = CORPSE_SPEED * dt
+        moveCorpseDelta(body, dir * step)
+    end)
+
+    ----------------------------------------------------------------
     -- Sapling protection
     ----------------------------------------------------------------
     local SAP_Enable = false
@@ -554,7 +876,7 @@ return function(C, R, UI)
     -- Precision movement controls + camera lock (camera-based)
     ----------------------------------------------------------------
     local PREC_Enable = false
-    local PREC_Speed  = 2.0 -- studs/sec, controlled by slider
+    local PREC_Speed  = 2.0
 
     local PREC_BaseLook   = nil
     local PREC_BaseRight  = nil
@@ -604,14 +926,12 @@ return function(C, R, UI)
 
             local rootPos = root.Position
 
-            -- Camera lock: keep camera in a fixed offset and angle captured at toggle-on
             local cam = workspace.CurrentCamera
             if cam then
                 local camPos = rootPos + PREC_CamOffset
                 cam.CFrame = CFrame.new(camPos, camPos + PREC_BaseLook)
             end
 
-            -- Movement directions based on camera angle at toggle time
             local forward3D = PREC_BaseLook
             local right3D   = PREC_BaseRight
 
@@ -678,11 +998,10 @@ return function(C, R, UI)
         gui.ResetOnSpawn = false
         gui.Parent = pg
 
-        -- Movement pad (no black box, higher up)
         local frame = Instance.new("Frame")
         frame.Name = "Pad"
         frame.Size = UDim2.new(0, 220, 0, 220)
-        frame.Position = UDim2.new(1, -230, 1, -380) -- was -300, moved higher
+        frame.Position = UDim2.new(1, -230, 1, -380)
         frame.BackgroundTransparency = 1
         frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
         frame.BorderSizePixel = 0
@@ -732,11 +1051,10 @@ return function(C, R, UI)
         bindMoveButton(btnLeft,    function(v) moveLeft    = v end)
         bindMoveButton(btnRight,   function(v) moveRight   = v end)
 
-        -- Custom speed slider, under the pad (also moved higher)
         local sliderFrame = Instance.new("Frame")
         sliderFrame.Name = "SpeedSliderFrame"
         sliderFrame.Size = UDim2.new(0, 220, 0, 40)
-        sliderFrame.Position = UDim2.new(1, -230, 1, -150) -- was -70, moved higher
+        sliderFrame.Position = UDim2.new(1, -230, 1, -150)
         sliderFrame.BackgroundTransparency = 1
         sliderFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
         sliderFrame.BorderSizePixel = 0
@@ -854,8 +1172,7 @@ return function(C, R, UI)
             end
         end)
 
-        -- Initial slider position (~low speed for precision)
-        applyAlpha(0.1) -- ~10% of range
+        applyAlpha(0.1)
 
         moveGui = gui
         ensureMoveHeartbeat()
@@ -921,6 +1238,44 @@ return function(C, R, UI)
     tab:Button({ Title = "Bring Body (Fast Drag)",  Callback = function() bringBodiesFast() end })
     tab:Button({ Title = "Release Body",            Callback = function() releaseBody() end })
     tab:Button({ Title = "Send All Bodies To Camp", Callback = function() sendBodiesToCamp() end })
+
+    tab:Section({ Title = "Corpse Movement" })
+    if tab.Toggle then
+        tab:Toggle({
+            Title = "Corpse Movement Controls",
+            Default = false,
+            Callback = function(v)
+                CORPSE_Enable = v and true or false
+                if CORPSE_Enable then
+                    createCorpseGui()
+                else
+                    if corpseGui then
+                        corpseGui.Enabled = false
+                    end
+                    corpseForward, corpseBack, corpseLeft, corpseRight = false,false,false,false
+                end
+            end
+        })
+    else
+        tab:Button({
+            Title = "Corpse Movement Controls: OFF",
+            Callback = function(btn)
+                local newState = not CORPSE_Enable
+                CORPSE_Enable = newState
+                if newState then
+                    createCorpseGui()
+                else
+                    if corpseGui then
+                        corpseGui.Enabled = false
+                    end
+                    corpseForward, corpseBack, corpseLeft, corpseRight = false,false,false,false
+                end
+                if btn and btn.SetTitle then
+                    btn:SetTitle("Corpse Movement Controls: " .. (newState and "ON" or "OFF"))
+                end
+            end
+        })
+    end
 
     tab:Section({ Title = "Protection" })
     if tab.Toggle then
