@@ -9,9 +9,19 @@ return function(C, R, UI)
     local tab  = Tabs.Bring
     assert(tab, "Bring tab not found in UI")
 
-    local AMOUNT_TO_BRING       = 500
-    local CONVEYOR_MAX_ACTIVE   = 10
-    local LIMIT_PER_NAME        = false
+    C.State = C.State or {}
+    if C.State.BringLimitEnabled == nil then
+        C.State.BringLimitEnabled = false
+    end
+    if not tonumber(C.State.BringLimitAmount) then
+        C.State.BringLimitAmount = 10
+    end
+
+    local function currentLimit()
+        local v = tonumber(C.State.BringLimitAmount) or 10
+        return math.clamp(v, 1, 100)
+    end
+
     local COLLIDE_OFF_SEC       = 0.22
     local DROP_ABOVE_HEAD_STUDS = 10
     local FALLBACK_UP           = 4
@@ -20,9 +30,6 @@ return function(C, R, UI)
     local CLUSTER_RADIUS_MIN    = 0.75
     local CLUSTER_RADIUS_STEP   = 0.04
     local CLUSTER_RADIUS_MAX    = 2.25
-
-    local CATEGORY_LIMIT_ENABLED = false
-    local CATEGORY_LIMIT_VALUE   = 10
 
     local AIR_DROP_WAVE_AMPLITUDE = 1.0
     local AIR_DROP_WAVE_FREQUENCY = 1.3
@@ -43,7 +50,7 @@ return function(C, R, UI)
     local weaponsArmor = {
         "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
         "Chainsaw","Crossbow","Katana","Kunai","Laser cannon","Laser sword","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
-        "Sword","Ice Axe","Thorn Armor"
+        "Sword","Ice Axe", "Thorn Armor"
     }
     local ammoMisc = {
         "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Sapling",
@@ -673,11 +680,15 @@ return function(C, R, UI)
     local function runConveyorWave(centerPos, orbPos, targets, jobId)
         local picked = getCandidates(centerPos, ORB_PICK_RADIUS, targets, jobId)
         if #picked == 0 then return 0 end
+
+        local limitOn = C.State.BringLimitEnabled and true or false
+        local maxPerName = currentLimit()
+
         local cnt, out = {}, {}
         for _,m in ipairs(picked) do
             local nm = m.Name or ""
             cnt[nm] = (cnt[nm] or 0) + 1
-            if (not LIMIT_PER_NAME) or cnt[nm] <= AMOUNT_TO_BRING then
+            if (not limitOn) or cnt[nm] <= maxPerName then
                 out[#out+1] = m
             end
         end
@@ -694,7 +705,7 @@ return function(C, R, UI)
             end
         end
         for i = 1, #picked do
-            while active >= CONVEYOR_MAX_ACTIVE do Run.Heartbeat:Wait() end
+            while active >= 10 do Run.Heartbeat:Wait() end
             spawnOne(picked[i])
             task.wait(0.5)
         end
@@ -777,14 +788,10 @@ return function(C, R, UI)
                 requestMoreStreamingAround({ root.Position })
             end
 
-            local limitEnabled = CATEGORY_LIMIT_ENABLED
-            local limitValue = math.clamp(CATEGORY_LIMIT_VALUE or 10, 1, 100)
-            local totalAdded = 0
+            local limitOn = C.State.BringLimitEnabled and true or false
+            local maxPerName = currentLimit()
 
             for _,d in ipairs(itemsFolder:GetDescendants()) do
-                if limitEnabled and totalAdded >= limitValue then
-                    break
-                end
                 local m = nil
                 if d:IsA("Model") then
                     if nameMatches(selectedSet, d) then m = d end
@@ -797,14 +804,9 @@ return function(C, R, UI)
                         local nm = m.Name
                         if not (nm == "Log" and isWallVariant(m)) then
                             perNameCount[nm] = (perNameCount[nm] or 0) + 1
-                            if (not LIMIT_PER_NAME) or perNameCount[nm] <= AMOUNT_TO_BRING then
-                                if (not limitEnabled) or totalAdded < limitValue then
-                                    local mp = mainPart(m)
-                                    if mp then
-                                        queue[#queue+1] = m
-                                        totalAdded += 1
-                                    end
-                                end
+                            if (not limitOn) or perNameCount[nm] <= maxPerName then
+                                local mp = mainPart(m)
+                                if mp then queue[#queue+1] = m end
                             end
                         end
                     end
@@ -835,37 +837,27 @@ return function(C, R, UI)
     tab:Button({ Title = "Scrap Nearby Junk(+Log/Chair)",      Callback = scrapNearby })
 
     tab:Section({ Title = "Bring Limits" })
-    if tab.Toggle then
-        tab:Toggle({
-            Title = "Enable Category Limit",
-            Default = false,
-            Callback = function(v)
-                CATEGORY_LIMIT_ENABLED = v and true or false
+    tab:Toggle({
+        Title = "Enable per-name limit",
+        Default = C.State.BringLimitEnabled and true or false,
+        Callback = function(on)
+            C.State.BringLimitEnabled = on and true or false
+        end
+    })
+    tab:Slider({
+        Title = "Max per item name",
+        Value = { Min = 1, Max = 100, Default = currentLimit() },
+        Callback = function(v)
+            local nv = v
+            if type(v) == "table" then
+                nv = v.Value or v.Current or v.CurrentValue or v.Default or v.min or v.max
             end
-        })
-    else
-        tab:Button({
-            Title = "Category Limit: OFF",
-            Callback = function(btn)
-                CATEGORY_LIMIT_ENABLED = not CATEGORY_LIMIT_ENABLED
-                if btn and btn.SetTitle then
-                    btn:SetTitle("Category Limit: " .. (CATEGORY_LIMIT_ENABLED and "ON" or "OFF"))
-                end
+            nv = tonumber(nv)
+            if nv then
+                C.State.BringLimitAmount = math.clamp(nv, 1, 100)
             end
-        })
-    end
-    if tab.Slider then
-        tab:Slider({
-            Title = "Max Items per Category",
-            Min = 1,
-            Max = 100,
-            Default = 10,
-            Callback = function(v)
-                local n = tonumber(v) or 10
-                CATEGORY_LIMIT_VALUE = math.clamp(n, 1, 100)
-            end
-        })
-    end
+        end
+    })
 
     tab:Section({ Title = "Junk → Ground (Multi)" })
     multiSelectDropdown({ title = "Select Junk Items", values = junkItems, setter = function(s) selJunkMany = s end })
@@ -945,7 +937,7 @@ return function(C, R, UI)
             local positions = {}
             local pLive = liveOrb1Pos(); if pLive then positions[#positions+1] = pLive end
             local pCamp = campOrbPos();  if pCamp then positions[#positions+1] = pCamp end
-            local pScr  = scrapOrbPos(); if pScr  then positions[#positions+1] = pScr end
+            local pScr  = scrapOrbPos(); if pScr  then positions[#positions+1] = pScr  end
             if #positions == 0 then return end
 
             local items = WS:FindFirstChild("Items"); if not items then return end
