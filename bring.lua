@@ -21,7 +21,9 @@ return function(C, R, UI)
     local CLUSTER_RADIUS_STEP   = 0.04
     local CLUSTER_RADIUS_MAX    = 2.25
 
-    -- Air-drop sprinkle tuning (for Bring → Ground)
+    local CATEGORY_LIMIT_ENABLED = false
+    local CATEGORY_LIMIT_VALUE   = 10
+
     local AIR_DROP_WAVE_AMPLITUDE = 1.0
     local AIR_DROP_WAVE_FREQUENCY = 1.3
 
@@ -41,7 +43,7 @@ return function(C, R, UI)
     local weaponsArmor = {
         "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
         "Chainsaw","Crossbow","Katana","Kunai","Laser cannon","Laser sword","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
-        "Sword","Ice Axe", "Thorn Armor"
+        "Sword","Ice Axe","Thorn Armor"
     }
     local ammoMisc = {
         "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Sapling",
@@ -346,7 +348,6 @@ return function(C, R, UI)
         return Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
     end
 
-    -- Air spawn in front of player; let gravity handle the fall.
     local function groundCFAroundPlayer(model)
         local root = hrp(); if not root then return nil end
         local head = headPart()
@@ -358,7 +359,6 @@ return function(C, R, UI)
         local offset  = ringOffset()
         local waveY   = math.sin(dropCounter * AIR_DROP_WAVE_FREQUENCY) * AIR_DROP_WAVE_AMPLITUDE
 
-        -- In front of player, up in the air, scattered with a small wave for the "sprinkle" effect.
         local pos = basePos
             + look * FALLBACK_AHEAD
             + Vector3.new(0, DROP_ABOVE_HEAD_STUDS, 0)
@@ -777,7 +777,14 @@ return function(C, R, UI)
                 requestMoreStreamingAround({ root.Position })
             end
 
+            local limitEnabled = CATEGORY_LIMIT_ENABLED
+            local limitValue = math.clamp(CATEGORY_LIMIT_VALUE or 10, 1, 100)
+            local totalAdded = 0
+
             for _,d in ipairs(itemsFolder:GetDescendants()) do
+                if limitEnabled and totalAdded >= limitValue then
+                    break
+                end
                 local m = nil
                 if d:IsA("Model") then
                     if nameMatches(selectedSet, d) then m = d end
@@ -791,8 +798,13 @@ return function(C, R, UI)
                         if not (nm == "Log" and isWallVariant(m)) then
                             perNameCount[nm] = (perNameCount[nm] or 0) + 1
                             if (not LIMIT_PER_NAME) or perNameCount[nm] <= AMOUNT_TO_BRING then
-                                local mp = mainPart(m)
-                                if mp then queue[#queue+1] = m end
+                                if (not limitEnabled) or totalAdded < limitValue then
+                                    local mp = mainPart(m)
+                                    if mp then
+                                        queue[#queue+1] = m
+                                        totalAdded += 1
+                                    end
+                                end
                             end
                         end
                     end
@@ -821,6 +833,39 @@ return function(C, R, UI)
     tab:Section({ Title = "Actions" })
     tab:Button({ Title = "Burn/Cook Nearby (Fuel + Raw Food)", Callback = burnNearby })
     tab:Button({ Title = "Scrap Nearby Junk(+Log/Chair)",      Callback = scrapNearby })
+
+    tab:Section({ Title = "Bring Limits" })
+    if tab.Toggle then
+        tab:Toggle({
+            Title = "Enable Category Limit",
+            Default = false,
+            Callback = function(v)
+                CATEGORY_LIMIT_ENABLED = v and true or false
+            end
+        })
+    else
+        tab:Button({
+            Title = "Category Limit: OFF",
+            Callback = function(btn)
+                CATEGORY_LIMIT_ENABLED = not CATEGORY_LIMIT_ENABLED
+                if btn and btn.SetTitle then
+                    btn:SetTitle("Category Limit: " .. (CATEGORY_LIMIT_ENABLED and "ON" or "OFF"))
+                end
+            end
+        })
+    end
+    if tab.Slider then
+        tab:Slider({
+            Title = "Max Items per Category",
+            Min = 1,
+            Max = 100,
+            Default = 10,
+            Callback = function(v)
+                local n = tonumber(v) or 10
+                CATEGORY_LIMIT_VALUE = math.clamp(n, 1, 100)
+            end
+        })
+    end
 
     tab:Section({ Title = "Junk → Ground (Multi)" })
     multiSelectDropdown({ title = "Select Junk Items", values = junkItems, setter = function(s) selJunkMany = s end })
@@ -900,7 +945,7 @@ return function(C, R, UI)
             local positions = {}
             local pLive = liveOrb1Pos(); if pLive then positions[#positions+1] = pLive end
             local pCamp = campOrbPos();  if pCamp then positions[#positions+1] = pCamp end
-            local pScr  = scrapOrbPos(); if pScr  then positions[#positions+1] = pScr  end
+            local pScr  = scrapOrbPos(); if pScr  then positions[#positions+1] = pScr end
             if #positions == 0 then return end
 
             local items = WS:FindFirstChild("Items"); if not items then return end
