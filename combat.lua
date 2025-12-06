@@ -1,9 +1,4 @@
 return function(C, R, UI)
-    -- Kill any previous combat loops from earlier runs
-    if _G.__Combat_StopAll then
-        pcall(_G.__Combat_StopAll)
-    end
-
     C  = C  or _G.C
     UI = UI or _G.UI
     assert(C and UI and UI.Tabs and UI.Tabs.Combat, "combat.lua: missing context or Combat tab")
@@ -566,7 +561,7 @@ return function(C, R, UI)
     end
 
     local function chopWave(targetModels, swingDelay, hitPartGetter, isTree, isBigTree)
-        -- As soon as Character Aura is toggled off, stop sending new character hits
+        -- If Character aura is toggled off, bail out of character waves immediately
         if not isTree and not running.Character then
             return
         end
@@ -1044,7 +1039,7 @@ return function(C, R, UI)
         end)
     end
 
-    private function stopTrapAura()
+    local function stopTrapAura()
         running.TrapAura = false
     end
 
@@ -1140,7 +1135,7 @@ return function(C, R, UI)
         updateTrapLabel()
     end
 
-    private function setTrapNow()
+    local function setTrapNow()
         if not (selectedTrap and selectedTrap.Parent) then
             selectNearestTrap()
         end
@@ -1213,18 +1208,6 @@ return function(C, R, UI)
         makeButton(baseY + 90, "Set trap now",        setTrapNow)
 
         updateTrapLabel()
-    end
-
-    --------------------------------------------------------------------
-    -- GLOBAL STOP HOOK FOR FUTURE RUNS
-    --------------------------------------------------------------------
-
-    _G.__Combat_StopAll = function()
-        running.Character = false
-        running.SmallTree = false
-        running.BigTree   = false
-        running.TrapAura  = false
-        destroyTrapPanel()
     end
 
     --------------------------------------------------------------------
