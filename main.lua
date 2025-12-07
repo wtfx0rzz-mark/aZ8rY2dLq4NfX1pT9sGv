@@ -40,6 +40,37 @@ _G.R  = _G.R or {}
 _G.UI = UI
 
 -------------------------------------------------------
+-- Force GameplayPaused to always stay false
+-- (exactly your original script behavior)
+-------------------------------------------------------
+local Players = game:GetService("Players")
+local lp = Players.LocalPlayer
+
+local function forceUnpaused()
+    pcall(function()
+        if lp.GameplayPaused then
+            lp.GameplayPaused = false
+        end
+    end)
+end
+
+-- Clear it once on start
+forceUnpaused()
+
+-- React whenever Roblox / the game toggles it
+pcall(function()
+    lp:GetPropertyChangedSignal("GameplayPaused"):Connect(forceUnpaused)
+end)
+
+-- Extra safety: periodic watchdog
+task.spawn(function()
+    while true do
+        forceUnpaused()
+        task.wait(0.25) -- same cadence as your original
+    end
+end)
+
+-------------------------------------------------------
 -- 🔧 MODULE LOADER SECTION
 -------------------------------------------------------
 -- Each module attaches its features to the corresponding tab
@@ -48,16 +79,14 @@ _G.UI = UI
 local paths = {
     Combat  = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/combat.lua",
     Bring   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/bring.lua",
-    Gather    = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/gather.lua",
-    Player   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/player.lua",
+    Gather  = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/gather.lua",
+    Player  = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/player.lua",
     Auto    = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/auto.lua",
     Visuals = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/visuals.lua",
     TPBring = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/tpbring.lua",
-    Debug = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/debug.lua",
-    Troll = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/troll.lua",
-    Nudge = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/nudge.lua"
-
-
+    Debug   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/debug.lua",
+    Troll   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/troll.lua",
+    Nudge   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/nudge.lua"
 }
 
 for name, url in pairs(paths) do
