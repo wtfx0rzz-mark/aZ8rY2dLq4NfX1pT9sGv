@@ -102,6 +102,13 @@ return function(C, R, UI)
     local flingLoopStarted  = false
 
     ---------------------------------------------------------------------
+    -- BEAR TRAP HEIGHT CONFIG
+    ---------------------------------------------------------------------
+
+    local TRAP_HEIGHT_OFFSET_DEFAULT = 0
+    local trapHeightOffset = TRAP_HEIGHT_OFFSET_DEFAULT
+
+    ---------------------------------------------------------------------
     -- HELPERS
     ---------------------------------------------------------------------
 
@@ -1138,23 +1145,6 @@ return function(C, R, UI)
                                     end
                                 end
 
-                                if horizSpeed > 0 then
-                                    local rcParams = RaycastParams.new()
-                                    rcParams.FilterType = Enum.RaycastFilterType.Exclude
-                                    rcParams.FilterDescendantsInstances = { mdl, lp.Character }
-
-                                    local castDist = 4
-                                    local rc = WS:Raycast(itemPos, dir * castDist, rcParams)
-                                    if rc and rc.Instance then
-                                        local n = rc.Normal
-                                        local alongWall = dir - dir:Dot(n) * n
-                                        if alongWall.Magnitude > 1e-3 then
-                                            dir = alongWall.Unit
-                                        end
-                                        upSpeed = upSpeed + 25
-                                    end
-                                end
-
                                 if horizSpeed > 0 or upSpeed > 0 then
                                     local vel = dir * horizSpeed + Vector3.new(0, upSpeed, 0)
                                     hopState[mdl] = { lastHopAt = now }
@@ -1216,7 +1206,8 @@ return function(C, R, UI)
                                 if not trap or not trap.Parent then return end
                                 safeStartDrag(trap)
 
-                                local targetCF = root.CFrame * CFrame.new(0, -2, 0)
+                                -- Adjustable trap height relative to player
+                                local targetCF = root.CFrame * CFrame.new(0, trapHeightOffset, 0)
                                 setPivot(trap, targetCF)
 
                                 safeStopDrag(trap)
@@ -1401,6 +1392,23 @@ return function(C, R, UI)
     })
 
     tab:Section({ Title = "Bear Traps" })
+
+    tab:Slider({
+        Title = "Trap Height Offset",
+        Value = { Min = -10, Max = 10, Default = TRAP_HEIGHT_OFFSET_DEFAULT },
+        Callback = function(v)
+            local n
+            if type(v) == "table" then
+                n = v.Value or v.Current or v.Default
+            else
+                n = v
+            end
+            n = tonumber(n)
+            if n then
+                trapHeightOffset = math.clamp(n, -20, 20)
+            end
+        end
+    })
 
     tab:Button({
         Title = "Send Traps",
