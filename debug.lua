@@ -300,6 +300,30 @@ return function(C, R, UI)
         root.AssemblyAngularVelocity = Vector3.new()
     end
 
+    local function settleBodyOnGround(m)
+        local p = mainPart(m); if not p then return end
+        local cf = (m:IsA("Model") and m:GetPivot()) or p.CFrame
+        local groundPos = groundBelow(cf.Position)
+        local halfY = 0
+        pcall(function()
+            halfY = p.Size.Y * 0.5
+        end)
+        local newPos = Vector3.new(cf.Position.X, groundPos.Y + halfY + 0.05, cf.Position.Z)
+        local look = cf.LookVector
+        if look.Magnitude < 1e-4 then
+            look = Vector3.new(0,0,-1)
+        end
+        local newCF = CFrame.new(newPos, newPos + look.Unit)
+        pcall(function()
+            if m:IsA("Model") then
+                m:PivotTo(newCF)
+            else
+                p.CFrame = newCF
+            end
+        end)
+        zeroAssembly(p)
+    end
+
     local function allBodyModels()
         local out = {}
         local chars = WS:FindFirstChild("Characters") or WS
@@ -368,6 +392,7 @@ return function(C, R, UI)
             restoreCollision(m, snap)
             if RF_Stop then pcall(function() RF_Stop:FireServer(m) end) end
             setPhysicsRestore(m)
+            settleBodyOnGround(m)
             Run.Heartbeat:Wait()
         end
     end
@@ -479,6 +504,7 @@ return function(C, R, UI)
             restoreCollision(m, snap)
             if RF_Stop then pcall(function() RF_Stop:FireServer(m) end) end
             setPhysicsRestore(m)
+            settleBodyOnGround(m)
             Run.Heartbeat:Wait()
         end
     end
@@ -486,6 +512,18 @@ return function(C, R, UI)
     ----------------------------------------------------------------
     -- Corpse movement (my body only)
     ----------------------------------------------------------------
+    local function isPlayerDead()
+        local char = lp.Character
+        if not char then return false end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum then return false end
+        if hum.Health <= 0 then
+            return true
+        end
+        local state = hum:GetState()
+        return state == Enum.HumanoidStateType.Dead or state == Enum.HumanoidStateType.Physics
+    end
+
     local CORPSE_Enable = false
     local CORPSE_SPEED = 6.0
 
@@ -782,6 +820,13 @@ return function(C, R, UI)
 
     Run.Heartbeat:Connect(function(dt)
         if not CORPSE_Enable then
+            if corpseGui then
+                corpseGui.Enabled = false
+            end
+            return
+        end
+
+        if not isPlayerDead() then
             if corpseGui then
                 corpseGui.Enabled = false
             end
@@ -1218,6 +1263,87 @@ return function(C, R, UI)
     end
 
     ----------------------------------------------------------------
+    -- Gameplay Unpause (from GameplayUnpause.lua)
+    ----------------------------------------------------------------
+    local GP_Enable = true
+
+    local function gp_safeGetCharacterRoot()
+        local char = lp.Character or lp.CharacterAdded:Wait()
+        return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChildWhichIsA("BasePart")
+    end
+
+    local function gp_waitForWindUIReady()
+        local timeout = 15
+        local startTime = tick()
+        while tick() - startTime < timeout do
+            if (UI and UI.ReadyFlag == true) or (_G and _G.UI and _G.UI.ReadyFlag == true) then
+                return true
+            end
+            if Run.RenderStepped then
+                Run.RenderStepped:Wait()
+            else
+                Run.Heartbeat:Wait()
+            end
+        end
+        return false
+    end
+
+    local function gp_resumeHumanoidState()
+        local char = lp.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        hum.PlatformStand = false
+        if hum.Health > 0 then
+            pcall(function()
+                hum:ChangeState(Enum.HumanoidStateType.Running)
+            end)
+        end
+    end
+
+    local function gp_removeAnchorsFromCharacter()
+        local char = lp.Character
+        if not char then return end
+        for _,d in ipairs(char:GetDescendants()) do
+            if d:IsA("BasePart") then
+                d.Anchored = false
+            end
+        end
+    end
+
+    local function gp_restoreCamera()
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        if cam.CameraType == Enum.CameraType.Scriptable then
+            cam.CameraType = Enum.CameraType.Custom
+            local char = lp.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                cam.CameraSubject = hum
+            end
+        end
+    end
+
+    local function gp_doGameplayUnpause()
+        local root = gp_safeGetCharacterRoot()
+        if not root then return end
+        root.AssemblyLinearVelocity = Vector3.new()
+        root.AssemblyAngularVelocity = Vector3.new()
+        gp_removeAnchorsFromCharacter()
+        gp_resumeHumanoidState()
+        gp_restoreCamera()
+    end
+
+    task.spawn(function()
+        if not GP_Enable then return end
+        local okReady = gp_waitForWindUIReady()
+        if not okReady then return end
+        task.wait(0.25)
+        if not GP_Enable then return end
+        gp_doGameplayUnpause()
+    end)
+
+    ----------------------------------------------------------------
     -- UI SECTIONS
     ----------------------------------------------------------------
     tab:Section({ Title = "Item Recovery" })
@@ -1234,10 +1360,10 @@ return function(C, R, UI)
     tab:Button({ Title = "Stop Drag Nearby",  Callback = function() stopDragAll() end })
 
     tab:Section({ Title = "Body Tests" })
-    tab:Button({ Title = "TP To Body",              Callback = function() tpPlayerToBody() end })
-    tab:Button({ Title = "Bring Body (Fast Drag)",  Callback = function() bringBodiesFast() end })
-    tab:Button({ Title = "Release Body",            Callback = function() releaseBody() end })
-    tab:Button({ Title = "Send All Bodies To Camp", Callback = function() sendBodiesToCamp() end })
+    tab:Button({ Title = "TP To Body",             Callback = function() tpPlayerToBody() end })
+    tab:Button({ Title = "Bring Body (Fast Drag)", Callback = function() bringBodiesFast(); bringBodiesFast() end })
+    tab:Button({ Title = "Release Body",           Callback = function() releaseBody() end })
+    tab:Button({ Title = "Send All Bodies To Camp", Callback = function() sendBodiesToCamp(); sendBodiesToCamp() end })
 
     tab:Section({ Title = "Corpse Movement" })
     if tab.Toggle then
@@ -1318,6 +1444,27 @@ return function(C, R, UI)
                     btn:SetTitle("Precision Movement Controls: " .. (newState and "ON" or "OFF"))
                 end
                 setPrecisionEnabled(newState)
+            end
+        })
+    end
+
+    tab:Section({ Title = "Gameplay Unpause" })
+    if tab.Toggle then
+        tab:Toggle({
+            Title = "Auto Gameplay Unpause",
+            Default = true,
+            Callback = function(v)
+                GP_Enable = v and true or false
+            end
+        })
+    else
+        tab:Button({
+            Title = "Auto Gameplay Unpause: ON",
+            Callback = function(btn)
+                GP_Enable = not GP_Enable
+                if btn and btn.SetTitle then
+                    btn:SetTitle("Auto Gameplay Unpause: " .. (GP_Enable and "ON" or "OFF"))
+                end
             end
         })
     end
