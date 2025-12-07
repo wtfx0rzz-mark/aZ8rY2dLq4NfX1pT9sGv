@@ -1263,10 +1263,8 @@ return function(C, R, UI)
     end
 
     ----------------------------------------------------------------
-    -- Gameplay Unpause (from GameplayUnpause.lua)
+    -- Gameplay Unpause (from GameplayUnpause.lua) – always runs once
     ----------------------------------------------------------------
-    local GP_Enable = true
-
     local function gp_safeGetCharacterRoot()
         local char = lp.Character or lp.CharacterAdded:Wait()
         return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChildWhichIsA("BasePart")
@@ -1334,12 +1332,11 @@ return function(C, R, UI)
         gp_restoreCamera()
     end
 
+    -- Run once on module load, no UI/toggle, matching original behavior
     task.spawn(function()
-        if not GP_Enable then return end
         local okReady = gp_waitForWindUIReady()
         if not okReady then return end
         task.wait(0.25)
-        if not GP_Enable then return end
         gp_doGameplayUnpause()
     end)
 
@@ -1360,9 +1357,9 @@ return function(C, R, UI)
     tab:Button({ Title = "Stop Drag Nearby",  Callback = function() stopDragAll() end })
 
     tab:Section({ Title = "Body Tests" })
-    tab:Button({ Title = "TP To Body",             Callback = function() tpPlayerToBody() end })
-    tab:Button({ Title = "Bring Body (Fast Drag)", Callback = function() bringBodiesFast(); bringBodiesFast() end })
-    tab:Button({ Title = "Release Body",           Callback = function() releaseBody() end })
+    tab:Button({ Title = "TP To Body",              Callback = function() tpPlayerToBody() end })
+    tab:Button({ Title = "Bring Body (Fast Drag)",  Callback = function() bringBodiesFast(); bringBodiesFast() end })
+    tab:Button({ Title = "Release Body",            Callback = function() releaseBody() end })
     tab:Button({ Title = "Send All Bodies To Camp", Callback = function() sendBodiesToCamp(); sendBodiesToCamp() end })
 
     tab:Section({ Title = "Corpse Movement" })
@@ -1444,27 +1441,6 @@ return function(C, R, UI)
                     btn:SetTitle("Precision Movement Controls: " .. (newState and "ON" or "OFF"))
                 end
                 setPrecisionEnabled(newState)
-            end
-        })
-    end
-
-    tab:Section({ Title = "Gameplay Unpause" })
-    if tab.Toggle then
-        tab:Toggle({
-            Title = "Auto Gameplay Unpause",
-            Default = true,
-            Callback = function(v)
-                GP_Enable = v and true or false
-            end
-        })
-    else
-        tab:Button({
-            Title = "Auto Gameplay Unpause: ON",
-            Callback = function(btn)
-                GP_Enable = not GP_Enable
-                if btn and btn.SetTitle then
-                    btn:SetTitle("Auto Gameplay Unpause: " .. (GP_Enable and "ON" or "OFF"))
-                end
             end
         })
     end
