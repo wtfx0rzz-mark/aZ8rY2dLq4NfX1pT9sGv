@@ -265,19 +265,6 @@ return function(C, R, UI)
         end
     end
 
-    MemoryTab:Toggle({
-        Title = "ALL: apply every deletion group (one-shot)",
-        Default = false,
-        Callback = function(value)
-            if not value then
-                return
-            end
-            for _, group in ipairs(GROUPS) do
-                runGroup(group)
-            end
-        end,
-    })
-
     for _, group in ipairs(GROUPS) do
         MemoryTab:Toggle({
             Title = group.label,
