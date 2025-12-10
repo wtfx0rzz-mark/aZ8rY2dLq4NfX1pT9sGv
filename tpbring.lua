@@ -143,10 +143,10 @@ return function(C, R, UI)
     local STAGE_TIMEOUT_S         = 1.5
     local ORB_UNSTICK_RAD         = 2.0
     local ORB_UNSTICK_HZ          = 10
-    local STUCK_TTL               = 6.0
+    local STUCK_TTL               = 1.0
 
-    local MAX_LINED_ITEMS         = 20
-    local DROP_LINE_SPACING       = 3.0
+    local MAX_LINED_ITEMS         = 10
+    local DROP_LINE_SPACING       = 4.0
     local DROP_VERTICAL_OFFSET    = 8.0
 
     local MAX_DIST_DEFAULT        = 500        -- campfire/scrapper/noticeboard radius
@@ -191,7 +191,7 @@ return function(C, R, UI)
     local weaponsArmor = {
         "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
         "Chainsaw","Crossbow","Katana","Kunai","Laser cannon","Laser sword","Morningstar","Riot shield","Spear","Tactical Shotgun","Wildfire",
-        "Sword","Ice Axe"
+        "Sword","Ice Axe","Thorn Body"
     }
     local ammoMisc = {
         "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Sapling",
