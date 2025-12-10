@@ -17,7 +17,7 @@ return function(C, R, UI)
         "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
         "UFO Junk","UFO Component"
     }
-    local fuelItems = { "Log","Coal","Fuel Canister","Oil Barrel","Chair" }
+    local fuelItems = { "Log","Coal","Fuel Canister","Oil Barrel","Chair","Biofuel" }
     local foodItems = {
         "Cake","Cooked Steak","Cooked Morsel","Steak","Morsel","Berry","Carrot",
         "Chilli","Stew","Ribs","Pumpkin","Hearty Stew","Cooked Ribs","Corn","BBQ ribs","Apple","Mackerel"
