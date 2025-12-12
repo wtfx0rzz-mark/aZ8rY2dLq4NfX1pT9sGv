@@ -93,9 +93,9 @@ return function(C, R, UI)
             local bp = lp:FindFirstChildOfClass("Backpack")
 
             local priorities = {
-                ["GoldenAxe"] = 3,
-                ["SteelAxe"]  = 2,
-                ["BasicAxe"]  = 1,
+                ["Strong Axe"] = 3,
+                ["Good Axe"]  = 2,
+                ["Old Axe"]  = 1,
             }
 
             local bestTool, bestPrio = nil, -1
