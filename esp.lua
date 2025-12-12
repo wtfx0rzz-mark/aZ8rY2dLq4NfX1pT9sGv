@@ -168,17 +168,29 @@ return function(C, R, UI)
     local LOCAL_PICKUP_RADIUS  = 16
     local SCAN_INTERVAL        = 0.25
 
+    local BASE_LABEL_WIDTH     = 120
+    local BASE_LABEL_HEIGHT    = 24
+    local SIZE_NEAR_DIST       = 40
+    local SIZE_FAR_DIST        = 220
+    local SIZE_NEAR_SCALE      = 1.25
+    local SIZE_FAR_SCALE       = 0.6
+
     C.State.ESP = C.State.ESP or {}
     local S = C.State.ESP
     if S.Enabled == nil then S.Enabled = false end
     if S.CacheEnabled == nil then S.CacheEnabled = false end
 
+    local espCache = {}
+    local modelToKey = setmetatable({}, { __mode = "k" })
+
     local selJunk, selFuel, selFood, selMedical, selWA, selMisc, selPelt = {},{},{},{},{},{},{}
     local activeSelection = {}
 
-    local espCache = {}
-    local modelToKey = setmetatable({}, { __mode = "k" })
-    local pendingFullClear = false
+    local function mergeSet(dst, src)
+        for k,v in pairs(src) do
+            if v then dst[k] = true end
+        end
+    end
 
     local function clearEntry(entry)
         if entry.con then
@@ -195,13 +207,13 @@ return function(C, R, UI)
         end
     end
 
-    local function requestFullClear()
-        pendingFullClear = true
-    end
-
-    local function mergeSet(dst, src)
-        for k,v in pairs(src) do
-            if v then dst[k] = true end
+    local function clearUnselectedCaches()
+        for key, entry in pairs(espCache) do
+            local name = entry.name
+            if not activeSelection[name] then
+                clearEntry(entry)
+                espCache[key] = nil
+            end
         end
     end
 
@@ -215,7 +227,7 @@ return function(C, R, UI)
         mergeSet(dst, selMisc)
         mergeSet(dst, selPelt)
         activeSelection = dst
-        requestFullClear()
+        clearUnselectedCaches()
     end
 
     local function setFromChoice(choice)
@@ -247,10 +259,9 @@ return function(C, R, UI)
     local function createBillboard(name)
         local pg = lp:FindFirstChildOfClass("PlayerGui")
         if not pg then return nil end
-
         local gui = Instance.new("BillboardGui")
         gui.Name = "ESP_Item"
-        gui.Size = UDim2.new(0, 160, 0, 24)
+        gui.Size = UDim2.new(0, BASE_LABEL_WIDTH, 0, BASE_LABEL_HEIGHT)
         gui.AlwaysOnTop = true
         gui.MaxDistance = 10000
         gui.StudsOffset = Vector3.new(0, 3, 0)
@@ -263,11 +274,41 @@ return function(C, R, UI)
         lbl.TextScaled = false
         lbl.TextSize = 14
         lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-        lbl.TextStrokeTransparency = 0.4
+        lbl.TextStrokeTransparency = 0.3
         lbl.Text = name
         lbl.Parent = gui
 
         return gui, lbl
+    end
+
+    local function shouldCacheName(name)
+        if not name then return false end
+        local l = string.lower(name)
+        if l == "log" then return false end
+        return true
+    end
+
+    local function updateEntryVisual(entry, rootPos)
+        if not entry.marker or not entry.label then return end
+        entry.label.Text = entry.name
+        local pos = entry.lastPos
+        local scale = 1
+        if rootPos and pos then
+            local d = (rootPos - pos).Magnitude
+            local t
+            if d <= SIZE_NEAR_DIST then
+                t = 0
+            elseif d >= SIZE_FAR_DIST then
+                t = 1
+            else
+                t = (d - SIZE_NEAR_DIST) / (SIZE_FAR_DIST - SIZE_NEAR_DIST)
+            end
+            scale = SIZE_NEAR_SCALE - (SIZE_NEAR_SCALE - SIZE_FAR_SCALE) * t
+        else
+            scale = 1
+        end
+        entry.marker.Size = UDim2.new(0, BASE_LABEL_WIDTH * scale, 0, BASE_LABEL_HEIGHT * scale)
+        entry.marker.Enabled = S.Enabled
     end
 
     local function attachToModel(entry, model)
@@ -280,9 +321,6 @@ return function(C, R, UI)
             entry.marker = gui
             entry.label  = lbl
         end
-        if entry.label then
-            entry.label.Text = entry.name
-        end
         if entry.ghostPart then
             entry.ghostPart:Destroy()
             entry.ghostPart = nil
@@ -291,19 +329,15 @@ return function(C, R, UI)
         att.Name = "__ESP_Att"
         att.Parent = mp
         entry.marker.Adornee = att
-        entry.marker.Enabled = S.Enabled
+        updateEntryVisual(entry, hrp() and hrp().Position or nil)
     end
 
     local function attachGhost(entry)
-        if not S.CacheEnabled then
+        if not S.CacheEnabled or not shouldCacheName(entry.name) then
             clearEntry(entry)
             return
         end
         if not entry.lastPos then
-            clearEntry(entry)
-            return
-        end
-        if entry.name == "Log" then
             clearEntry(entry)
             return
         end
@@ -333,7 +367,7 @@ return function(C, R, UI)
         else
             entry.ghostPart.CFrame = CFrame.new(entry.lastPos)
         end
-        entry.marker.Enabled = S.Enabled
+        updateEntryVisual(entry, hrp() and hrp().Position or nil)
     end
 
     local function handleDespawn(model, key)
@@ -345,19 +379,17 @@ return function(C, R, UI)
             entry.con = nil
         end
 
-        if entry.name == "Log" then
-            clearEntry(entry)
-            espCache[key] = nil
-            return
-        end
-
         local root = hrp()
         local pos  = entry.lastPos
-        local near = false
+        local pickedUp = false
         if root and pos then
-            near = (root.Position - pos).Magnitude <= LOCAL_PICKUP_RADIUS
+            local dist = (root.Position - pos).Magnitude
+            if dist <= LOCAL_PICKUP_RADIUS * 2 then
+                pickedUp = true
+            end
         end
-        if near then
+
+        if pickedUp or not S.CacheEnabled or not shouldCacheName(entry.name) then
             clearEntry(entry)
             espCache[key] = nil
         else
@@ -370,14 +402,6 @@ return function(C, R, UI)
         local gx = math.floor(pos.X / VERIFY_RADIUS)
         local gz = math.floor(pos.Z / VERIFY_RADIUS)
         return name .. "|" .. gx .. "|" .. gz
-    end
-
-    local function clearAllCachesNow()
-        for key, entry in pairs(espCache) do
-            clearEntry(entry)
-            espCache[key] = nil
-        end
-        modelToKey = setmetatable({}, { __mode = "k" })
     end
 
     tab:Section({ Title = "ESP Controls" })
@@ -430,22 +454,16 @@ return function(C, R, UI)
     tab:Section({ Title = "Pelts ESP (Multi)" })
     multiSelectDropdown({ title = "Select Pelts", values = pelts, setter = function(s) selPelt = s end })
 
+    tab:Section({ Title = "Cache Maintenance" })
     tab:Button({
-        Title = "Clear cached ESP entries",
-        Callback = function()
-            requestFullClear()
-        end
+        Title = "Clear cached items not in selection",
+        Callback = clearUnselectedCaches
     })
 
     recomputeActiveSelection()
 
     task.spawn(function()
         while true do
-            if pendingFullClear then
-                pendingFullClear = false
-                clearAllCachesNow()
-            end
-
             if S.Enabled and next(activeSelection) ~= nil then
                 local ok, err = pcall(function()
                     local root = hrp()
@@ -463,9 +481,7 @@ return function(C, R, UI)
                         if part:IsA("BasePart") then
                             local m = nearestSelectedModelFromPart(part, activeSelection)
                             if m then
-                                if isUnderLogWall(m) or isWallVariant(m) then
-                                    -- skip
-                                else
+                                if not (isUnderLogWall(m) or isWallVariant(m)) then
                                     local mp = mainPart(m)
                                     if mp then
                                         local pos = mp.Position
@@ -486,11 +502,12 @@ return function(C, R, UI)
                                         end
                                         if not entry.con then
                                             entry.con = m.AncestryChanged:Connect(function(_, parent)
-                                                if not parent then
+                                                if not parent or not m:IsDescendantOf(WS) then
                                                     handleDespawn(m, key)
                                                 end
                                             end)
                                         end
+                                        updateEntryVisual(entry, center)
                                         attachToModel(entry, m)
                                     end
                                 end
@@ -501,30 +518,12 @@ return function(C, R, UI)
                     for key, entry in pairs(espCache) do
                         if entry.live and not seenKeys[key] then
                             local m = entry.live
-                            if m and m.Parent then
+                            if m and m.Parent and m:IsDescendantOf(WS) then
                                 local mp = mainPart(m)
                                 if mp then
                                     entry.lastPos = mp.Position
+                                    updateEntryVisual(entry, center)
                                 end
-                            end
-                        end
-                    end
-
-                    local rootPos = root.Position
-                    local minSize, maxSize = 10, 18
-                    local nearDist, farDist = 40, ESP_SCAN_RADIUS
-
-                    for _, entry in pairs(espCache) do
-                        if entry.marker and entry.label and entry.lastPos then
-                            local dist = (entry.lastPos - rootPos).Magnitude
-                            if dist <= nearDist then
-                                entry.label.TextSize = maxSize
-                            elseif dist >= farDist then
-                                entry.label.TextSize = minSize
-                            else
-                                local t = 1 - (dist - nearDist) / (farDist - nearDist)
-                                local size = minSize + (maxSize - minSize) * t
-                                entry.label.TextSize = math.floor(size + 0.5)
                             end
                         end
                     end
