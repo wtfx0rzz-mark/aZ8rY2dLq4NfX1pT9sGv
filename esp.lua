@@ -3,7 +3,7 @@ return function(C, R, UI)
     C  = C  or _G.C
     UI = UI or _G.UI
 
-    assert(C and UI and UI.Tabs and UI.Tabs.ESP, "esp.lua: ESP tab missing")
+    assert(C and UI and UI.Tabs and UI.Tabs.Esp, "esp.lua: ESP tab missing")
 
     local Services = C.Services or {}
     local Players  = Services.Players or game:GetService("Players")
@@ -11,7 +11,7 @@ return function(C, R, UI)
     local Run      = Services.Run     or game:GetService("RunService")
     local lp       = Players.LocalPlayer
 
-    local tab = UI.Tabs.ESP
+    local tab = UI.Tabs.Esp
 
     C.State = C.State or {}
     if C.State.ESPEnabled == nil then
@@ -246,13 +246,11 @@ return function(C, R, UI)
 
     local function rebuildAllSelectedSet()
         AllSelectedSet = {}
-
         local function addSet(t)
             for k, v in pairs(t) do
                 if v then AllSelectedSet[k] = true end
             end
         end
-
         addSet(selJunk)
         addSet(selFuel)
         addSet(selFood)
@@ -304,7 +302,7 @@ return function(C, R, UI)
         local mp = mainPart(m)
         if not mp then return end
 
-        local pos = mp.Position
+        local pos   = mp.Position
         local entry = CacheByInstance[m]
 
         if entry then
@@ -328,7 +326,6 @@ return function(C, R, UI)
 
     local function fullScan()
         if not next(AllSelectedSet) then return end
-
         local items = itemsRootOrNil()
         if not items then return end
 
@@ -351,12 +348,10 @@ return function(C, R, UI)
 
     local function nearbyScan()
         if not next(AllSelectedSet) then return end
-
         local root = hrp()
         if not root then return end
 
         local origin = root.Position
-
         local params = OverlapParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
         params.FilterDescendantsInstances = { lp.Character }
@@ -381,7 +376,6 @@ return function(C, R, UI)
         if not root then return end
 
         local rootPos = root.Position
-
         local params = OverlapParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
         params.FilterDescendantsInstances = { lp.Character }
@@ -491,7 +485,6 @@ return function(C, R, UI)
 
     local function updateMarker(entry, espOn)
         if not entry.marker then return end
-
         local marker  = entry.marker
         local enabled = false
 
@@ -523,7 +516,6 @@ return function(C, R, UI)
 
     local function updateAllMarkers()
         local espOn = C.State.ESPEnabled and next(AllSelectedSet) ~= nil
-
         for _, entry in ipairs(CacheEntries) do
             if espOn and isNameSelected(entry.name or "") then
                 ensureMarker(entry)
@@ -545,9 +537,7 @@ return function(C, R, UI)
     local function pruneCacheToSelected()
         local selectedNames = {}
         for name, v in pairs(AllSelectedSet) do
-            if v then
-                selectedNames[name] = true
-            end
+            if v then selectedNames[name] = true end
         end
 
         local newEntries = {}
@@ -561,7 +551,6 @@ return function(C, R, UI)
                 destroyMarker(entry)
             end
         end
-
         CacheEntries = newEntries
     end
 
