@@ -2,254 +2,638 @@
 
 return function(C, R, UI)
     local function run()
-        local Services = (C and C.Services) or {}
-        local Players  = Services.Players  or game:GetService("Players")
-        local WS       = Services.WS       or game:GetService("Workspace")
-        local Run      = Services.Run      or game:GetService("RunService")
-        local PF       = Services.PF       or game:GetService("PathfindingService")
+        C  = C  or _G.C
+        UI = UI or _G.UI
+
+        local Services   = (C and C.Services) or {}
+        local Players    = Services.Players or game:GetService("Players")
+        local RS         = Services.RS or game:GetService("ReplicatedStorage")
+        local WS         = Services.WS or game:GetService("Workspace")
+        local RunService = Services.Run or game:GetService("RunService")
 
         local Tabs = (UI and UI.Tabs) or {}
         local tab  = Tabs.Farm
         if not tab then return end
 
         local lp = Players.LocalPlayer
+        if not lp then return end
 
-        local function hrp()
-            local ch = lp.Character or lp.CharacterAdded:Wait()
-            return ch and ch:FindFirstChild("HumanoidRootPart")
+        local RemoteEvents     = RS:WaitForChild("RemoteEvents")
+        local ToolDamageObject = RemoteEvents:WaitForChild("ToolDamageObject")
+        local EquipItemHandle  = RemoteEvents:WaitForChild("EquipItemHandle")
+
+        local CHOP_RADIUS       = 60
+        local TELEPORT_DISTANCE = 30
+        local UID_SUFFIX        = "0000000000"
+
+        local function findInInventory(name)
+            local inv = lp:FindFirstChild("Inventory")
+            if not inv then return nil end
+            return inv:FindFirstChild(name)
         end
 
-        local function hum()
+        local function equippedToolName()
             local ch = lp.Character
-            return ch and ch:FindFirstChildOfClass("Humanoid")
+            if not ch then return nil end
+            local tool = ch:FindFirstChildOfClass("Tool")
+            return tool and tool.Name or nil
         end
 
-        local function mainPart(m)
-            if not m or not m.Parent then return nil end
-            if m:IsA("BasePart") then return m end
-            if m:IsA("Model") then
-                if m.PrimaryPart then return m.PrimaryPart end
-                return m:FindFirstChildWhichIsA("BasePart")
+        local function ensureEquipped(tool)
+            if not tool then return end
+            if equippedToolName() == tool.Name then return end
+            EquipItemHandle:FireServer("FireAllClients", tool)
+        end
+
+        local function attrBucket(treeModel)
+            local hr = treeModel and treeModel:FindFirstChild("HitRegisters")
+            if hr then return hr end
+            return treeModel
+        end
+
+        local function parseHitAttrKey(k)
+            local n = string.match(k or "", "^(%d+)_" .. UID_SUFFIX .. "$")
+            return n and tonumber(n) or nil
+        end
+
+        local function nextPerTreeHitId(treeModel)
+            local bucket = attrBucket(treeModel)
+            local maxN = 0
+            local attrs = bucket and bucket:GetAttributes() or nil
+            if attrs then
+                for key, _ in pairs(attrs) do
+                    local n = parseHitAttrKey(key)
+                    if n and n > maxN then
+                        maxN = n
+                    end
+                end
+            end
+            local nextN = maxN + 1
+            return tostring(nextN) .. "_" .. UID_SUFFIX
+        end
+
+        local function bestTreeHitPart(tree)
+            if not (tree and tree:IsA("Model")) then
+                return nil
+            end
+
+            local hr = tree:FindFirstChild("HitRegisters")
+            if hr then
+                local t = hr:FindFirstChild("Trunk")
+                if t and t:IsA("BasePart") then
+                    return t
+                end
+                local any = hr:FindFirstChildWhichIsA("BasePart")
+                if any then
+                    return any
+                end
+            end
+
+            local t2 = tree:FindFirstChild("Trunk")
+            if t2 and t2:IsA("BasePart") then
+                return t2
+            end
+
+            if tree.PrimaryPart and tree.PrimaryPart:IsA("BasePart") then
+                return tree.PrimaryPart
+            end
+
+            return tree:FindFirstChildWhichIsA("BasePart")
+        end
+
+        local function computeImpactCFrame(model, hitPart)
+            if not (model and hitPart and hitPart:IsA("BasePart")) then
+                return hitPart and CFrame.new(hitPart.Position) or CFrame.new()
+            end
+
+            local outward = hitPart.CFrame.LookVector
+            if outward.Magnitude == 0 then
+                outward = Vector3.new(0, 0, -1)
+            end
+            outward = outward.Unit
+
+            local origin = hitPart.Position + outward * 1.0
+            local dir    = -outward * 5.0
+
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Include
+            params.FilterDescendantsInstances = { model }
+
+            local result = WS:Raycast(origin, dir, params)
+            local pos
+            if result then
+                pos = result.Position + result.Normal * 0.02
+            else
+                pos = origin + dir * 0.6
+            end
+
+            local rot = hitPart.CFrame - hitPart.CFrame.Position
+            return CFrame.new(pos) * rot
+        end
+
+        local TreeImpactCF = setmetatable({}, { __mode = "k" })
+        local TreeHitSeed  = setmetatable({}, { __mode = "k" })
+
+        local function jittered(cf, k)
+            local r   = 0.05 + 0.015 * (k % 5)
+            local ang = k * 2.3999632297
+            local off = Vector3.new(math.cos(ang) * r, 0, math.sin(ang) * r)
+            local rot = cf - cf.Position
+            return CFrame.new(cf.Position + off) * rot
+        end
+
+        local function impactCFForTree(treeModel, hitPart)
+            local base = TreeImpactCF[treeModel]
+            if not base then
+                base = computeImpactCFrame(treeModel, hitPart)
+                TreeImpactCF[treeModel] = base
+            end
+            local k = (TreeHitSeed[treeModel] or 0) + 1
+            TreeHitSeed[treeModel] = k
+            return jittered(base, k)
+        end
+
+        local function HitTreeRemote(treeModel, tool, hitId, impactCF)
+            if not (treeModel and tool and hitId and impactCF) then
+                return
+            end
+            ToolDamageObject:InvokeServer(treeModel, tool, hitId, impactCF)
+        end
+
+        local function teleportNearTree(treeModel)
+            local char = lp.Character
+            if not char then return end
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+            local hitPart = bestTreeHitPart(treeModel)
+            if not hitPart then return end
+
+            local treePos = hitPart.Position
+            local hrpPos  = hrp.Position
+            local dir     = (hrpPos - treePos)
+
+            if dir.Magnitude < 0.001 then
+                dir = Vector3.new(1, 0, 0)
+            else
+                dir = dir.Unit
+            end
+
+            local targetPos = Vector3.new(
+                treePos.X + dir.X * TELEPORT_DISTANCE,
+                treePos.Y + 3,
+                treePos.Z + dir.Z * TELEPORT_DISTANCE
+            )
+
+            hrp.CFrame = CFrame.new(targetPos, Vector3.new(treePos.X, targetPos.Y, treePos.Z))
+        end
+
+        -- SMALL TREES
+        local AXE_HITS   = { ["Old Axe"] = 13, ["Good Axe"] = 5, ["Strong Axe"] = 1, ["Chainsaw"] = 2 }
+        local AXE_PREFER = { "Strong Axe", "Chainsaw", "Good Axe", "Old Axe" }
+        local TREE_NAMES = { ["Small Tree"] = true, ["Snowy Small Tree"] = true, ["Small Webbed Tree"] = true }
+
+        local function isSmallTreeModel(model)
+            if not (model and model:IsA("Model")) then
+                return false
+            end
+            local name = model.Name
+            if TREE_NAMES[name] then
+                return bestTreeHitPart(model) ~= nil
+            end
+            local lower = string.lower(name or "")
+            if lower:find("small", 1, true) and lower:find("tree", 1, true) then
+                return bestTreeHitPart(model) ~= nil
+            end
+            return false
+        end
+
+        local function getPreferredAxe()
+            for _, name in ipairs(AXE_PREFER) do
+                local item = findInInventory(name)
+                if item then
+                    return item
+                end
             end
             return nil
         end
 
-        local function moveToPosition(pos, maxWait)
-            local root = hrp()
-            local h    = hum()
-            if not (root and h and pos) then return end
-            if h.Health <= 0 then return end
+        local smallTreeList     = {}
+        local smallHitCounts    = {}
+        local smallRunning      = false
+        local smallLoopConn     = nil
+        local smallSpawnConn    = nil
+        local smallWaitingSpawn = false
 
-            local okPath, path = pcall(function()
-                return PF:CreatePath({
-                    AgentRadius = 2,
-                    AgentHeight = 5,
-                    AgentCanJump = true,
-                    AgentCanClimb = true,
-                })
+        local function registerSmallTree(m)
+            if not m then return end
+            for _, t in ipairs(smallTreeList) do
+                if t == m then return end
+            end
+            table.insert(smallTreeList, m)
+            smallHitCounts[m] = 0
+        end
+
+        local function removeSmallTreeFromList(tree)
+            for i = #smallTreeList, 1, -1 do
+                if smallTreeList[i] == tree then
+                    table.remove(smallTreeList, i)
+                end
+            end
+            smallHitCounts[tree] = nil
+        end
+
+        local function scanForAllSmallTrees()
+            local list = {}
+            for _, inst in ipairs(WS:GetDescendants()) do
+                if inst:IsA("Model") and isSmallTreeModel(inst) then
+                    table.insert(list, inst)
+                end
+            end
+            table.sort(list, function(a, b)
+                return (a.Name or "") < (b.Name or "")
             end)
+            smallTreeList  = list
+            smallHitCounts = {}
+            for _, m in ipairs(smallTreeList) do
+                smallHitCounts[m] = 0
+            end
+        end
 
-            if okPath and path then
-                local okCompute = pcall(function()
-                    path:ComputeAsync(root.Position, pos)
-                end)
-
-                if okCompute and path.Status == Enum.PathStatus.Success then
-                    local waypoints = path:GetWaypoints()
-                    for _, wp in ipairs(waypoints) do
-                        if not lp.Character or not lp.Character.Parent then break end
-                        if h.Health <= 0 then break end
-                        if wp.Action == Enum.PathWaypointAction.Jump then
-                            h.Jump = true
-                        end
-                        h:MoveTo(wp.Position)
-                        local reached = h.MoveToFinished:Wait()
-                        if not reached then break end
+        local function ensureSmallSpawnListener()
+            if smallSpawnConn or not smallRunning then
+                return
+            end
+            smallWaitingSpawn = true
+            smallSpawnConn = WS.DescendantAdded:Connect(function(inst)
+                if not smallRunning then
+                    return
+                end
+                if inst:IsA("Model") and isSmallTreeModel(inst) then
+                    registerSmallTree(inst)
+                    smallWaiting_spawn = false
+                    if smallSpawnConn then
+                        smallSpawnConn:Disconnect()
+                        smallSpawnConn = nil
                     end
+                end
+            end)
+        end
+
+        local function clearSmallState()
+            smallTreeList     = {}
+            smallHitCounts    = {}
+            smallWaitingSpawn = false
+            if smallSpawnConn then
+                smallSpawnConn:Disconnect()
+                smallSpawnConn = nil
+            end
+        end
+
+        local function refreshSmallTreeList()
+            scanForAllSmallTrees()
+            if #smallTreeList == 0 then
+                ensureSmallSpawnListener()
+            else
+                smallWaitingSpawn = false
+                if smallSpawnConn then
+                    smallSpawnConn:Disconnect()
+                    smallSpawnConn = nil
+                end
+            end
+        end
+
+        local function startSmallLoop()
+            if smallLoopConn then
+                smallLoopConn:Disconnect()
+                smallLoopConn = nil
+            end
+
+            smallLoopConn = RunService.Heartbeat:Connect(function()
+                if not smallRunning then
+                    return
+                end
+
+                local char = lp.Character
+                if not char then
+                    return
+                end
+
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                if not hrp then
+                    return
+                end
+
+                local axe = getPreferredAxe()
+                if not axe then
+                    return
+                end
+
+                ensureEquipped(axe)
+                local axeName    = axe.Name
+                local baseNeeded = AXE_HITS[axeName] or 13
+
+                if #smallTreeList == 0 then
+                    if not smallWaitingSpawn then
+                        refreshSmallTreeList()
+                    end
+                    return
+                end
+
+                local nearest, nearestDist
+                for _, tree in ipairs(smallTreeList) do
+                    local part = bestTreeHitPart(tree)
+                    if part then
+                        local d = (part.Position - hrp.Position).Magnitude
+                        if not nearest or d < nearestDist then
+                            nearest     = tree
+                            nearestDist = d
+                        end
+                    end
+                end
+
+                if not nearest then
+                    refreshSmallTreeList()
+                    return
+                end
+
+                if nearestDist > CHOP_RADIUS then
+                    teleportNearTree(nearest)
+                    return
+                end
+
+                local treesInRange = {}
+                for _, tree in ipairs(smallTreeList) do
+                    local part = bestTreeHitPart(tree)
+                    if part then
+                        local d = (part.Position - hrp.Position).Magnitude
+                        if d <= CHOP_RADIUS then
+                            table.insert(treesInRange, tree)
+                        end
+                    end
+                end
+
+                if #treesInRange == 0 then
+                    return
+                end
+
+                for _, tree in ipairs(treesInRange) do
+                    if tree.Parent and isSmallTreeModel(tree) then
+                        local needed = AXE_HITS[axeName] or baseNeeded
+                        local count  = smallHitCounts[tree] or 0
+
+                        if count >= needed then
+                            removeSmallTreeFromList(tree)
+                        else
+                            local hitPart = bestTreeHitPart(tree)
+                            if hitPart then
+                                local hitId    = nextPerTreeHitId(tree)
+                                local impactCF = impactCFForTree(tree, hitPart)
+                                HitTreeRemote(tree, axe, hitId, impactCF)
+                                smallHitCounts[tree] = count + 1
+                            else
+                                removeSmallTreeFromList(tree)
+                            end
+                        end
+                    else
+                        removeSmallTreeFromList(tree)
+                    end
+                end
+            end)
+        end
+
+        local function startSmallFarm()
+            if smallRunning then
+                return
+            end
+            smallRunning = true
+            clearSmallState()
+            refreshSmallTreeList()
+            startSmallLoop()
+        end
+
+        local function stopSmallFarm()
+            smallRunning = false
+            if smallLoopConn then
+                smallLoopConn:Disconnect()
+                smallLoopConn = nil
+            end
+            clearSmallState()
+        end
+
+        -- BIG TREES
+        local BIG_TREE_NAMES    = { TreeBig1 = true, TreeBig2 = true, TreeBig3 = true }
+        local REQUIRED_HITS     = { ["Strong Axe"] = 35, ["Chainsaw"] = 35 }
+        local PER_TREE_COOLDOWN = 0.5
+
+        local function isBigTreeName(name)
+            if BIG_TREE_NAMES[name] then
+                return true
+            end
+            if type(name) ~= "string" then
+                return false
+            end
+            return name:match("^WebbedTreeBig%d*$") ~= nil
+        end
+
+        local function isBigTreeModel(model)
+            return model
+                and model:IsA("Model")
+                and isBigTreeName(model.Name)
+                and (bestTreeHitPart(model) ~= nil)
+        end
+
+        local function getCurrentHitCount(treeModel)
+            local bucket = attrBucket(treeModel)
+            if not (bucket and bucket.GetAttributes) then
+                return 0
+            end
+            local attrs = bucket:GetAttributes()
+            local maxN  = 0
+            for key in pairs(attrs) do
+                local n = parseHitAttrKey(key)
+                if n and n > maxN then
+                    maxN = n
+                end
+            end
+            return maxN
+        end
+
+        local function getBigTreeTool()
+            local chainsaw = findInInventory("Chainsaw")
+            if chainsaw then
+                return chainsaw
+            end
+            local strongAxe = findInInventory("Strong Axe")
+            if strongAxe then
+                return strongAxe
+            end
+            return nil
+        end
+
+        local bigTreeList     = {}
+        local bigLocalHits    = {}
+        local bigLastHitTime  = {}
+        local bigCurrentIndex = 1
+        local bigRunning      = false
+        local bigLoopConn     = nil
+
+        local function buildBigTreeList(requiredHits)
+            bigTreeList     = {}
+            bigLocalHits    = {}
+            bigLastHitTime  = {}
+            bigCurrentIndex = 1
+
+            for _, inst in ipairs(WS:GetDescendants()) do
+                if inst:IsA("Model") and isBigTreeModel(inst) then
+                    local existing = getCurrentHitCount(inst)
+                    if existing < requiredHits then
+                        table.insert(bigTreeList, inst)
+                        bigLocalHits[inst]   = existing
+                        bigLastHitTime[inst] = 0
+                    end
+                end
+            end
+
+            table.sort(bigTreeList, function(a, b)
+                return (a.Name or "") < (b.Name or "")
+            end)
+        end
+
+        local function removeBigTree(tree)
+            for i = #bigTreeList, 1, -1 do
+                if bigTreeList[i] == tree then
+                    table.remove(bigTreeList, i)
+                end
+            end
+            bigLocalHits[tree]   = nil
+            bigLastHitTime[tree] = nil
+            TreeImpactCF[tree]   = nil
+            TreeHitSeed[tree]    = nil
+        end
+
+        local function stepBigChopper()
+            local char = lp.Character
+            if not char then return end
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+
+            local tool = getBigTreeTool()
+            if not tool then return end
+            ensureEquipped(tool)
+
+            local axeName       = tool.Name
+            local requiredHits  = REQUIRED_HITS[axeName] or 35
+
+            if #bigTreeList == 0 then
+                buildBigTreeList(requiredHits)
+                if #bigTreeList == 0 then
                     return
                 end
             end
 
-            h:MoveTo(pos)
-            if maxWait and maxWait > 0 then
-                local t0 = os.clock()
-                repeat
-                    if (os.clock() - t0) > maxWait then break end
-                    Run.Heartbeat:Wait()
-                    root = hrp()
-                    if not root then break end
-                until (root.Position - pos).Magnitude <= 4
-            else
-                h.MoveToFinished:Wait()
-            end
-        end
+            local total = #bigTreeList
+            if total == 0 then return end
+            if bigCurrentIndex > total then bigCurrentIndex = 1 end
 
-        local function equipBestAxe()
-            local ch = lp.Character
-            if not ch then return nil end
-            local h = hum()
-            if not h then return nil end
+            local selectedTree, selectedBaseCount
+            local tries = 0
 
-            local bp = lp:FindFirstChildOfClass("Backpack")
+            while tries < total do
+                tries += 1
+                local tree = bigTreeList[bigCurrentIndex]
 
-            local priorities = {
-                ["Strong Axe"] = 3,
-                ["Good Axe"]  = 2,
-                ["Old Axe"]  = 1,
-            }
+                if not tree or not tree.Parent or not isBigTreeModel(tree) then
+                    removeBigTree(tree)
+                    total = #bigTreeList
+                    if total == 0 then return end
+                    if bigCurrentIndex > total then bigCurrentIndex = 1 end
+                else
+                    local remoteCount = getCurrentHitCount(tree)
+                    local base = math.max(remoteCount, bigLocalHits[tree] or 0)
 
-            local bestTool, bestPrio = nil, -1
+                    if base >= requiredHits then
+                        removeBigTree(tree)
+                        total = #bigTreeList
+                        if total == 0 then return end
+                        if bigCurrentIndex > total then bigCurrentIndex = 1 end
+                    else
+                        local now  = os.clock()
+                        local last = bigLastHitTime[tree] or 0
 
-            local function considerTool(t)
-                if not t or not t:IsA("Tool") then return end
-                local p = priorities[t.Name]
-                if p and p > bestPrio then
-                    bestPrio = p
-                    bestTool = t
-                end
-            end
-
-            for _, t in ipairs(ch:GetChildren()) do
-                considerTool(t)
-            end
-            if bp then
-                for _, t in ipairs(bp:GetChildren()) do
-                    considerTool(t)
-                end
-            end
-
-            if bestTool then
-                pcall(function()
-                    h:EquipTool(bestTool)
-                end)
-                Run.Heartbeat:Wait()
-                if bestTool.Parent ~= ch then
-                    Run.Heartbeat:Wait()
-                end
-            end
-
-            return (bestTool and bestTool.Parent == ch) and bestTool or nil
-        end
-
-        local function getClosestModelByNames(nameSet, maxDist)
-            local root = hrp()
-            if not root then return nil, math.huge end
-
-            local best, bestD = nil, math.huge
-            maxDist = maxDist or math.huge
-
-            for _, inst in ipairs(WS:GetDescendants()) do
-                if inst:IsA("Model") and nameSet[inst.Name] then
-                    local mp = mainPart(inst)
-                    if mp then
-                        local d = (mp.Position - root.Position).Magnitude
-                        if d < bestD and d <= maxDist then
-                            bestD = d
-                            best  = inst
+                        if (now - last) < PER_TREE_COOLDOWN then
+                            bigCurrentIndex = bigCurrentIndex + 1
+                            if bigCurrentIndex > total then bigCurrentIndex = 1 end
+                        else
+                            selectedTree = tree
+                            selectedBaseCount = base
+                            break
                         end
                     end
                 end
             end
 
-            return best, bestD
-        end
-
-        local function chopModel(tree, swings)
-            local root = hrp()
-            local h    = hum()
-            if not (tree and root and h) then return end
-            if h.Health <= 0 then return end
-
-            local mp = mainPart(tree)
-            if not mp then return end
-
-            local targetPos = mp.Position
-            if (targetPos - root.Position).Magnitude > 7 then
-                moveToPosition(targetPos, 4)
-                root = hrp()
-                h = hum()
-                if not (root and h) then return end
-                if h.Health <= 0 then return end
+            if not selectedTree then
+                return
             end
 
-            local tool = equipBestAxe()
-            if not tool then return end
+            local hitPart = bestTreeHitPart(selectedTree)
+            if not hitPart then
+                removeBigTree(selectedTree)
+                return
+            end
 
-            swings = swings or 14
-            for _ = 1, swings do
-                if not lp.Character or not lp.Character.Parent then break end
-                h = hum()
-                if not h or h.Health <= 0 then break end
-                pcall(function() tool:Activate() end)
-                Run.Heartbeat:Wait()
+            if (hitPart.Position - hrp.Position).Magnitude > CHOP_RADIUS then
+                teleportNearTree(selectedTree)
+            end
+
+            local remoteCount2 = getCurrentHitCount(selectedTree)
+            local base2        = math.max(remoteCount2, selectedBaseCount or 0)
+            if base2 >= requiredHits then
+                removeBigTree(selectedTree)
+                return
+            end
+
+            local hitId    = nextPerTreeHitId(selectedTree)
+            local impactCF = impactCFForTree(selectedTree, hitPart)
+            HitTreeRemote(selectedTree, tool, hitId, impactCF)
+
+            bigLocalHits[selectedTree]   = base2 + 1
+            bigLastHitTime[selectedTree] = os.clock()
+
+            bigCurrentIndex = bigCurrentIndex + 1
+            total = #bigTreeList
+            if total > 0 and bigCurrentIndex > total then
+                bigCurrentIndex = 1
             end
         end
 
-        local SMALL_TREE_NAMES = {
-            ["Tree"]       = true,
-            ["SmallTree"]  = true,
-            ["Small Tree"] = true,
-        }
-
-        local BIG_TREE_NAMES = {
-            ["BigTree"]       = true,
-            ["Big Tree"]      = true,
-            ["TreeBig1"]      = true,
-            ["TreeBig2"]      = true,
-            ["TreeBig3"]      = true,
-            ["WebbedTreeBig"] = true,
-        }
-
-        local SMALL_MAX_DIST = 160
-        local BIG_MAX_DIST   = 220
-        local IDLE_WAIT      = 0.35
-
-        local smallFarmOn = false
-        local smallFarmThread = nil
-        local smallFarmToken = 0
-
-        local bigFarmOn = false
-        local bigFarmThread = nil
-        local bigFarmToken = 0
-
-        local function smallFarmLoop(token)
-            local ok, err = pcall(function()
-                while smallFarmOn and smallFarmToken == token do
-                    local tree, dist = getClosestModelByNames(SMALL_TREE_NAMES, SMALL_MAX_DIST)
-                    if tree and dist < SMALL_MAX_DIST then
-                        chopModel(tree, 14)
-                    else
-                        Run.Heartbeat:Wait()
-                        task.wait(IDLE_WAIT)
-                    end
+        local function startBigFarm()
+            if bigRunning then
+                return
+            end
+            bigRunning = true
+            if bigLoopConn then
+                bigLoopConn:Disconnect()
+                bigLoopConn = nil
+            end
+            bigLoopConn = RunService.Heartbeat:Connect(function()
+                if not bigRunning then
+                    return
                 end
+                stepBigChopper()
             end)
-            if not ok then
-                warn("[Farm] smallFarmLoop error: " .. tostring(err))
-            end
-            if smallFarmToken == token then
-                smallFarmThread = nil
-            end
         end
 
-        local function bigFarmLoop(token)
-            local ok, err = pcall(function()
-                while bigFarmOn and bigFarmToken == token do
-                    local tree, dist = getClosestModelByNames(BIG_TREE_NAMES, BIG_MAX_DIST)
-                    if tree and dist < BIG_MAX_DIST then
-                        chopModel(tree, 18)
-                    else
-                        Run.Heartbeat:Wait()
-                        task.wait(IDLE_WAIT)
-                    end
-                end
-            end)
-            if not ok then
-                warn("[Farm] bigFarmLoop error: " .. tostring(err))
+        local function stopBigFarm()
+            bigRunning = false
+            if bigLoopConn then
+                bigLoopConn:Disconnect()
+                bigLoopConn = nil
             end
-            if bigFarmToken == token then
-                bigFarmThread = nil
-            end
+            bigTreeList     = {}
+            bigLocalHits    = {}
+            bigLastHitTime  = {}
+            bigCurrentIndex = 1
         end
 
         tab:Section({ Title = "Tree Farming" })
@@ -259,17 +643,9 @@ return function(C, R, UI)
             Value = false,
             Callback = function(state)
                 if state then
-                    if not smallFarmOn then
-                        smallFarmOn = true
-                        smallFarmToken = smallFarmToken + 1
-                        local token = smallFarmToken
-                        smallFarmThread = task.spawn(function()
-                            smallFarmLoop(token)
-                        end)
-                    end
+                    startSmallFarm()
                 else
-                    smallFarmOn = false
-                    smallFarmToken = smallFarmToken + 1
+                    stopSmallFarm()
                 end
             end
         })
@@ -279,37 +655,12 @@ return function(C, R, UI)
             Value = false,
             Callback = function(state)
                 if state then
-                    if not bigFarmOn then
-                        bigFarmOn = true
-                        bigFarmToken = bigFarmToken + 1
-                        local token = bigFarmToken
-                        bigFarmThread = task.spawn(function()
-                            bigFarmLoop(token)
-                        end)
-                    end
+                    startBigFarm()
                 else
-                    bigFarmOn = false
-                    bigFarmToken = bigFarmToken + 1
+                    stopBigFarm()
                 end
             end
         })
-
-        lp.CharacterAdded:Connect(function()
-            if smallFarmOn and not smallFarmThread then
-                smallFarmToken = smallFarmToken + 1
-                local token = smallFarmToken
-                smallFarmThread = task.spawn(function()
-                    smallFarmLoop(token)
-                end)
-            end
-            if bigFarmOn and not bigFarmThread then
-                bigFarmToken = bigFarmToken + 1
-                local token = bigFarmToken
-                bigFarmThread = task.spawn(function()
-                    bigFarmLoop(token)
-                end)
-            end
-        end)
     end
 
     local ok, err = pcall(run)
