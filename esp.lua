@@ -176,6 +176,29 @@ return function(C, R, UI)
     local selJunk, selFuel, selFood, selMedical, selWA, selMisc, selPelt = {},{},{},{},{},{},{}
     local activeSelection = {}
 
+    local espCache = {}
+    local modelToKey = setmetatable({}, { __mode = "k" })
+    local pendingFullClear = false
+
+    local function clearEntry(entry)
+        if entry.con then
+            entry.con:Disconnect()
+            entry.con = nil
+        end
+        if entry.marker then
+            entry.marker:Destroy()
+            entry.marker = nil
+        end
+        if entry.ghostPart then
+            entry.ghostPart:Destroy()
+            entry.ghostPart = nil
+        end
+    end
+
+    local function requestFullClear()
+        pendingFullClear = true
+    end
+
     local function mergeSet(dst, src)
         for k,v in pairs(src) do
             if v then dst[k] = true end
@@ -192,6 +215,7 @@ return function(C, R, UI)
         mergeSet(dst, selMisc)
         mergeSet(dst, selPelt)
         activeSelection = dst
+        requestFullClear()
     end
 
     local function setFromChoice(choice)
@@ -220,15 +244,13 @@ return function(C, R, UI)
         })
     end
 
-    local espCache = {}
-    local modelToKey = setmetatable({}, { __mode = "k" })
-
     local function createBillboard(name)
         local pg = lp:FindFirstChildOfClass("PlayerGui")
         if not pg then return nil end
+
         local gui = Instance.new("BillboardGui")
         gui.Name = "ESP_Item"
-        gui.Size = UDim2.new(0, 200, 0, 40)
+        gui.Size = UDim2.new(0, 160, 0, 24)
         gui.AlwaysOnTop = true
         gui.MaxDistance = 10000
         gui.StudsOffset = Vector3.new(0, 3, 0)
@@ -238,38 +260,14 @@ return function(C, R, UI)
         lbl.BackgroundTransparency = 1
         lbl.Size = UDim2.new(1, 0, 1, 0)
         lbl.Font = Enum.Font.SourceSansBold
-        lbl.TextScaled = true
-        lbl.TextColor3 = Color3.fromRGB(0, 255, 0)
-        lbl.TextStrokeTransparency = 0
+        lbl.TextScaled = false
+        lbl.TextSize = 14
+        lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+        lbl.TextStrokeTransparency = 0.4
         lbl.Text = name
         lbl.Parent = gui
 
         return gui, lbl
-    end
-
-    local function clearEntry(entry)
-        if entry.con then
-            entry.con:Disconnect()
-            entry.con = nil
-        end
-        if entry.marker then
-            entry.marker:Destroy()
-            entry.marker = nil
-        end
-        if entry.ghostPart then
-            entry.ghostPart:Destroy()
-            entry.ghostPart = nil
-        end
-    end
-
-    local function clearUnselectedCaches()
-        for key, entry in pairs(espCache) do
-            local name = entry.name
-            if not activeSelection[name] then
-                clearEntry(entry)
-                espCache[key] = nil
-            end
-        end
     end
 
     local function attachToModel(entry, model)
@@ -302,6 +300,10 @@ return function(C, R, UI)
             return
         end
         if not entry.lastPos then
+            clearEntry(entry)
+            return
+        end
+        if entry.name == "Log" then
             clearEntry(entry)
             return
         end
@@ -342,6 +344,13 @@ return function(C, R, UI)
             entry.con:Disconnect()
             entry.con = nil
         end
+
+        if entry.name == "Log" then
+            clearEntry(entry)
+            espCache[key] = nil
+            return
+        end
+
         local root = hrp()
         local pos  = entry.lastPos
         local near = false
@@ -361,6 +370,14 @@ return function(C, R, UI)
         local gx = math.floor(pos.X / VERIFY_RADIUS)
         local gz = math.floor(pos.Z / VERIFY_RADIUS)
         return name .. "|" .. gx .. "|" .. gz
+    end
+
+    local function clearAllCachesNow()
+        for key, entry in pairs(espCache) do
+            clearEntry(entry)
+            espCache[key] = nil
+        end
+        modelToKey = setmetatable({}, { __mode = "k" })
     end
 
     tab:Section({ Title = "ESP Controls" })
@@ -391,10 +408,6 @@ return function(C, R, UI)
             end
         end
     })
-    tab:Button({
-        Title = "Clear cached items not in selection",
-        Callback = clearUnselectedCaches
-    })
 
     tab:Section({ Title = "Junk ESP (Multi)" })
     multiSelectDropdown({ title = "Select Junk Items", values = junkItems, setter = function(s) selJunk = s end })
@@ -417,10 +430,22 @@ return function(C, R, UI)
     tab:Section({ Title = "Pelts ESP (Multi)" })
     multiSelectDropdown({ title = "Select Pelts", values = pelts, setter = function(s) selPelt = s end })
 
+    tab:Button({
+        Title = "Clear cached ESP entries",
+        Callback = function()
+            requestFullClear()
+        end
+    })
+
     recomputeActiveSelection()
 
     task.spawn(function()
         while true do
+            if pendingFullClear then
+                pendingFullClear = false
+                clearAllCachesNow()
+            end
+
             if S.Enabled and next(activeSelection) ~= nil then
                 local ok, err = pcall(function()
                     local root = hrp()
@@ -481,6 +506,25 @@ return function(C, R, UI)
                                 if mp then
                                     entry.lastPos = mp.Position
                                 end
+                            end
+                        end
+                    end
+
+                    local rootPos = root.Position
+                    local minSize, maxSize = 10, 18
+                    local nearDist, farDist = 40, ESP_SCAN_RADIUS
+
+                    for _, entry in pairs(espCache) do
+                        if entry.marker and entry.label and entry.lastPos then
+                            local dist = (entry.lastPos - rootPos).Magnitude
+                            if dist <= nearDist then
+                                entry.label.TextSize = maxSize
+                            elseif dist >= farDist then
+                                entry.label.TextSize = minSize
+                            else
+                                local t = 1 - (dist - nearDist) / (farDist - nearDist)
+                                local size = minSize + (maxSize - minSize) * t
+                                entry.label.TextSize = math.floor(size + 0.5)
                             end
                         end
                     end
