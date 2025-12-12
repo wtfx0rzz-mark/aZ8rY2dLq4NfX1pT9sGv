@@ -44,7 +44,8 @@ local Tabs = {
     Troll   = Window:Tab({ Title = "Troll",   Icon = "ant",   Desc = "Troll" }),
     Nudge   = Window:Tab({ Title = "Nudge",   Icon = "activity",   Desc = "Nudge" }),
     Memory   = Window:Tab({ Title = "Memory",   Icon = "brain",   Desc = "Memory Mgmt." }),
-    Farm   = Window:Tab({ Title = "Farm",   Icon = "ant",   Desc = "Auto Farm" })
+    Farm   = Window:Tab({ Title = "Farm",   Icon = "ant",   Desc = "Auto Farm" }),
+    Esp   = Window:Tab({ Title = "ESP",   Icon = "brain",   Desc = "ESP Items" })
 
 }
 
