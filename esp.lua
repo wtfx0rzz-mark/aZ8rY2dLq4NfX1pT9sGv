@@ -167,6 +167,7 @@ return function(C, R, UI)
     local VERIFY_RADIUS        = 400
     local LOCAL_PICKUP_RADIUS  = 16
     local SCAN_INTERVAL        = 0.25
+    local MISSED_SCANS_REMOVE  = 4
 
     local BASE_LABEL_WIDTH     = 120
     local BASE_LABEL_HEIGHT    = 24
@@ -200,6 +201,7 @@ return function(C, R, UI)
         if entry.marker then
             entry.marker:Destroy()
             entry.marker = nil
+            entry.label = nil
         end
         if entry.ghostPart then
             entry.ghostPart:Destroy()
@@ -311,7 +313,7 @@ return function(C, R, UI)
         entry.marker.Enabled = S.Enabled
     end
 
-    local function attachToModel(entry, model)
+    local function attachToModel(entry, model, rootPos)
         local mp = mainPart(model)
         if not mp then return end
         entry.lastPos = mp.Position
@@ -329,10 +331,10 @@ return function(C, R, UI)
         att.Name = "__ESP_Att"
         att.Parent = mp
         entry.marker.Adornee = att
-        updateEntryVisual(entry, hrp() and hrp().Position or nil)
+        updateEntryVisual(entry, rootPos)
     end
 
-    local function attachGhost(entry)
+    local function attachGhost(entry, rootPos)
         if not S.CacheEnabled or not shouldCacheName(entry.name) then
             clearEntry(entry)
             return
@@ -367,10 +369,50 @@ return function(C, R, UI)
         else
             entry.ghostPart.CFrame = CFrame.new(entry.lastPos)
         end
-        updateEntryVisual(entry, hrp() and hrp().Position or nil)
+        updateEntryVisual(entry, rootPos)
     end
 
-    local function handleDespawn(model, key)
+    local function isProbablyPickedOrDisabled(m, mp)
+        if not m or not mp then return false end
+
+        local ch = lp.Character
+        local bp = lp:FindFirstChildOfClass("Backpack")
+        if (ch and m:IsDescendantOf(ch)) or (bp and m:IsDescendantOf(bp)) then
+            return true
+        end
+
+        if mp.Transparency >= 0.95 and (mp.CanQuery == false) and (mp.CanTouch == false) and (mp.CanCollide == false) then
+            return true
+        end
+
+        local ok, v = pcall(function() return m:GetAttribute("PickedUp") end)
+        if ok and v == true then return true end
+        ok, v = pcall(function() return m:GetAttribute("IsPickedUp") end)
+        if ok and v == true then return true end
+        ok, v = pcall(function() return m:GetAttribute("Collected") end)
+        if ok and v == true then return true end
+        ok, v = pcall(function() return m:GetAttribute("IsCollected") end)
+        if ok and v == true then return true end
+        ok, v = pcall(function() return m:GetAttribute("Taken") end)
+        if ok and v == true then return true end
+        ok, v = pcall(function() return m:GetAttribute("IsTaken") end)
+        if ok and v == true then return true end
+        ok, v = pcall(function() return m:GetAttribute("InInventory") end)
+        if ok and v == true then return true end
+        ok, v = pcall(function() return m:GetAttribute("IsInInventory") end)
+        if ok and v == true then return true end
+
+        ok, v = pcall(function() return m:GetAttribute("Owner") end)
+        if ok and (v == lp.UserId or v == lp.Name) then return true end
+        ok, v = pcall(function() return m:GetAttribute("HeldBy") end)
+        if ok and (v == lp.UserId or v == lp.Name) then return true end
+        ok, v = pcall(function() return m:GetAttribute("Carrier") end)
+        if ok and (v == lp.UserId or v == lp.Name) then return true end
+
+        return false
+    end
+
+    local function handleDespawn(model, key, rootPos)
         local entry = espCache[key]
         if not entry then return end
         entry.live = nil
@@ -393,7 +435,7 @@ return function(C, R, UI)
             clearEntry(entry)
             espCache[key] = nil
         else
-            attachGhost(entry)
+            attachGhost(entry, rootPos)
         end
     end
 
@@ -493,22 +535,22 @@ return function(C, R, UI)
                                         seenKeys[key] = true
                                         local entry = espCache[key]
                                         if not entry then
-                                            entry = { key = key, name = m.Name, lastPos = pos, live = m }
+                                            entry = { key = key, name = m.Name, lastPos = pos, live = m, missed = 0 }
                                             espCache[key] = entry
                                         else
                                             entry.name = m.Name
                                             entry.lastPos = pos
                                             entry.live = m
+                                            entry.missed = 0
                                         end
                                         if not entry.con then
                                             entry.con = m.AncestryChanged:Connect(function(_, parent)
                                                 if not parent or not m:IsDescendantOf(WS) then
-                                                    handleDespawn(m, key)
+                                                    handleDespawn(m, key, center)
                                                 end
                                             end)
                                         end
-                                        updateEntryVisual(entry, center)
-                                        attachToModel(entry, m)
+                                        attachToModel(entry, m, center)
                                     end
                                 end
                             end
@@ -516,14 +558,45 @@ return function(C, R, UI)
                     end
 
                     for key, entry in pairs(espCache) do
-                        if entry.live and not seenKeys[key] then
+                        if entry.live then
                             local m = entry.live
-                            if m and m.Parent and m:IsDescendantOf(WS) then
-                                local mp = mainPart(m)
-                                if mp then
-                                    entry.lastPos = mp.Position
-                                    updateEntryVisual(entry, center)
+                            if not m.Parent or not m:IsDescendantOf(WS) then
+                                handleDespawn(m, key, center)
+                            else
+                                if not seenKeys[key] then
+                                    entry.missed = (entry.missed or 0) + 1
+                                    local mp = mainPart(m)
+                                    if mp then
+                                        entry.lastPos = mp.Position
+                                        if isProbablyPickedOrDisabled(m, mp) then
+                                            clearEntry(entry)
+                                            espCache[key] = nil
+                                        else
+                                            local dist = (center - entry.lastPos).Magnitude
+                                            if dist <= (ESP_SCAN_RADIUS + 30) and entry.missed >= MISSED_SCANS_REMOVE then
+                                                clearEntry(entry)
+                                                espCache[key] = nil
+                                            else
+                                                updateEntryVisual(entry, center)
+                                            end
+                                        end
+                                    else
+                                        if entry.missed >= MISSED_SCANS_REMOVE then
+                                            clearEntry(entry)
+                                            espCache[key] = nil
+                                        else
+                                            updateEntryVisual(entry, center)
+                                        end
+                                    end
+                                else
+                                    if entry.marker then
+                                        updateEntryVisual(entry, center)
+                                    end
                                 end
+                            end
+                        else
+                            if entry.marker and entry.lastPos then
+                                updateEntryVisual(entry, center)
                             end
                         end
                     end
