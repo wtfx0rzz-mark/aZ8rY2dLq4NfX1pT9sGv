@@ -27,26 +27,22 @@ return function(C, R, UI)
     TUNE.CHAR_DEBOUNCE_SEC    = TUNE.CHAR_DEBOUNCE_SEC    or 0.4
     TUNE.CHAR_HIT_STEP_WAIT   = TUNE.CHAR_HIT_STEP_WAIT   or 0.02
     TUNE.CHAR_SORT            = (TUNE.CHAR_SORT ~= false)
-    TUNE.RAY_MAX_HOPS_CHAR    = TUNE.RAY_MAX_HOPS_CHAR    or 3
-    TUNE.RAY_MAX_HOPS_TREE    = TUNE.RAY_MAX_HOPS_TREE    or 1
-    TUNE.CHAR_CLOSE_FAILSAFE  = TUNE.CHAR_CLOSE_FAILSAFE  or 24
-    TUNE.VIS_THROUGH_WALLS    = (TUNE.VIS_THROUGH_WALLS ~= false)
 
     local running = { SmallTree = false, BigTree = false, Character = false, TrapAura = false }
 
-local TREE_NAMES = {
-    ["Small Tree"] = true,
-    ["Snowy Small Tree"] = true,
-    ["Small Webbed Tree"] = true,
-    ["Christmas Pine"] = true,
-}
-    
-local BIG_TREE_NAMES = {
-    TreeBig1 = true,
-    TreeBig2 = true,
-    TreeBig3 = true,
-    ["Northern Pine"] = true,
-}
+    local TREE_NAMES = {
+        ["Small Tree"] = true,
+        ["Snowy Small Tree"] = true,
+        ["Small Webbed Tree"] = true,
+        ["Christmas Pine"] = true,
+    }
+
+    local BIG_TREE_NAMES = {
+        TreeBig1 = true,
+        TreeBig2 = true,
+        TreeBig3 = true,
+        ["Northern Pine"] = true,
+    }
 
     local TRAP_MAX_RADIUS = 20
 
@@ -83,7 +79,6 @@ local BIG_TREE_NAMES = {
                 end
             end
         end
-
         local rf = WS:FindFirstChild("__Aura__")
         if rf then
             local a = rf:FindFirstChild("AuraAnchor_" .. tostring(lp.UserId))
@@ -258,17 +253,32 @@ local BIG_TREE_NAMES = {
         return type(n) == "string" and n:match("^WebbedTreeBig%d*$") ~= nil
     end
 
-    local function findInInventory(name)
-        local inv = lp and lp:FindFirstChild("Inventory")
-        return inv and inv:FindFirstChild(name) or nil
+    local function findItem(name)
+        if not (lp and name) then return nil end
+        local inv = lp:FindFirstChild("Inventory")
+        if inv then
+            local it = inv:FindFirstChild(name)
+            if it then return it end
+        end
+        local bp = lp:FindFirstChild("Backpack")
+        if bp then
+            local it = bp:FindFirstChild(name)
+            if it then return it end
+        end
+        local ch = lp.Character
+        if ch then
+            local it = ch:FindFirstChild(name)
+            if it then return it end
+        end
+        return nil
     end
 
     local function hasStrongAxe()
-        return findInInventory("Strong Axe") ~= nil
+        return findItem("Strong Axe") ~= nil
     end
 
     local function hasChainsaw()
-        return findInInventory("Chainsaw") ~= nil
+        return findItem("Chainsaw") ~= nil
     end
 
     local function hasBigTreeTool()
@@ -294,9 +304,9 @@ local BIG_TREE_NAMES = {
     local function ensureEquipped(wantedName)
         if not wantedName then return nil end
         if equippedToolName() == wantedName then
-            return findInInventory(wantedName)
+            return findItem(wantedName)
         end
-        local tool = findInInventory(wantedName)
+        local tool = findItem(wantedName)
         if tool then
             SafeEquip(tool)
             local t0 = os.clock()
@@ -472,7 +482,7 @@ local BIG_TREE_NAMES = {
     end
 
     --------------------------------------------------------------------
-    -- VISIBILITY / CHARACTER HELPERS
+    -- CHARACTER HELPERS
     --------------------------------------------------------------------
 
     local function characterHeadPart(model)
@@ -520,86 +530,6 @@ local BIG_TREE_NAMES = {
 
     local function isCharacterModel(m)
         return m and m:IsA("Model") and m:FindFirstChildOfClass("Humanoid") ~= nil
-    end
-
-    local function treeModelOf(inst)
-        local current = inst
-        while current do
-            if current:IsA("Model") then
-                local name = current.Name
-                if isSmallTreeModel(current) or isBigTreeName(name) then
-                    return current
-                end
-            end
-            current = current.Parent
-        end
-        return nil
-    end
-
-    local function visibleTreeFromHRP(hrp, treeModel, maxHops, targetPart)
-        if TUNE.VIS_THROUGH_WALLS then return true end
-        if not (hrp and treeModel) then return false end
-        targetPart = targetPart or bestTreeHitPart(treeModel)
-        if not targetPart then return false end
-        local ch = lp.Character
-        local start = getRayOriginFromChar(ch) or hrp.Position
-        local dest = targetPart.Position
-        local excluded = {}
-        if ch then excluded[#excluded + 1] = ch end
-        local hops = math.max(0, tonumber(maxHops) or 0)
-
-        while true do
-            local dir = dest - start
-            if dir.Magnitude < 0.1 then return true end
-            local params = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            params.FilterDescendantsInstances = excluded
-            local hit = WS:Raycast(start, dir, params)
-            if not hit then return true end
-            local inst = hit.Instance
-            if inst:IsDescendantOf(treeModel) then return true end
-            local blockingTree = treeModelOf(inst)
-            if blockingTree and hops > 0 then
-                excluded[#excluded + 1] = blockingTree
-                local mag = dir.Magnitude
-                if mag <= 0 then return false end
-                start = hit.Position + (dir / mag) * 0.05
-                hops = hops - 1
-            else
-                return false
-            end
-        end
-    end
-
-    local function visibleFromHRP(hrp, targetPart, maxHops, excludeSelf)
-        if TUNE.VIS_THROUGH_WALLS then return true end
-        if not (hrp and targetPart) then return false end
-        local ch = lp.Character
-        local start = getRayOriginFromChar(ch) or hrp.Position
-        local dest = targetPart.Position
-        local dir = dest - start
-        if dir.Magnitude < 0.1 then return true end
-        local excluded = { excludeSelf }
-        local hops = math.max(0, tonumber(maxHops) or 0)
-
-        while true do
-            local params = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            params.FilterDescendantsInstances = excluded
-            local hit = WS:Raycast(start, dir, params)
-            if not hit then return true end
-            local hInst = hit.Instance
-            if hInst:IsDescendantOf(targetPart.Parent) then return true end
-            local m = modelOf(hInst)
-            if isCharacterModel(m) and hops > 0 then
-                table.insert(excluded, m)
-                start = hit.Position + dir.Unit * 0.05
-                dir = dest - start
-                hops = hops - 1
-            else
-                return false
-            end
-        end
     end
 
     --------------------------------------------------------------------
@@ -689,7 +619,7 @@ local BIG_TREE_NAMES = {
         if not bucket or type(bucket) ~= "table" then return true, nil end
         local t = bucket[weaponName]
         if not t then return true, nil end
-        local elapsed = tick() - t
+        local elapsed = os.clock() - t
         if elapsed >= cd then return true, nil end
         return false, cd - elapsed
     end
@@ -701,7 +631,7 @@ local BIG_TREE_NAMES = {
             bucket = {}
             lastHitAt[target] = bucket
         end
-        bucket[weaponName] = tick()
+        bucket[weaponName] = os.clock()
     end
 
     local CHAR_WEAPON_PREF = {
@@ -727,15 +657,15 @@ local BIG_TREE_NAMES = {
         local available = {}
         for idx, pair in ipairs(CHAR_WEAPON_PREF) do
             local name, cd = pair[1], pair[2]
-            if findInInventory(name) then
-                available[#available + 1] = { name = name, cd = cd or TUNE.CHOP_SWING_DELAY, order = idx }
+            if findItem(name) then
+                available[#available + 1] = { name = name, cd = tonumber(cd) or TUNE.CHAR_DEBOUNCE_SEC, order = idx }
             end
         end
         table.sort(available, function(a, b) return a.order < b.order end)
         if #available == 0 then
             for _, n in ipairs(TUNE.ChopPrefer) do
-                if findInInventory(n) then
-                    available[#available + 1] = { name = n, cd = TUNE.CHOP_SWING_DELAY, order = math.huge }
+                if findItem(n) then
+                    available[#available + 1] = { name = n, cd = TUNE.CHAR_DEBOUNCE_SEC, order = math.huge }
                     break
                 end
             end
@@ -743,88 +673,64 @@ local BIG_TREE_NAMES = {
         return available
     end
 
-    local lastSwingAtByWeapon = {}
     local characterHitSeq = 0
-
     local function nextCharacterHitId()
         characterHitSeq += 1
         return tostring(characterHitSeq) .. "_" .. TUNE.UID_SUFFIX
     end
 
     local function chopWave(targetModels, swingDelay, hitPartGetter, isTree, isBigTree)
-        if not isTree and not running.Character then return end
-
         if not isTree then
+            if not running.Character then return end
             local availableWeapons = collectAvailableCharWeapons()
             if #availableWeapons == 0 then
                 task.wait(0.2)
                 return
             end
 
-            local now = os.clock()
-            local earliestReady = math.huge
+            local cap = math.min(#targetModels, TUNE.CHAR_MAX_PER_WAVE)
             local anyHit = false
+            local soonest = math.huge
 
-            for _, weapon in ipairs(availableWeapons) do
+            for i = 1, cap do
                 if not running.Character then return end
-
-                local toolName = weapon.name
-                local cd       = weapon.cd
-                local lastSwing = lastSwingAtByWeapon[toolName] or 0
-                local since = now - lastSwing
-
-                if since < cd then
-                    local remaining = cd - since
-                    if remaining < earliestReady then earliestReady = remaining end
-                else
-                    local tool = ensureEquipped(toolName)
-                    if tool then
-                        local cap = math.min(#targetModels, TUNE.CHAR_MAX_PER_WAVE)
-                        local didHitWithThis = false
-                        local nextTry = math.huge
-
-                        for i = 1, cap do
-                            if not running.Character then return end
-
-                            local mdl = targetModels[i]
-                            local head = hitPartGetter(mdl)
-                            if head then
-                                local ch = lp.Character
-                                local hrp = ch and ch:FindFirstChild("HumanoidRootPart") or nil
-                                local origin = getRayOriginFromChar(ch) or (hrp and hrp.Position) or nil
-                                local dist = origin and (head.Position - origin).Magnitude or math.huge
-                                local los = false
-                                if hrp then
-                                    los = visibleFromHRP(hrp, head, tonumber(TUNE.RAY_MAX_HOPS_CHAR) or 0, ch)
+                local mdl = targetModels[i]
+                if mdl and mdl.Parent then
+                    local head = hitPartGetter(mdl)
+                    if head then
+                        local tool, toolName
+                        for _, weapon in ipairs(availableWeapons) do
+                            local ok, waitFor = canHitWithWeapon(mdl, weapon.name, weapon.cd)
+                            if ok then
+                                local t = ensureEquipped(weapon.name)
+                                if t then
+                                    tool = t
+                                    toolName = weapon.name
+                                    break
                                 end
-                                if los or dist <= TUNE.CHAR_CLOSE_FAILSAFE then
-                                    local canHit, waitFor = canHitWithWeapon(mdl, toolName, cd)
-                                    if canHit then
-                                        local impactCF = computeImpactCFrame(mdl, head)
-                                        local hitId = nextCharacterHitId()
-                                        HitTarget(mdl, tool, hitId, impactCF)
-                                        markHitWithWeapon(mdl, toolName)
-                                        didHitWithThis = true
-                                        anyHit = true
-                                        task.wait(TUNE.CHAR_HIT_STEP_WAIT)
-                                    elseif waitFor and waitFor < nextTry then
-                                        nextTry = waitFor
-                                    end
-                                end
+                            elseif waitFor and waitFor < soonest then
+                                soonest = waitFor
                             end
                         end
 
-                        if didHitWithThis then
-                            lastSwingAtByWeapon[toolName] = os.clock()
-                        elseif nextTry < math.huge then
-                            if nextTry < earliestReady then earliestReady = nextTry end
+                        if tool and toolName then
+                            local impactCF = computeImpactCFrame(mdl, head)
+                            local hitId = nextCharacterHitId()
+                            HitTarget(mdl, tool, hitId, impactCF)
+                            markHitWithWeapon(mdl, toolName)
+                            anyHit = true
+                            task.wait(TUNE.CHAR_HIT_STEP_WAIT)
                         end
                     end
                 end
             end
 
-            if not anyHit and earliestReady < math.huge then
-                task.wait(math.max(0.01, earliestReady))
+            if not anyHit then
+                if soonest < math.huge then
+                    task.wait(math.max(0.02, math.min(soonest, 0.5)))
+                else
+                    task.wait(0.15)
+                end
             end
             return
         end
@@ -839,7 +745,7 @@ local BIG_TREE_NAMES = {
             toolName = bt
         else
             for _, n in ipairs(TUNE.ChopPrefer) do
-                if findInInventory(n) then
+                if findItem(n) then
                     toolName = n
                     break
                 end
@@ -875,7 +781,7 @@ local BIG_TREE_NAMES = {
     end
 
     --------------------------------------------------------------------
-    -- CHARACTER AURA
+    -- CHARACTER AURA (ALWAYS IGNORE WALLS)
     --------------------------------------------------------------------
 
     local function startCharacterAura()
@@ -893,23 +799,7 @@ local BIG_TREE_NAMES = {
                     local charsFolder = WS:FindFirstChild("Characters")
                     local targets = collectCharactersInRadius(charsFolder, origin, radius)
                     if #targets > 0 then
-                        local hopsChar = tonumber(TUNE.RAY_MAX_HOPS_CHAR) or 0
-                        local filtered = {}
-                        for _, mdl in ipairs(targets) do
-                            local head = characterHeadPart(mdl)
-                            if head then
-                                local dist = (head.Position - origin).Magnitude
-                                local los = visibleFromHRP(hrp, head, hopsChar, ch)
-                                if los or dist <= TUNE.CHAR_CLOSE_FAILSAFE then
-                                    filtered[#filtered + 1] = mdl
-                                end
-                            end
-                        end
-                        if #filtered > 0 then
-                            chopWave(filtered, TUNE.CHOP_SWING_DELAY, characterHeadPart, false)
-                        else
-                            task.wait(0.3)
-                        end
+                        chopWave(targets, TUNE.CHOP_SWING_DELAY, characterHeadPart, false)
                     else
                         task.wait(0.3)
                     end
@@ -952,25 +842,7 @@ local BIG_TREE_NAMES = {
                             batch[i] = allTrees[idx]
                         end
                         C.State._treeCursor = C.State._treeCursor + batchSize
-                        local hopsTree = math.max(0, tonumber(TUNE.RAY_MAX_HOPS_TREE) or 0)
-                        local filtered = {}
-                        for _, tree in ipairs(batch) do
-                            if tree and tree.Parent then
-                                local hitPart = bestTreeHitPart(tree)
-                                if hitPart then
-                                    local dist = (hitPart.Position - origin).Magnitude
-                                    local los = visibleTreeFromHRP(hrp, tree, hopsTree, hitPart)
-                                    if los or dist <= CLOSE_FAILSAFE then
-                                        filtered[#filtered + 1] = tree
-                                    end
-                                end
-                            end
-                        end
-                        if #filtered > 0 then
-                            chopWave(filtered, TUNE.CHOP_SWING_DELAY, bestTreeHitPart, true, false)
-                        else
-                            task.wait(0.3)
-                        end
+                        chopWave(batch, TUNE.CHOP_SWING_DELAY, bestTreeHitPart, true, false)
                     else
                         task.wait(0.3)
                     end
@@ -1012,25 +884,7 @@ local BIG_TREE_NAMES = {
                             batch[i] = allTrees[idx]
                         end
                         C.State._bigTreeCursor = C.State._bigTreeCursor + batchSize
-                        local hopsTree = math.max(0, tonumber(TUNE.RAY_MAX_HOPS_TREE) or 0)
-                        local filtered = {}
-                        for _, tree in ipairs(batch) do
-                            if tree and tree.Parent then
-                                local hitPart = bestTreeHitPart(tree)
-                                if hitPart then
-                                    local dist = (hitPart.Position - origin).Magnitude
-                                    local los = visibleTreeFromHRP(hrp, tree, hopsTree, hitPart)
-                                    if los or dist <= CLOSE_FAILSAFE then
-                                        filtered[#filtered + 1] = tree
-                                    end
-                                end
-                            end
-                        end
-                        if #filtered > 0 then
-                            chopWave(filtered, TUNE.CHOP_SWING_DELAY, bestTreeHitPart, true, true)
-                        else
-                            task.wait(0.3)
-                        end
+                        chopWave(batch, TUNE.CHOP_SWING_DELAY, bestTreeHitPart, true, true)
                     else
                         task.wait(0.5)
                     end
