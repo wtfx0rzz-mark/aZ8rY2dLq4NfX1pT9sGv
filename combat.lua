@@ -34,9 +34,19 @@ return function(C, R, UI)
 
     local running = { SmallTree = false, BigTree = false, Character = false, TrapAura = false }
 
-    local TREE_NAMES = { ["Small Tree"] = true, ["Snowy Small Tree"] = true, ["Small Webbed Tree"] = true }
-    local BIG_TREE_NAMES = { TreeBig1 = true, TreeBig2 = true, TreeBig3 = true }
-    local CLOSE_FAILSAFE = 18
+local TREE_NAMES = {
+    ["Small Tree"] = true,
+    ["Snowy Small Tree"] = true,
+    ["Small Webbed Tree"] = true,
+    ["Christmas Pine"] = true,
+}
+    
+local BIG_TREE_NAMES = {
+    TreeBig1 = true,
+    TreeBig2 = true,
+    TreeBig3 = true,
+    ["Northern Pine"] = true,
+}
 
     local TRAP_MAX_RADIUS = 20
 
