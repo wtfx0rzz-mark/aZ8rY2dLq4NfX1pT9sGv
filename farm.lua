@@ -187,10 +187,38 @@ return function(C, R, UI)
             hrp.CFrame = CFrame.new(targetPos, Vector3.new(treePos.X, targetPos.Y, treePos.Z))
         end
 
+        local function buildNameSet(baseSet, extra)
+            local out = {}
+            if type(baseSet) == "table" then
+                for k, v in pairs(baseSet) do
+                    if v == true and type(k) == "string" then
+                        out[k] = true
+                    end
+                end
+            end
+            if type(extra) == "table" then
+                for k, v in pairs(extra) do
+                    if type(k) == "number" then
+                        if type(v) == "string" then
+                            out[v] = true
+                        end
+                    elseif type(k) == "string" and v == true then
+                        out[k] = true
+                    end
+                end
+            end
+            return out
+        end
+
         -- SMALL TREES
         local AXE_HITS   = { ["Old Axe"] = 13, ["Good Axe"] = 5, ["Strong Axe"] = 1, ["Chainsaw"] = 2 }
         local AXE_PREFER = { "Strong Axe", "Chainsaw", "Good Axe", "Old Axe" }
-        local TREE_NAMES = { ["Small Tree"] = true, ["Snowy Small Tree"] = true, ["Small Webbed Tree"] = true }
+
+        local TREE_NAMES_BASE = { ["Small Tree"] = true, ["Snowy Small Tree"] = true, ["Small Webbed Tree"] = true }
+        local EXTRA_SMALL_TREE_NAMES = {["Christmas Pine"] = true } -- add exact names here
+        local EXTRA_BIG_TREE_NAMES = {["Northern Pine"] = true} -- add exact names here
+
+        local TREE_NAMES = buildNameSet(TREE_NAMES_BASE, EXTRA_SMALL_TREE_NAMES)
 
         local function isSmallTreeModel(model)
             if not (model and model:IsA("Model")) then
@@ -270,7 +298,7 @@ return function(C, R, UI)
                 end
                 if inst:IsA("Model") and isSmallTreeModel(inst) then
                     registerSmallTree(inst)
-                    smallWaiting_spawn = false
+                    smallWaitingSpawn = false
                     if smallSpawnConn then
                         smallSpawnConn:Disconnect()
                         smallSpawnConn = nil
@@ -421,7 +449,9 @@ return function(C, R, UI)
         end
 
         -- BIG TREES
-        local BIG_TREE_NAMES    = { TreeBig1 = true, TreeBig2 = true, TreeBig3 = true }
+        local BIG_TREE_NAMES_BASE = { TreeBig1 = true, TreeBig2 = true, TreeBig3 = true }
+        local BIG_TREE_NAMES = buildNameSet(BIG_TREE_NAMES_BASE, EXTRA_BIG_TREE_NAMES)
+
         local REQUIRED_HITS     = { ["Strong Axe"] = 35, ["Chainsaw"] = 35 }
         local PER_TREE_COOLDOWN = 0.5
 
