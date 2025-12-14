@@ -24,8 +24,8 @@ return function(C, R, UI)
     TUNE.ChopPrefer           = TUNE.ChopPrefer           or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
     TUNE.MAX_TARGETS_PER_WAVE = TUNE.MAX_TARGETS_PER_WAVE or 20
     TUNE.CHAR_MAX_PER_WAVE    = TUNE.CHAR_MAX_PER_WAVE    or 20
-    TUNE.CHAR_DEBOUNCE_SEC    = TUNE.CHAR_DEBOUNCE_SEC    or 0.4
-    TUNE.CHAR_HIT_STEP_WAIT   = TUNE.CHAR_HIT_STEP_WAIT   or 0.02
+    TUNE.CHAR_DEBOUNCE_SEC    = TUNE.CHAR_DEBOUNCE_SEC    or 0.5
+    TUNE.CHAR_HIT_STEP_WAIT   = TUNE.CHAR_HIT_STEP_WAIT   or 0.0
     TUNE.CHAR_SORT            = (TUNE.CHAR_SORT ~= false)
 
     local running = { SmallTree = false, BigTree = false, Character = false, TrapAura = false }
@@ -47,7 +47,7 @@ return function(C, R, UI)
     local TRAP_MAX_RADIUS = 20
 
     --------------------------------------------------------------------
-    -- AURA VISUAL (CIRCLE)
+    -- AURA VISUAL (CIRCLE)  (NO RAYCASTS)
     --------------------------------------------------------------------
 
     local auraVis = {
@@ -61,7 +61,6 @@ return function(C, R, UI)
         character = nil,
         hrp = nil,
         acc = 0,
-        rayParams = nil,
     }
 
     local function getPlayerGui()
@@ -79,6 +78,7 @@ return function(C, R, UI)
                 end
             end
         end
+
         local rf = WS:FindFirstChild("__Aura__")
         if rf then
             local a = rf:FindFirstChild("AuraAnchor_" .. tostring(lp.UserId))
@@ -142,12 +142,6 @@ return function(C, R, UI)
             self.adorn = ad
         end
 
-        if not self.rayParams then
-            local rp = RaycastParams.new()
-            rp.FilterType = Enum.RaycastFilterType.Exclude
-            self.rayParams = rp
-        end
-
         return true
     end
 
@@ -167,26 +161,24 @@ return function(C, R, UI)
         self.adorn.InnerRadius = inner
     end
 
-    function auraVis:updateAnchor()
-        if not (self.hrp and self.hrp.Parent and self.anchor and self.anchor.Parent and self.rayParams) then return end
-        local ch = self.character
-        local rf = self.folder
-        self.rayParams.FilterDescendantsInstances = { ch, rf }
-
-        local pos = self.hrp.Position
-        local origin = pos + Vector3.new(0, 8, 0)
-        local hit = WS:Raycast(origin, Vector3.new(0, -500, 0), self.rayParams)
-        local y = pos.Y
-        if hit then y = hit.Position.Y + 0.06 end
-        self.anchor.CFrame = CFrame.new(pos.X, y, pos.Z)
-    end
-
     function auraVis:refreshCharRefs()
         local ch = lp.Character
         if not ch then return end
         local hrp = ch:FindFirstChild("HumanoidRootPart")
         self.character = ch
         self.hrp = hrp
+    end
+
+    function auraVis:updateAnchor()
+        if not (self.hrp and self.hrp.Parent and self.anchor and self.anchor.Parent) then return end
+        local ch = self.character
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid") or nil
+        local pos = self.hrp.Position
+        local yOff = 3.0
+        if hum and typeof(hum.HipHeight) == "number" then
+            yOff = math.clamp(hum.HipHeight + 2.0, 2.5, 6.0)
+        end
+        self.anchor.CFrame = CFrame.new(pos.X, pos.Y - yOff, pos.Z)
     end
 
     function auraVis:start()
@@ -505,21 +497,11 @@ return function(C, R, UI)
     end
 
     local function computeImpactCFrame(model, hitPart)
-        if not (model and hitPart and hitPart:IsA("BasePart")) then
-            return hitPart and CFrame.new(hitPart.Position) or CFrame.new()
+        if not (hitPart and hitPart:IsA("BasePart")) then
+            return CFrame.new()
         end
-        local outward = hitPart.CFrame.LookVector
-        if outward.Magnitude == 0 then outward = Vector3.new(0, 0, -1) end
-        outward = outward.Unit
-        local origin = hitPart.Position + outward * 1.0
-        local dir = -outward * 5.0
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Include
-        params.FilterDescendantsInstances = { model }
-        local rc = WS:Raycast(origin, dir, params)
-        local pos = rc and (rc.Position + rc.Normal * 0.02) or (origin + dir * 0.6)
         local rot = hitPart.CFrame - hitPart.CFrame.Position
-        return CFrame.new(pos) * rot
+        return CFrame.new(hitPart.Position + Vector3.new(0, 0.02, 0)) * rot
     end
 
     local function modelOf(inst)
@@ -653,24 +635,19 @@ return function(C, R, UI)
         { "Old Axe",           0.5 },
     }
 
-    local function collectAvailableCharWeapons()
-        local available = {}
-        for idx, pair in ipairs(CHAR_WEAPON_PREF) do
+    local function bestAvailableCharWeapon()
+        for _, pair in ipairs(CHAR_WEAPON_PREF) do
             local name, cd = pair[1], pair[2]
             if findItem(name) then
-                available[#available + 1] = { name = name, cd = tonumber(cd) or TUNE.CHAR_DEBOUNCE_SEC, order = idx }
+                return name, (tonumber(cd) or TUNE.CHAR_DEBOUNCE_SEC)
             end
         end
-        table.sort(available, function(a, b) return a.order < b.order end)
-        if #available == 0 then
-            for _, n in ipairs(TUNE.ChopPrefer) do
-                if findItem(n) then
-                    available[#available + 1] = { name = n, cd = TUNE.CHAR_DEBOUNCE_SEC, order = math.huge }
-                    break
-                end
+        for _, n in ipairs(TUNE.ChopPrefer) do
+            if findItem(n) then
+                return n, TUNE.CHAR_DEBOUNCE_SEC
             end
         end
-        return available
+        return nil, nil
     end
 
     local characterHitSeq = 0
@@ -682,15 +659,23 @@ return function(C, R, UI)
     local function chopWave(targetModels, swingDelay, hitPartGetter, isTree, isBigTree)
         if not isTree then
             if not running.Character then return end
-            local availableWeapons = collectAvailableCharWeapons()
-            if #availableWeapons == 0 then
+
+            local toolName, cd = bestAvailableCharWeapon()
+            if not toolName then
+                task.wait(0.2)
+                return
+            end
+
+            local tool = ensureEquipped(toolName)
+            if not tool then
                 task.wait(0.2)
                 return
             end
 
             local cap = math.min(#targetModels, TUNE.CHAR_MAX_PER_WAVE)
-            local anyHit = false
+            local anySent = false
             local soonest = math.huge
+            local hitsLaunched = 0
 
             for i = 1, cap do
                 if not running.Character then return end
@@ -698,36 +683,42 @@ return function(C, R, UI)
                 if mdl and mdl.Parent then
                     local head = hitPartGetter(mdl)
                     if head then
-                        local tool, toolName
-                        for _, weapon in ipairs(availableWeapons) do
-                            local ok, waitFor = canHitWithWeapon(mdl, weapon.name, weapon.cd)
-                            if ok then
-                                local t = ensureEquipped(weapon.name)
-                                if t then
-                                    tool = t
-                                    toolName = weapon.name
-                                    break
-                                end
-                            elseif waitFor and waitFor < soonest then
-                                soonest = waitFor
-                            end
-                        end
-
-                        if tool and toolName then
+                        local ok, waitFor = canHitWithWeapon(mdl, toolName, cd)
+                        if ok then
                             local impactCF = computeImpactCFrame(mdl, head)
                             local hitId = nextCharacterHitId()
-                            HitTarget(mdl, tool, hitId, impactCF)
                             markHitWithWeapon(mdl, toolName)
-                            anyHit = true
-                            task.wait(TUNE.CHAR_HIT_STEP_WAIT)
+                            anySent = true
+                            hitsLaunched += 1
+
+                            task.spawn(function()
+                                if not (running.Character and mdl and mdl.Parent) then return end
+                                pcall(function()
+                                    HitTarget(mdl, tool, hitId, impactCF)
+                                end)
+                            end)
+
+                            if (TUNE.CHAR_HIT_STEP_WAIT and TUNE.CHAR_HIT_STEP_WAIT > 0) then
+                                task.wait(TUNE.CHAR_HIT_STEP_WAIT)
+                            else
+                                if hitsLaunched % 6 == 0 then task.wait() end
+                            end
+                        elseif waitFor and waitFor < soonest then
+                            soonest = waitFor
                         end
                     end
                 end
             end
 
-            if not anyHit then
+            if anySent then
+                local waitT = cd
                 if soonest < math.huge then
-                    task.wait(math.max(0.02, math.min(soonest, 0.5)))
+                    waitT = math.min(cd, soonest)
+                end
+                task.wait(math.max(0.02, waitT))
+            else
+                if soonest < math.huge then
+                    task.wait(math.max(0.02, soonest))
                 else
                     task.wait(0.15)
                 end
@@ -781,7 +772,7 @@ return function(C, R, UI)
     end
 
     --------------------------------------------------------------------
-    -- CHARACTER AURA (ALWAYS IGNORE WALLS)
+    -- CHARACTER AURA (ONLY GetPartBoundsInRadius, IGNORE WALLS)
     --------------------------------------------------------------------
 
     local function startCharacterAura()
@@ -801,7 +792,7 @@ return function(C, R, UI)
                     if #targets > 0 then
                         chopWave(targets, TUNE.CHOP_SWING_DELAY, characterHeadPart, false)
                     else
-                        task.wait(0.3)
+                        task.wait(0.1)
                     end
                 end
             end
@@ -813,7 +804,7 @@ return function(C, R, UI)
     end
 
     --------------------------------------------------------------------
-    -- SMALL TREE AURA
+    -- SMALL TREE AURA (IGNORE WALLS)
     --------------------------------------------------------------------
 
     C.State._treeCursor = C.State._treeCursor or 1
@@ -844,7 +835,7 @@ return function(C, R, UI)
                         C.State._treeCursor = C.State._treeCursor + batchSize
                         chopWave(batch, TUNE.CHOP_SWING_DELAY, bestTreeHitPart, true, false)
                     else
-                        task.wait(0.3)
+                        task.wait(0.2)
                     end
                 end
             end
@@ -856,7 +847,7 @@ return function(C, R, UI)
     end
 
     --------------------------------------------------------------------
-    -- BIG TREE AURA (BIG TREES ONLY)
+    -- BIG TREE AURA (IGNORE WALLS)
     --------------------------------------------------------------------
 
     C.State._bigTreeCursor = C.State._bigTreeCursor or 1
@@ -886,7 +877,7 @@ return function(C, R, UI)
                         C.State._bigTreeCursor = C.State._bigTreeCursor + batchSize
                         chopWave(batch, TUNE.CHOP_SWING_DELAY, bestTreeHitPart, true, true)
                     else
-                        task.wait(0.5)
+                        task.wait(0.35)
                     end
                 end
             end
@@ -898,7 +889,7 @@ return function(C, R, UI)
     end
 
     --------------------------------------------------------------------
-    -- TRAP AURA (NO LOGGER, RANGE CAPPED TO 20 STUDS)
+    -- TRAP AURA (UNCHANGED)
     --------------------------------------------------------------------
 
     local function trapsRoot()
@@ -1057,7 +1048,7 @@ return function(C, R, UI)
     end
 
     --------------------------------------------------------------------
-    -- MANUAL TRAP CONTROL PANEL
+    -- MANUAL TRAP CONTROL PANEL (UNCHANGED)
     --------------------------------------------------------------------
 
     local trapPanelGui
