@@ -329,7 +329,7 @@ return function(C, R, UI)
     --========================
     -- UI Controls
     --========================
-    tab:Section({ Title = "Player • Movement", Icon = "activity" })
+    tab:Section({ Title = "Movement Controls", Icon = "activity" })
 
     tab:Slider({
         Title = "Fly Speed",
@@ -376,7 +376,7 @@ return function(C, R, UI)
     })
 
     tab:Divider()
-    tab:Section({ Title = "Utilities", Icon = "tool" })
+    tab:Section({ Title = "Modifiers", Icon = "hammer" })
 
     tab:Toggle({
         Title = "Noclip",
