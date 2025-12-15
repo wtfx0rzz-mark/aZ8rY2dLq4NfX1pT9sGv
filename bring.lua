@@ -833,8 +833,8 @@ return function(C, R, UI)
     end
 
     tab:Section({ Title = "Actions" })
-    tab:Button({ Title = "Burn/Cook Nearby (Fuel + Raw Food)", Callback = burnNearby })
-    tab:Button({ Title = "Scrap Nearby Junk(+Log/Chair)",      Callback = scrapNearby })
+    tab:Button({ Title = "Burn/Cook Nearby", Callback = burnNearby })
+    tab:Button({ Title = "Scrap Nearby",      Callback = scrapNearby })
 
     tab:Section({ Title = "Bring Limits" })
     tab:Toggle({
