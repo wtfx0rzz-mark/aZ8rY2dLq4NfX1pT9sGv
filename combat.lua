@@ -1209,7 +1209,7 @@ return function(C, R, UI)
     --------------------------------------------------------------------
 
     CombatTab:Toggle({
-        Title = "Character Aura",
+        Title = "Kill Aura",
         Value = C.State.Toggles.CharacterAura or false,
         Callback = function(on)
             C.State.Toggles.CharacterAura = on
@@ -1228,7 +1228,7 @@ return function(C, R, UI)
 
     local bigToggle
     bigToggle = CombatTab:Toggle({
-        Title = "Big Tree Aura (Strong Axe or Chainsaw)",
+        Title = "Big Tree Aura",
         Value = C.State.Toggles.BigTreeAura or false,
         Callback = function(on)
             if on then
@@ -1265,7 +1265,7 @@ return function(C, R, UI)
     })
 
     CombatTab:Toggle({
-        Title = "Trap Aura (Bear Traps, max 20 studs)",
+        Title = "Trap Aura",
         Value = C.State.Toggles.TrapAura or false,
         Callback = function(on)
             C.State.Toggles.TrapAura = on
@@ -1283,7 +1283,7 @@ return function(C, R, UI)
     })
 
     CombatTab:Toggle({
-        Title = "Draw Aura Circle",
+        Title = "Show Aura Circle",
         Value = C.State.Toggles.DrawAuraCircle or false,
         Callback = function(on)
             C.State.Toggles.DrawAuraCircle = on
