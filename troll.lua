@@ -1419,22 +1419,23 @@ return function(C, R, UI)
 
     tab:Section({ Title = "Fling Players" })
 
-    tab:Slider({
-        Title = "Fling Power",
-        Value = { Min = 5000, Max = 55000, Default = 10000 },
-        Callback = function(v)
-            local n
-            if type(v) == "table" then
-                n = v.Value or v.Current or v.Default
-            else
-                n = v
-            end
-            n = tonumber(n)
-            if n then
-                flingPower = math.clamp(math.floor(n + 0.5), 5000, 55000)
-            end
+tab:Slider({
+    Title = "Fling Power",
+    Value = { Min = 50, Max = 55000, Default = 10000 },
+    Callback = function(v)
+        local n
+        if type(v) == "table" then
+            n = v.Value or v.Current or v.Default
+        else
+            n = v
         end
-    })
+        n = tonumber(n)
+        if n then
+            flingPower = math.clamp(math.floor(n + 0.5), 50, 55000)
+        end
+    end
+})
+
 
     tab:Toggle({
         Title = "Fling Players",
