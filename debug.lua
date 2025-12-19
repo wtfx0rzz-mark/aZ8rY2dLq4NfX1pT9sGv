@@ -1,3 +1,4 @@
+-- debug.lua
 return function(C, R, UI)
     local Players  = (C and C.Services and C.Services.Players)  or game:GetService("Players")
     local RS       = (C and C.Services and C.Services.RS)       or game:GetService("ReplicatedStorage")
@@ -510,7 +511,9 @@ return function(C, R, UI)
     end
 
     local CORPSE_Enable = false
-    local CORPSE_SPEED = 6.0
+    local CORPSE_SPEED = 7.5
+    local CORPSE_JUMP_BUMP = 2.0
+    local corpseJumpQueued = 0
 
     local corpseGui = nil
     local corpseBody = nil
@@ -729,7 +732,7 @@ return function(C, R, UI)
 
         local frame = Instance.new("Frame")
         frame.Name = "Pad"
-        frame.Size = UDim2.new(0, 200, 0, 140)
+        frame.Size = UDim2.new(0, 200, 0, 180)
         frame.Position = UDim2.new(0, 20, 0, 240)
         frame.BackgroundColor3 = Color3.fromRGB(20,20,20)
         frame.BorderSizePixel = 0
@@ -791,11 +794,16 @@ return function(C, R, UI)
         local btnBack    = makeBtn("Back",    2)
         local btnLeft    = makeBtn("Left",    3)
         local btnRight   = makeBtn("Right",   4)
+        local btnJump    = makeBtn("Jump",    5)
 
         bindCorpseButton(btnForward, function(v) corpseForward = v end)
         bindCorpseButton(btnBack,    function(v) corpseBack    = v end)
         bindCorpseButton(btnLeft,    function(v) corpseLeft    = v end)
         bindCorpseButton(btnRight,   function(v) corpseRight   = v end)
+
+        btnJump.MouseButton1Click:Connect(function()
+            corpseJumpQueued = math.min(3, (corpseJumpQueued or 0) + 1)
+        end)
 
         corpseGui = gui
     end
@@ -804,11 +812,13 @@ return function(C, R, UI)
         if corpseGui then pcall(function() corpseGui:Destroy() end) end
         corpseGui = nil
         corpseForward, corpseBack, corpseLeft, corpseRight = false,false,false,false
+        corpseJumpQueued = 0
     end
 
     local function hideCorpseGui()
         if corpseGui then corpseGui.Enabled = false end
         corpseForward, corpseBack, corpseLeft, corpseRight = false,false,false,false
+        corpseJumpQueued = 0
     end
 
     local CORPSE_SCAN_INTERVAL = 0.25
@@ -838,6 +848,14 @@ return function(C, R, UI)
         end
 
         if corpseGui then corpseGui.Enabled = true end
+
+        if corpseJumpQueued and corpseJumpQueued > 0 then
+            local bumps = corpseJumpQueued
+            corpseJumpQueued = 0
+            for _ = 1, bumps do
+                moveCorpseDelta(body, Vector3.new(0, CORPSE_JUMP_BUMP, 0))
+            end
+        end
 
         local dir = computeCorpseDir()
         if dir.Magnitude <= 0 then return end
