@@ -7,7 +7,6 @@ return function(C, R, UI)
         local WS       = (C and C.Services and C.Services.WS)       or game:GetService("Workspace")
         local PPS      = game:GetService("ProximityPromptService")
         local Run      = (C and C.Services and C.Services.Run)      or game:GetService("RunService")
-        local UIS      = game:GetService("UserInputService")
         local Lighting = (C and C.Services and C.Services.Lighting) or game:GetService("Lighting")
         local VIM      = game:GetService("VirtualInputManager")
 
@@ -600,19 +599,6 @@ return function(C, R, UI)
         local function disableGod() godOn = false; if godHB then godHB:Disconnect() godHB = nil end end
         tab:Toggle({ Title = "Godmode", Value = true, Callback = function(state) if state then enableGod() else disableGod() end end })
         task.defer(enableGod)
-
-        local infJumpOn, infConn = true, nil
-        local function enableInfJump()
-            infJumpOn = true
-            if infConn then infConn:Disconnect() end
-            infConn = UIS.JumpRequest:Connect(function()
-                local h = hum()
-                if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
-            end)
-        end
-        local function disableInfJump() infJumpOn = false; if infConn then infConn:Disconnect(); infConn = nil end end
-        tab:Toggle({ Title = "Infinite Jump", Value = true, Callback = function(state) if state then enableInfJump() else disableInfJump() end end })
-        enableInfJump()
 
         local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.4
         local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
