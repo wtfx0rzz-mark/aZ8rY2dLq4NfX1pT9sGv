@@ -48,7 +48,8 @@ return function(C, R, UI)
     local speedConn
 
     local noclipAddedConn, noclipCharConn, noclipTimerConn
-    local noclipTouched = {}
+    local noclipTouched = {}   -- [BasePart]=true
+    local noclipOrig    = {}   -- [BasePart]=original CanCollide bool
     local noclipLastReassert = 0
 
     local jumpConn
@@ -92,6 +93,8 @@ return function(C, R, UI)
 
     local function startMobileFly()
         if FLYING then return end
+        if not UIS.TouchEnabled then return end
+
         local root = hrp()
         local hum = humanoid()
         if not root or not hum then return end
@@ -120,12 +123,11 @@ return function(C, R, UI)
                 local ok, mv = pcall(function() return cachedControlModule:GetMoveVector() end)
                 if ok and typeof(mv) == "Vector3" then move = mv end
             else
-                local ok2 = pcall(cacheControlModule)
-                if not ok2 then end
+                pcall(cacheControlModule)
             end
 
-            local vel = Vector3.zero
             local spd = (flySpeed * 50)
+            local vel = Vector3.zero
             vel = vel + cam.CFrame.RightVector * (move.X * spd)
             vel = vel - cam.CFrame.LookVector  * (move.Z * spd)
             bodyVelocity.Velocity = vel
@@ -142,13 +144,12 @@ return function(C, R, UI)
     end
 
     local function startFly()
-        if not UIS.TouchEnabled then
-            return
-        end
+        flyEnabled = true
         startMobileFly()
     end
 
     local function stopFly()
+        flyEnabled = false
         stopMobileFly()
     end
 
@@ -168,10 +169,29 @@ return function(C, R, UI)
         end)
     end
 
+    --========================
+    -- Noclip (cheap + restores on OFF)
+    --========================
     local function setPartNoclip(part)
         if not part or not part:IsA("BasePart") then return end
-        if part.CanCollide ~= false then part.CanCollide = false end
+
+        if noclipOrig[part] == nil then
+            noclipOrig[part] = part.CanCollide
+        end
+
+        if part.CanCollide ~= false then
+            part.CanCollide = false
+        end
+
         noclipTouched[part] = true
+    end
+
+    local function restoreNoclipParts()
+        for part, orig in pairs(noclipOrig) do
+            if part and part.Parent and part:IsA("BasePart") then
+                part.CanCollide = orig
+            end
+        end
     end
 
     local function applyNoclipToCharacter(ch)
@@ -197,6 +217,10 @@ return function(C, R, UI)
     local function startNoclip()
         if noclipEnabled then return end
         noclipEnabled = true
+
+        noclipTouched = {}
+        noclipOrig = {}
+
         local ch = lp.Character
         if ch then
             applyNoclipToCharacter(ch)
@@ -207,6 +231,8 @@ return function(C, R, UI)
         noclipCharConn = lp.CharacterAdded:Connect(function(newCh)
             if not noclipEnabled then return end
             task.defer(function()
+                noclipTouched = {}
+                noclipOrig = {}
                 applyNoclipToCharacter(newCh)
                 hookNoclipDescendants(newCh)
             end)
@@ -228,13 +254,22 @@ return function(C, R, UI)
     end
 
     local function stopNoclip()
+        if not noclipEnabled then return end
         noclipEnabled = false
+
         disconnectConn(noclipAddedConn); noclipAddedConn = nil
         disconnectConn(noclipCharConn);  noclipCharConn  = nil
         disconnectConn(noclipTimerConn); noclipTimerConn = nil
+
+        restoreNoclipParts()
+
         noclipTouched = {}
+        noclipOrig = {}
     end
 
+    --========================
+    -- Infinite Jump
+    --========================
     local function startInfJump()
         disconnectConn(jumpConn); jumpConn = nil
         jumpConn = UIS.JumpRequest:Connect(function()
@@ -247,22 +282,35 @@ return function(C, R, UI)
         disconnectConn(jumpConn); jumpConn = nil
     end
 
+    --========================
+    -- Cleanup (module reload safety)
+    --========================
     BAG.__cleanup = function()
         if flyEnabled or FLYING then stopFly() end
         disconnectConn(flyCharConn); flyCharConn = nil
+
         disconnectConn(speedConn); speedConn = nil
-        if noclipEnabled then stopNoclip() else
+
+        if noclipEnabled then
+            stopNoclip()
+        else
             disconnectConn(noclipAddedConn); noclipAddedConn = nil
             disconnectConn(noclipCharConn);  noclipCharConn  = nil
             disconnectConn(noclipTimerConn); noclipTimerConn = nil
         end
+
         if infiniteJumpEnabled then stopInfJump() else disconnectConn(jumpConn); jumpConn = nil end
+
         cachedControlModule = nil
         cachedControlOk = false
     end
 
+    -- Start the speed enforcer once per module load (and ensure old one is cleaned up)
     startSpeedEnforcer()
 
+    --========================
+    -- UI Controls
+    --========================
     tab:Section({ Title = "Movement Controls", Icon = "activity" })
 
     tab:Slider({
@@ -277,8 +325,7 @@ return function(C, R, UI)
         Title = "Enable Fly (Mobile)",
         Value = false,
         Callback = function(state)
-            flyEnabled = state
-            if flyEnabled then startFly() else stopFly() end
+            if state then startFly() else stopFly() end
         end
     })
 
@@ -326,19 +373,27 @@ return function(C, R, UI)
     if infiniteJumpEnabled then startInfJump() end
     if speedEnabled then setWalkSpeed(walkSpeedValue) end
 
+    --========================
+    -- Character lifecycle
+    --========================
     disconnectConn(flyCharConn); flyCharConn = nil
     flyCharConn = lp.CharacterAdded:Connect(function()
         task.defer(function()
             cachedControlModule = nil
             cachedControlOk = false
+
             if flyEnabled then
                 stopFly()
                 startFly()
             end
+
             if speedEnabled then
                 setWalkSpeed(walkSpeedValue)
             end
+
             if noclipEnabled then
+                noclipTouched = {}
+                noclipOrig = {}
                 local ch = lp.Character
                 if ch then
                     applyNoclipToCharacter(ch)
