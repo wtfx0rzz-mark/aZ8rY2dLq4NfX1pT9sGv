@@ -509,21 +509,6 @@ return function(C, R, UI)
         end
     end
 
-    ----------------------------------------------------------------
-    -- Corpse movement (my body only)
-    ----------------------------------------------------------------
-    local function isPlayerDead()
-        local char = lp.Character
-        if not char then return false end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hum then return false end
-        if hum.Health <= 0 then
-            return true
-        end
-        local state = hum:GetState()
-        return state == Enum.HumanoidStateType.Dead or state == Enum.HumanoidStateType.Physics
-    end
-
     local CORPSE_Enable = false
     local CORPSE_SPEED = 6.0
 
@@ -579,52 +564,63 @@ return function(C, R, UI)
         return false
     end
 
-    local function findMyBody()
-        local best, bestD
-        local char = lp.Character
-        local refPos = nil
-        if char then
-            local h = char:FindFirstChild("HumanoidRootPart")
-            if h then
-                refPos = h.Position
-            end
-        end
-
+    local function findMyBodyFast()
         local container = WS:FindFirstChild("Characters") or WS
         for _,m in ipairs(container:GetChildren()) do
-            if m:IsA("Model") and isMyBody(m) then
-                local p = mainPart(m)
-                if p then
-                    if not refPos then
-                        return m
-                    end
-                    local d = (p.Position - refPos).Magnitude
-                    if not best or d < bestD then
-                        best, bestD = m, d
-                    end
-                end
+            if m:IsA("Model") and isMyBody(m) and mainPart(m) then
+                return m
             end
         end
+        return nil
+    end
 
-        if best then
-            return best
-        end
-
-        for _,inst in ipairs(WS:GetDescendants()) do
-            if inst:IsA("Model") and isMyBody(inst) then
+    local function findMyBodyDeep()
+        local container = WS:FindFirstChild("Characters") or WS
+        for _,inst in ipairs(container:GetDescendants()) do
+            if inst:IsA("Model") and isMyBody(inst) and mainPart(inst) then
                 return inst
             end
         end
-
         return nil
+    end
+
+    local function snapshotCollisionBody(m)
+        local t = {}
+        for _,p in ipairs(m:GetDescendants()) do
+            if p:IsA("BasePart") then
+                t[p] = { CanCollide = p.CanCollide, CanQuery = p.CanQuery, CanTouch = p.CanTouch }
+            end
+        end
+        return t
+    end
+
+    local function setCollisionOffBody(m)
+        for _,p in ipairs(m:GetDescendants()) do
+            if p:IsA("BasePart") then
+                p.CanCollide = false
+                p.CanQuery   = false
+                p.CanTouch   = false
+            end
+        end
+    end
+
+    local function restoreCollisionBody(m, snap)
+        if not snap then return end
+        for part,st in pairs(snap) do
+            if part and part.Parent then
+                part.CanCollide = st.CanCollide
+                part.CanQuery   = st.CanQuery
+                part.CanTouch   = st.CanTouch
+            end
+        end
     end
 
     local function prepBodyForNetwork(m)
         if not m or not m.Parent then return end
         local root = mainPart(m); if not root then return end
 
-        local snap = snapshotCollision(m)
-        setCollisionOff(m)
+        local snap = snapshotCollisionBody(m)
+        setCollisionOffBody(m)
 
         if RF_Start then
             pcall(function() RF_Start:FireServer(m) end)
@@ -643,7 +639,7 @@ return function(C, R, UI)
 
         Run.Heartbeat:Wait()
 
-        restoreCollision(m, snap)
+        restoreCollisionBody(m, snap)
 
         if RF_Stop then
             pcall(function() RF_Stop:FireServer(m) end)
@@ -653,11 +649,11 @@ return function(C, R, UI)
         Run.Heartbeat:Wait()
     end
 
-    local function getCorpse()
+    local function getCorpseBody()
         if corpseBody and corpseBody.Parent and isMyBody(corpseBody) then
             return corpseBody
         end
-        local found = findMyBody()
+        local found = findMyBodyFast() or findMyBodyDeep()
         corpseBody = found
         if found and found ~= corpsePrepared then
             prepBodyForNetwork(found)
@@ -715,15 +711,9 @@ return function(C, R, UI)
     end
 
     local function bindCorpseButton(btn, setter)
-        btn.MouseButton1Down:Connect(function()
-            setter(true)
-        end)
-        btn.MouseButton1Up:Connect(function()
-            setter(false)
-        end)
-        btn.MouseLeave:Connect(function()
-            setter(false)
-        end)
+        btn.MouseButton1Down:Connect(function() setter(true) end)
+        btn.MouseButton1Up:Connect(function() setter(false) end)
+        btn.MouseLeave:Connect(function() setter(false) end)
     end
 
     local function createCorpseGui()
@@ -811,48 +801,60 @@ return function(C, R, UI)
     end
 
     local function destroyCorpseGui()
-        if corpseGui then
-            pcall(function() corpseGui:Destroy() end)
-        end
+        if corpseGui then pcall(function() corpseGui:Destroy() end) end
         corpseGui = nil
         corpseForward, corpseBack, corpseLeft, corpseRight = false,false,false,false
     end
 
-    Run.Heartbeat:Connect(function(dt)
+    local function hideCorpseGui()
+        if corpseGui then corpseGui.Enabled = false end
+        corpseForward, corpseBack, corpseLeft, corpseRight = false,false,false,false
+    end
+
+    local CORPSE_SCAN_INTERVAL = 0.25
+    local corpseScanAcc = 0
+
+    local function updateCorpseUiAndMove(dt)
         if not CORPSE_Enable then
-            if corpseGui then
-                corpseGui.Enabled = false
-            end
+            hideCorpseGui()
             return
         end
 
-        if not isPlayerDead() then
-            if corpseGui then
-                corpseGui.Enabled = false
+        local body = nil
+        if corpseBody and corpseBody.Parent and isMyBody(corpseBody) then
+            body = corpseBody
+        else
+            corpseScanAcc += dt
+            if corpseScanAcc >= CORPSE_SCAN_INTERVAL then
+                corpseScanAcc = 0
+                body = getCorpseBody()
             end
+        end
+
+        if not (body and body.Parent) then
+            corpseBody = nil
+            hideCorpseGui()
             return
         end
 
-        local body = getCorpse()
-        if corpseGui then
-            corpseGui.Enabled = (body ~= nil)
-        end
-        if not body then
-            return
-        end
+        if corpseGui then corpseGui.Enabled = true end
 
         local dir = computeCorpseDir()
-        if dir.Magnitude <= 0 then
-            return
-        end
+        if dir.Magnitude <= 0 then return end
 
         local step = CORPSE_SPEED * dt
         moveCorpseDelta(body, dir * step)
-    end)
+    end
 
-    ----------------------------------------------------------------
-    -- Sapling protection
-    ----------------------------------------------------------------
+    do
+        local key = "__CorpseMoveControls_HB__"
+        local prev = _G[key]
+        if prev and typeof(prev) == "RBXScriptConnection" then
+            pcall(function() prev:Disconnect() end)
+        end
+        _G[key] = Run.Heartbeat:Connect(updateCorpseUiAndMove)
+    end
+
     local SAP_Enable = false
     local sap_seen = setmetatable({}, { __mode = "k" })
     local sap_conns = {}
@@ -880,9 +882,7 @@ return function(C, R, UI)
     end
 
     local function bindSaplingWatcher(items)
-        for _,c in ipairs(sap_conns) do
-            c:Disconnect()
-        end
+        for _,c in ipairs(sap_conns) do c:Disconnect() end
         table.clear(sap_conns)
 
         if not SAP_Enable then
@@ -917,9 +917,6 @@ return function(C, R, UI)
         end)
     end
 
-    ----------------------------------------------------------------
-    -- Precision movement controls + camera lock (camera-based)
-    ----------------------------------------------------------------
     local PREC_Enable = false
     local PREC_Speed  = 2.0
 
@@ -951,14 +948,9 @@ return function(C, R, UI)
 
     local function destroyMoveGui()
         clearMoveFlags()
-        if moveGui then
-            pcall(function() moveGui:Destroy() end)
-        end
+        if moveGui then pcall(function() moveGui:Destroy() end) end
         moveGui = nil
-        if moveConn then
-            moveConn:Disconnect()
-            moveConn = nil
-        end
+        if moveConn then moveConn:Disconnect(); moveConn = nil end
     end
 
     local function ensureMoveHeartbeat()
@@ -981,18 +973,10 @@ return function(C, R, UI)
             local right3D   = PREC_BaseRight
 
             local forward = Vector3.new(forward3D.X, 0, forward3D.Z)
-            if forward.Magnitude < 1e-4 then
-                forward = Vector3.new(0, 0, -1)
-            else
-                forward = forward.Unit
-            end
+            if forward.Magnitude < 1e-4 then forward = Vector3.new(0, 0, -1) else forward = forward.Unit end
 
             local right = Vector3.new(right3D.X, 0, right3D.Z)
-            if right.Magnitude < 1e-4 then
-                right = Vector3.new(1, 0, 0)
-            else
-                right = right.Unit
-            end
+            if right.Magnitude < 1e-4 then right = Vector3.new(1, 0, 0) else right = right.Unit end
 
             local up = Vector3.new(0, 1, 0)
 
@@ -1011,9 +995,7 @@ return function(C, R, UI)
             local newPos = rootPos + dir * step
 
             local look = PREC_BaseLook or root.CFrame.LookVector
-            if look.Magnitude < 1e-4 then
-                look = Vector3.new(0, 0, -1)
-            end
+            if look.Magnitude < 1e-4 then look = Vector3.new(0, 0, -1) end
 
             local newCF = CFrame.new(newPos, newPos + look.Unit)
             root.CFrame = newCF
@@ -1022,15 +1004,9 @@ return function(C, R, UI)
     end
 
     local function bindMoveButton(btn, setter)
-        btn.MouseButton1Down:Connect(function()
-            setter(true)
-        end)
-        btn.MouseButton1Up:Connect(function()
-            setter(false)
-        end)
-        btn.MouseLeave:Connect(function()
-            setter(false)
-        end)
+        btn.MouseButton1Down:Connect(function() setter(true) end)
+        btn.MouseButton1Up:Connect(function() setter(false) end)
+        btn.MouseLeave:Connect(function() setter(false) end)
     end
 
     local function createMoveGui()
@@ -1151,12 +1127,8 @@ return function(C, R, UI)
 
         local function getBarWidth()
             local w = bar.AbsoluteSize.X
-            if w <= 0 then
-                w = bar.Size.X.Offset
-            end
-            if w <= 0 then
-                w = 140
-            end
+            if w <= 0 then w = bar.Size.X.Offset end
+            if w <= 0 then w = 140 end
             return w
         end
 
@@ -1180,8 +1152,7 @@ return function(C, R, UI)
         end
 
         thumb.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 dragging = true
                 dragInput = input
                 setFromX(input.Position.X)
@@ -1189,15 +1160,11 @@ return function(C, R, UI)
         end)
 
         thumb.InputEnded:Connect(function(input)
-            if input == dragInput then
-                dragging = false
-                dragInput = nil
-            end
+            if input == dragInput then dragging = false; dragInput = nil end
         end)
 
         bar.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 dragging = true
                 dragInput = input
                 setFromX(input.Position.X)
@@ -1205,16 +1172,11 @@ return function(C, R, UI)
         end)
 
         UIS.InputChanged:Connect(function(input)
-            if dragging then
-                setFromX(input.Position.X)
-            end
+            if dragging then setFromX(input.Position.X) end
         end)
 
         UIS.InputEnded:Connect(function(input)
-            if input == dragInput then
-                dragging = false
-                dragInput = nil
-            end
+            if input == dragInput then dragging = false; dragInput = nil end
         end)
 
         applyAlpha(0.1)
@@ -1231,12 +1193,8 @@ return function(C, R, UI)
             PREC_Enable = true
 
             if cam and root then
-                if not origCamType then
-                    origCamType = cam.CameraType
-                end
-                if not origCamSubject then
-                    origCamSubject = cam.CameraSubject
-                end
+                if not origCamType then origCamType = cam.CameraType end
+                if not origCamSubject then origCamSubject = cam.CameraSubject end
 
                 local baseCF = cam.CFrame
                 PREC_BaseLook  = baseCF.LookVector
@@ -1251,20 +1209,13 @@ return function(C, R, UI)
             PREC_Enable = false
             destroyMoveGui()
             if cam then
-                if origCamType then
-                    cam.CameraType = origCamType
-                end
-                if origCamSubject then
-                    cam.CameraSubject = origCamSubject
-                end
+                if origCamType then cam.CameraType = origCamType end
+                if origCamSubject then cam.CameraSubject = origCamSubject end
             end
             origCamType, origCamSubject = nil, nil
         end
     end
 
-    ----------------------------------------------------------------
-    -- UI SECTIONS
-    ----------------------------------------------------------------
     tab:Section({ Title = "Item Recovery" })
     tab:Button({ Title = "Own All Items",    Callback = function() ownAll() end })
     tab:Button({ Title = "Disown All Items", Callback = function() disownAll() end })
@@ -1294,11 +1245,11 @@ return function(C, R, UI)
                 if CORPSE_Enable then
                     createCorpseGui()
                 else
-                    if corpseGui then
-                        corpseGui.Enabled = false
-                    end
-                    corpseForward, corpseBack, corpseLeft, corpseRight = false,false,false,false
+                    hideCorpseGui()
                 end
+                corpseBody = nil
+                corpsePrepared = nil
+                corpseScanAcc = CORPSE_SCAN_INTERVAL
             end
         })
     else
@@ -1310,11 +1261,11 @@ return function(C, R, UI)
                 if newState then
                     createCorpseGui()
                 else
-                    if corpseGui then
-                        corpseGui.Enabled = false
-                    end
-                    corpseForward, corpseBack, corpseLeft, corpseRight = false,false,false,false
+                    hideCorpseGui()
                 end
+                corpseBody = nil
+                corpsePrepared = nil
+                corpseScanAcc = CORPSE_SCAN_INTERVAL
                 if btn and btn.SetTitle then
                     btn:SetTitle("Corpse Movement Controls: " .. (newState and "ON" or "OFF"))
                 end
