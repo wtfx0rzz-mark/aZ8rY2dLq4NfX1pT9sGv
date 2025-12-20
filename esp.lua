@@ -49,6 +49,8 @@ return function(C, R, UI)
     }
     local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"}
 
+    local characterTargets = { "Kiwi" }
+
     local function isForestGemName(n)
         local l = string.lower(n or "")
         if l == "forest gem" or l == "gem of the forest fragment" then
@@ -85,6 +87,10 @@ return function(C, R, UI)
 
     local function itemsRootOrNil()
         return WS:FindFirstChild("Items")
+    end
+
+    local function charactersRootOrNil()
+        return WS:FindFirstChild("Characters")
     end
 
     local function isInsideTree(m)
@@ -185,6 +191,7 @@ return function(C, R, UI)
     local modelToKey = setmetatable({}, { __mode = "k" })
 
     local selJunk, selFuel, selFood, selMedical, selWA, selMisc, selPelt = {},{},{},{},{},{},{}
+    local selChars = {}
     local activeSelection = {}
 
     local function mergeSet(dst, src)
@@ -228,6 +235,7 @@ return function(C, R, UI)
         mergeSet(dst, selWA)
         mergeSet(dst, selMisc)
         mergeSet(dst, selPelt)
+        mergeSet(dst, selChars)
         activeSelection = dst
         clearUnselectedCaches()
     end
@@ -446,6 +454,12 @@ return function(C, R, UI)
         return name .. "|" .. gx .. "|" .. gz
     end
 
+    local function makeCharKeyFor(model, pos)
+        local ok, did = pcall(function() return model:GetDebugId(2) end)
+        local suffix = ok and tostring(did) or tostring(model)
+        return "CHAR|" .. makeKeyFor(model, pos) .. "|" .. suffix
+    end
+
     tab:Section({ Title = "ESP Controls" })
     tab:Toggle({
         Title = "Enable ESP",
@@ -502,6 +516,9 @@ return function(C, R, UI)
         Callback = clearUnselectedCaches
     })
 
+    tab:Section({ Title = "Character ESP (Multi)" })
+    multiSelectDropdown({ title = "Select Characters", values = characterTargets, setter = function(s) selChars = s end })
+
     recomputeActiveSelection()
 
     task.spawn(function()
@@ -530,6 +547,45 @@ return function(C, R, UI)
                                         local key = modelToKey[m]
                                         if not key then
                                             key = makeKeyFor(m, pos)
+                                            modelToKey[m] = key
+                                        end
+                                        seenKeys[key] = true
+                                        local entry = espCache[key]
+                                        if not entry then
+                                            entry = { key = key, name = m.Name, lastPos = pos, live = m, missed = 0 }
+                                            espCache[key] = entry
+                                        else
+                                            entry.name = m.Name
+                                            entry.lastPos = pos
+                                            entry.live = m
+                                            entry.missed = 0
+                                        end
+                                        if not entry.con then
+                                            entry.con = m.AncestryChanged:Connect(function(_, parent)
+                                                if not parent or not m:IsDescendantOf(WS) then
+                                                    handleDespawn(m, key, center)
+                                                end
+                                            end)
+                                        end
+                                        attachToModel(entry, m, center)
+                                    end
+                                end
+                            end
+                        end
+                    end
+
+                    local charsFolder = charactersRootOrNil()
+                    if charsFolder and selChars["Kiwi"] then
+                        for _, m in ipairs(charsFolder:GetChildren()) do
+                            if m and m:IsA("Model") and m.Name == "Kiwi" then
+                                local mp = mainPart(m)
+                                if mp then
+                                    local pos = mp.Position
+                                    local dist = (center - pos).Magnitude
+                                    if dist <= (ESP_SCAN_RADIUS + 60) then
+                                        local key = modelToKey[m]
+                                        if not key then
+                                            key = makeCharKeyFor(m, pos)
                                             modelToKey[m] = key
                                         end
                                         seenKeys[key] = true
