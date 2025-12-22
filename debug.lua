@@ -511,8 +511,8 @@ return function(C, R, UI)
     end
 
     local CORPSE_Enable = false
-    local CORPSE_SPEED = 7.5
-    local CORPSE_JUMP_BUMP = 2.0
+    local CORPSE_SPEED = 16
+    local CORPSE_JUMP_BUMP = 5.0
     local corpseJumpQueued = 0
 
     local corpseGui = nil
