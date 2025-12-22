@@ -11,6 +11,7 @@ return function(C, R, UI)
         local WS         = Services.WS or game:GetService("Workspace")
         local RunService = Services.Run or game:GetService("RunService")
         local UIS        = game:GetService("UserInputService")
+        local Debris     = game:GetService("Debris")
 
         local Tabs = (UI and UI.Tabs) or {}
         local tab  = Tabs.Farm
@@ -30,6 +31,10 @@ return function(C, R, UI)
         local SWING_RADIUS      = 75
         local SWING_DEBOUNCE    = 0.09
         local SWING_MAX_TREES   = 60
+
+        local ORB_LIFETIME      = 0.35
+        local ORB_COOLDOWN      = 0.06
+        local lastOrbAt         = 0
 
         local function findInInventory(name)
             local inv = lp:FindFirstChild("Inventory")
@@ -243,6 +248,7 @@ return function(C, R, UI)
             return out
         end
 
+        -- SMALL TREES
         local AXE_HITS   = { ["Old Axe"] = 13, ["Good Axe"] = 5, ["Strong Axe"] = 1, ["Chainsaw"] = 2 }
         local AXE_PREFER = { "Strong Axe", "Chainsaw", "Good Axe", "Old Axe" }
 
@@ -480,6 +486,7 @@ return function(C, R, UI)
             clearSmallState()
         end
 
+        -- BIG TREES
         local BIG_TREE_NAMES_BASE = { TreeBig1 = true, TreeBig2 = true, TreeBig3 = true }
         local BIG_TREE_NAMES = buildNameSet(BIG_TREE_NAMES_BASE, EXTRA_BIG_TREE_NAMES)
 
@@ -697,23 +704,6 @@ return function(C, R, UI)
             bigCurrentIndex = 1
         end
 
-        local swingEnabled = false
-        local lastSwingAt = 0
-        local swingConnInput = nil
-        local swingConnChar = nil
-        local swingConnChildAdded = nil
-        local swingConnToolActivated = nil
-        local swingConnAnim = nil
-
-        local function getRayOriginFromChar(ch)
-            if not ch then return nil end
-            local head = ch:FindFirstChild("Head")
-            if head and head:IsA("BasePart") then return head.Position end
-            local r = ch:FindFirstChild("HumanoidRootPart")
-            if r and r:IsA("BasePart") then return r.Position + Vector3.new(0, 2.5, 0) end
-            return nil
-        end
-
         local function isAxeLikeName(n)
             if type(n) ~= "string" then return false end
             if AXE_HITS[n] then return true end
@@ -727,6 +717,58 @@ return function(C, R, UI)
             if not tool then return nil end
             local invItem = findInInventory(tool.Name)
             return invItem or tool
+        end
+
+        local function getRayOriginFromChar(ch)
+            if not ch then return nil end
+            local head = ch:FindFirstChild("Head")
+            if head and head:IsA("BasePart") then return head.Position end
+            local r = ch:FindFirstChild("HumanoidRootPart")
+            if r and r:IsA("BasePart") then return r.Position + Vector3.new(0, 2.5, 0) end
+            return nil
+        end
+
+        local function spawnSwingOrb()
+            local now = os.clock()
+            if (now - lastOrbAt) < ORB_COOLDOWN then return end
+            lastOrbAt = now
+
+            local ch = lp.Character
+            if not ch then return end
+
+            local head = ch:FindFirstChild("Head")
+            local hrp = ch:FindFirstChild("HumanoidRootPart")
+            local attachPart = (head and head:IsA("BasePart")) and head or ((hrp and hrp:IsA("BasePart")) and hrp or nil)
+            if not attachPart then return end
+
+            local orb = Instance.new("Part")
+            orb.Name = "__SwingOrb__"
+            orb.Shape = Enum.PartType.Ball
+            orb.Size = Vector3.new(0.7, 0.7, 0.7)
+            orb.Material = Enum.Material.Neon
+            orb.Color = Color3.fromRGB(0, 255, 255)
+            orb.CanCollide = false
+            orb.CanTouch = false
+            orb.CanQuery = false
+            orb.Massless = true
+            orb.Transparency = 0.05
+            orb.Parent = WS
+
+            local offset = Vector3.new(0, 2.2, 0)
+            orb.CFrame = attachPart.CFrame * CFrame.new(offset)
+
+            local weld = Instance.new("WeldConstraint")
+            weld.Part0 = attachPart
+            weld.Part1 = orb
+            weld.Parent = orb
+
+            local light = Instance.new("PointLight")
+            light.Brightness = 3
+            light.Range = 10
+            light.Shadows = false
+            light.Parent = orb
+
+            Debris:AddItem(orb, ORB_LIFETIME)
         end
 
         local function findTreeModelFromPart(part)
@@ -777,6 +819,14 @@ return function(C, R, UI)
             return out
         end
 
+        local swingEnabled = false
+        local lastSwingAt = 0
+        local swingConnInput = nil
+        local swingConnChar = nil
+        local swingConnChildAdded = nil
+        local swingConnToolActivated = nil
+        local swingConnAnim = nil
+
         local function swingDoHits()
             if not swingEnabled then return end
 
@@ -822,6 +872,15 @@ return function(C, R, UI)
             end
         end
 
+        local function swingDetected()
+            if not swingEnabled then return end
+            local eq = equippedTool()
+            if not eq or not eq.Parent then return end
+            if not isAxeLikeName(eq.Name) then return end
+            spawnSwingOrb()
+            swingDoHits()
+        end
+
         local function disconnectSwing()
             if swingConnInput then swingConnInput:Disconnect() swingConnInput = nil end
             if swingConnChar then swingConnChar:Disconnect() swingConnChar = nil end
@@ -834,7 +893,7 @@ return function(C, R, UI)
             if swingConnToolActivated then swingConnToolActivated:Disconnect() swingConnToolActivated = nil end
             if not (tool and tool:IsA("Tool")) then return end
             swingConnToolActivated = tool.Activated:Connect(function()
-                swingDoHits()
+                swingDetected()
             end)
         end
 
@@ -849,7 +908,7 @@ return function(C, R, UI)
             end
             if not animator then return end
             swingConnAnim = animator.AnimationPlayed:Connect(function()
-                swingDoHits()
+                swingDetected()
             end)
         end
 
@@ -861,10 +920,10 @@ return function(C, R, UI)
                 if gameProcessed then return end
                 local t = input.UserInputType
                 if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
-                    swingDoHits()
+                    swingDetected()
                 elseif t == Enum.UserInputType.Gamepad1 then
                     if input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonR1 then
-                        swingDoHits()
+                        swingDetected()
                     end
                 end
             end)
@@ -927,6 +986,7 @@ return function(C, R, UI)
             Callback = function(state)
                 swingEnabled = (state == true)
                 lastSwingAt = 0
+                lastOrbAt = 0
                 if swingEnabled then
                     setupSwing()
                 else
