@@ -11,9 +11,6 @@ return function(C, R, UI)
         local WS         = Services.WS or game:GetService("Workspace")
         local RunService = Services.Run or game:GetService("RunService")
 
-        local UIS    = game:GetService("UserInputService")
-        local Debris = game:GetService("Debris")
-
         local Tabs = (UI and UI.Tabs) or {}
         local tab  = Tabs.Farm
         if not tab then return end
@@ -29,38 +26,10 @@ return function(C, R, UI)
         local TELEPORT_DISTANCE = 30
         local UID_SUFFIX        = "0000000000"
 
-        local SWING_RADIUS    = 75
-        local SWING_DEBOUNCE  = 0.10
-        local SWING_EQUIP_GUARD = 0.20
-        local SWING_MAX_TREES = 80
-
-        local ORB_LIFETIME = 0.7
-        local ORB_COOLDOWN = 0.08
-
         local function findInInventory(name)
             local inv = lp:FindFirstChild("Inventory")
             if not inv then return nil end
             return inv:FindFirstChild(name)
-        end
-
-        local function findItemAnywhere(name)
-            if not (lp and name) then return nil end
-            local inv = lp:FindFirstChild("Inventory")
-            if inv then
-                local it = inv:FindFirstChild(name)
-                if it then return it end
-            end
-            local bp = lp:FindFirstChild("Backpack")
-            if bp then
-                local it = bp:FindFirstChild(name)
-                if it then return it end
-            end
-            local ch = lp.Character
-            if ch then
-                local it = ch:FindFirstChild(name)
-                if it then return it end
-            end
-            return nil
         end
 
         local function equippedToolName()
@@ -68,12 +37,6 @@ return function(C, R, UI)
             if not ch then return nil end
             local tool = ch:FindFirstChildOfClass("Tool")
             return tool and tool.Name or nil
-        end
-
-        local function equippedTool()
-            local ch = lp.Character
-            if not ch then return nil end
-            return ch:FindFirstChildOfClass("Tool")
         end
 
         local function ensureEquipped(tool)
@@ -138,12 +101,34 @@ return function(C, R, UI)
             return tree:FindFirstChildWhichIsA("BasePart")
         end
 
-        local function computeImpactCFrameNoRaycast(hitPart)
-            if not (hitPart and hitPart:IsA("BasePart")) then
-                return CFrame.new()
+        local function computeImpactCFrame(model, hitPart)
+            if not (model and hitPart and hitPart:IsA("BasePart")) then
+                return hitPart and CFrame.new(hitPart.Position) or CFrame.new()
             end
+
+            local outward = hitPart.CFrame.LookVector
+            if outward.Magnitude == 0 then
+                outward = Vector3.new(0, 0, -1)
+            end
+            outward = outward.Unit
+
+            local origin = hitPart.Position + outward * 1.0
+            local dir    = -outward * 5.0
+
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Include
+            params.FilterDescendantsInstances = { model }
+
+            local result = WS:Raycast(origin, dir, params)
+            local pos
+            if result then
+                pos = result.Position + result.Normal * 0.02
+            else
+                pos = origin + dir * 0.6
+            end
+
             local rot = hitPart.CFrame - hitPart.CFrame.Position
-            return CFrame.new(hitPart.Position + Vector3.new(0, 0.02, 0)) * rot
+            return CFrame.new(pos) * rot
         end
 
         local TreeImpactCF = setmetatable({}, { __mode = "k" })
@@ -157,10 +142,10 @@ return function(C, R, UI)
             return CFrame.new(cf.Position + off) * rot
         end
 
-        local function swingImpactCFForTree(treeModel, hitPart)
+        local function impactCFForTree(treeModel, hitPart)
             local base = TreeImpactCF[treeModel]
             if not base then
-                base = computeImpactCFrameNoRaycast(hitPart)
+                base = computeImpactCFrame(treeModel, hitPart)
                 TreeImpactCF[treeModel] = base
             end
             local k = (TreeHitSeed[treeModel] or 0) + 1
@@ -230,8 +215,8 @@ return function(C, R, UI)
         local AXE_PREFER = { "Strong Axe", "Chainsaw", "Good Axe", "Old Axe" }
 
         local TREE_NAMES_BASE = { ["Small Tree"] = true, ["Snowy Small Tree"] = true, ["Small Webbed Tree"] = true }
-        local EXTRA_SMALL_TREE_NAMES = {["Christmas Pine"] = true}
-        local EXTRA_BIG_TREE_NAMES = {["Northern Pine"] = true}
+        local EXTRA_SMALL_TREE_NAMES = {["Christmas Pine"] = true } -- add exact names here
+        local EXTRA_BIG_TREE_NAMES = {["Northern Pine"] = true} -- add exact names here
 
         local TREE_NAMES = buildNameSet(TREE_NAMES_BASE, EXTRA_SMALL_TREE_NAMES)
 
@@ -430,11 +415,7 @@ return function(C, R, UI)
                             local hitPart = bestTreeHitPart(tree)
                             if hitPart then
                                 local hitId    = nextPerTreeHitId(tree)
-                                local impactCF = swingImpactCFForTree(tree, hitPart)
-                                pcall(function()
-                                    local bucket = attrBucket(tree)
-                                    if bucket then bucket:SetAttribute(hitId, true) end
-                                end)
+                                local impactCF = impactCFForTree(tree, hitPart)
                                 HitTreeRemote(tree, axe, hitId, impactCF)
                                 smallHitCounts[tree] = count + 1
                             else
@@ -643,11 +624,7 @@ return function(C, R, UI)
             end
 
             local hitId    = nextPerTreeHitId(selectedTree)
-            local impactCF = swingImpactCFForTree(selectedTree, hitPart)
-            pcall(function()
-                local bucket = attrBucket(selectedTree)
-                if bucket then bucket:SetAttribute(hitId, true) end
-            end)
+            local impactCF = impactCFForTree(selectedTree, hitPart)
             HitTreeRemote(selectedTree, tool, hitId, impactCF)
 
             bigLocalHits[selectedTree]   = base2 + 1
@@ -689,202 +666,6 @@ return function(C, R, UI)
             bigCurrentIndex = 1
         end
 
-        -- SWING HIT MODE (matching combat module tree hit method)
-        local function getRayOriginFromChar(ch)
-            if not ch then return nil end
-            local head = ch:FindFirstChild("Head")
-            if head and head:IsA("BasePart") then return head.Position end
-            local r = ch:FindFirstChild("HumanoidRootPart")
-            if r and r:IsA("BasePart") then return r.Position + Vector3.new(0, 2.5, 0) end
-            return nil
-        end
-
-        local function findTreeModelFromPart(part)
-            local current = part and part.Parent
-            while current do
-                if current:IsA("Model") then
-                    if isSmallTreeModel(current) or isBigTreeModel(current) then
-                        return current
-                    end
-                end
-                current = current.Parent
-            end
-            return nil
-        end
-
-        local function collectTreesInRadius(origin, radius)
-            local out = {}
-            if not origin or not radius or radius <= 0 then return out end
-
-            local roots = { WS, RS:FindFirstChild("Assets"), RS:FindFirstChild("CutsceneSets") }
-            local includeRoots = {}
-            for _, r in ipairs(roots) do
-                if r then includeRoots[#includeRoots + 1] = r end
-            end
-            if #includeRoots == 0 then includeRoots[1] = WS end
-
-            local params = OverlapParams.new()
-            params.FilterType = Enum.RaycastFilterType.Include
-            params.FilterDescendantsInstances = includeRoots
-
-            local parts = WS:GetPartBoundsInRadius(origin, radius, params)
-            if not parts then return out end
-
-            local seen = {}
-            for _, p in ipairs(parts) do
-                if p and p:IsA("BasePart") then
-                    local tree = findTreeModelFromPart(p)
-                    if tree and tree.Parent and not seen[tree] then
-                        seen[tree] = true
-                        out[#out + 1] = tree
-                        if #out >= SWING_MAX_TREES then break end
-                    end
-                end
-            end
-            return out
-        end
-
-        local lastOrbAt = 0
-        local function spawnSwingOrb()
-            local now = os.clock()
-            if (now - lastOrbAt) < ORB_COOLDOWN then return end
-            lastOrbAt = now
-
-            local ch = lp.Character
-            if not ch then return end
-            local head = ch:FindFirstChild("Head")
-            local hrp  = ch:FindFirstChild("HumanoidRootPart")
-            local attachPart = (head and head:IsA("BasePart")) and head or ((hrp and hrp:IsA("BasePart")) and hrp or nil)
-            if not attachPart then return end
-
-            local orb = Instance.new("Part")
-            orb.Name = "__SwingOrb__"
-            orb.Shape = Enum.PartType.Ball
-            orb.Size = Vector3.new(1.25, 1.25, 1.25)
-            orb.Material = Enum.Material.Neon
-            orb.Color = Color3.fromRGB(0, 255, 255)
-            orb.Transparency = 0.05
-            orb.Anchored = false
-            orb.Massless = true
-            orb.CanCollide = false
-            orb.CanTouch = false
-            orb.CanQuery = false
-            orb.Parent = WS
-            orb.CFrame = attachPart.CFrame * CFrame.new(0, 2.6, 0)
-
-            local weld = Instance.new("WeldConstraint")
-            weld.Part0 = attachPart
-            weld.Part1 = orb
-            weld.Parent = orb
-
-            local light = Instance.new("PointLight")
-            light.Brightness = 6
-            light.Range = 14
-            light.Shadows = false
-            light.Parent = orb
-
-            Debris:AddItem(orb, ORB_LIFETIME)
-        end
-
-        local swingEnabled = false
-        local lastSwingAt = 0
-
-        local swingCharConn, swingToolConn, swingChildAddConn, swingChildRemConn = nil, nil, nil, nil
-        local equippedAt = setmetatable({}, { __mode = "k" })
-
-        local function unbindSwingTool()
-            if swingToolConn then swingToolConn:Disconnect() swingToolConn = nil end
-        end
-
-        local function bindSwingToEquippedTool()
-            unbindSwingTool()
-            local tool = equippedTool()
-            if not (tool and tool:IsA("Tool") and tool.Parent) then return end
-            equippedAt[tool] = os.clock()
-            swingToolConn = tool.Activated:Connect(function()
-                if not swingEnabled then return end
-                local now = os.clock()
-                if (now - (equippedAt[tool] or 0)) < SWING_EQUIP_GUARD then return end
-                if (now - lastSwingAt) < SWING_DEBOUNCE then return end
-                lastSwingAt = now
-
-                local toolName = tool.Name
-                local toolRef = findItemAnywhere(toolName) or tool
-                spawnSwingOrb()
-
-                local ch = lp.Character
-                if not ch then return end
-                local origin = getRayOriginFromChar(ch)
-                if not origin then return end
-
-                local trees = collectTreesInRadius(origin, SWING_RADIUS)
-                if #trees == 0 then return end
-
-                for _, tree in ipairs(trees) do
-                    if tree and tree.Parent then
-                        local hitPart = bestTreeHitPart(tree)
-                        if hitPart then
-                            local hitId = nextPerTreeHitId(tree)
-                            local impactCF = swingImpactCFForTree(tree, hitPart)
-                            task.spawn(function()
-                                if not (swingEnabled and tree and tree.Parent) then return end
-                                pcall(function()
-                                    local bucket = attrBucket(tree)
-                                    if bucket then bucket:SetAttribute(hitId, true) end
-                                end)
-                                pcall(function()
-                                    HitTreeRemote(tree, toolRef, hitId, impactCF)
-                                end)
-                            end)
-                        end
-                    end
-                end
-            end)
-        end
-
-        local function disconnectSwingDetection()
-            unbindSwingTool()
-            if swingCharConn then swingCharConn:Disconnect() swingCharConn = nil end
-            if swingChildAddConn then swingChildAddConn:Disconnect() swingChildAddConn = nil end
-            if swingChildRemConn then swingChildRemConn:Disconnect() swingChildRemConn = nil end
-        end
-
-        local function connectSwingDetection()
-            disconnectSwingDetection()
-            lastSwingAt = 0
-            lastOrbAt = 0
-
-            local function onCharacter(ch)
-                if swingChildAddConn then swingChildAddConn:Disconnect() swingChildAddConn = nil end
-                if swingChildRemConn then swingChildRemConn:Disconnect() swingChildRemConn = nil end
-                if not ch then return end
-
-                swingChildAddConn = ch.ChildAdded:Connect(function(inst)
-                    if not swingEnabled then return end
-                    if inst and inst:IsA("Tool") then
-                        task.wait()
-                        bindSwingToEquippedTool()
-                    end
-                end)
-
-                swingChildRemConn = ch.ChildRemoved:Connect(function(inst)
-                    if inst and inst:IsA("Tool") then
-                        unbindSwingTool()
-                        task.wait()
-                        if swingEnabled then bindSwingToEquippedTool() end
-                    end
-                end)
-
-                task.spawn(function()
-                    task.wait()
-                    if swingEnabled then bindSwingToEquippedTool() end
-                end)
-            end
-
-            swingCharConn = lp.CharacterAdded:Connect(onCharacter)
-            onCharacter(lp.Character)
-        end
-
         tab:Section({ Title = "Tree Farming" })
 
         tab:Toggle({
@@ -907,19 +688,6 @@ return function(C, R, UI)
                     startBigFarm()
                 else
                     stopBigFarm()
-                end
-            end
-        })
-
-        tab:Toggle({
-            Title = "Swing Hits All Trees (Radius 75) + Orb",
-            Value = false,
-            Callback = function(state)
-                swingEnabled = (state == true)
-                if swingEnabled then
-                    connectSwingDetection()
-                else
-                    disconnectSwingDetection()
                 end
             end
         })
