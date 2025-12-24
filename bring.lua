@@ -133,6 +133,44 @@ return function(C, R, UI)
         return (p and p.Size.Y) or 2
     end
 
+    local function safeReparent(inst, newParent)
+        if not inst or not newParent then return false end
+        if inst.Parent == nil then return false end
+        local ok = pcall(function()
+            inst.Parent = newParent
+        end)
+        return ok
+    end
+
+    local function assemblyHasAnchored(part)
+        if not (part and part:IsA("BasePart") and part.Parent) then return true end
+        if part.Anchored then return true end
+        local ok, connected = pcall(function()
+            return part:GetConnectedParts(true)
+        end)
+        if not ok or type(connected) ~= "table" then
+            return part.Anchored == true
+        end
+        for _,p in ipairs(connected) do
+            if p and p:IsA("BasePart") and p.Anchored then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function safeClearNetworkOwnership(part)
+        if not (part and part:IsA("BasePart") and part.Parent) then return false end
+        if assemblyHasAnchored(part) then return false end
+        pcall(function() part:SetNetworkOwner(nil) end)
+        pcall(function()
+            if part.SetNetworkOwnershipAuto then
+                part:SetNetworkOwnershipAuto()
+            end
+        end)
+        return true
+    end
+
     local function requestMoreStreamingAround(posList)
         if not (WS and WS.StreamingEnabled) then return end
         local seen = {}
@@ -394,8 +432,7 @@ return function(C, R, UI)
             p.Anchored = false
             p.AssemblyLinearVelocity  = Vector3.new()
             p.AssemblyAngularVelocity = Vector3.new()
-            pcall(function() p:SetNetworkOwner(nil) end)
-            pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
+            safeClearNetworkOwnership(p)
         end
         refreshPrompts(model)
         task.delay(0.5, function()
@@ -414,7 +451,8 @@ return function(C, R, UI)
         part.Name = name; part.Shape = Enum.PartType.Ball; part.Size = Vector3.new(1.5,1.5,1.5)
         part.Material = Enum.Material.Neon; part.Color = Color3.fromRGB(255,200,50)
         part.Anchored = true; part.CanCollide = false; part.CanTouch = false; part.CanQuery = false
-        part.CFrame = cf; part.Parent = WS
+        part.CFrame = cf
+        safeReparent(part, WS)
         local light = Instance.new("PointLight"); light.Range = 16; light.Brightness = 3; light.Parent = part
         return part
     end
@@ -488,8 +526,7 @@ return function(C, R, UI)
             p.Anchored = false
             p.AssemblyLinearVelocity  = Vector3.new()
             p.AssemblyAngularVelocity = Vector3.new()
-            pcall(function() p:SetNetworkOwner(nil) end)
-            pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
+            safeClearNetworkOwnership(p)
         end
         setCollide(model, true, origSnap)
         pcall(function()
@@ -918,8 +955,7 @@ return function(C, R, UI)
             pcall(function() mp.Anchored = false end)
             pcall(function() mp.AssemblyLinearVelocity  = Vector3.new(0, ORB_KICK_VY, 0) end)
             pcall(function() mp.AssemblyAngularVelocity = Vector3.new() end)
-            pcall(function() mp:SetNetworkOwner(nil) end)
-            pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
+            safeClearNetworkOwnership(mp)
             pcall(function()
                 local p = mp.Position
                 mp.CFrame = CFrame.new(Vector3.new(p.X, orbY + ORB_RESET_UP, p.Z))
