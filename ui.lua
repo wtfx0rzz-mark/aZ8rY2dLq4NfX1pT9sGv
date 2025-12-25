@@ -46,7 +46,8 @@ local Tabs = {
     Memory   = Window:Tab({ Title = "Memory",   Icon = "brain",   Desc = "Memory Mgmt." }),
     Farm   = Window:Tab({ Title = "Farm",   Icon = "ant",   Desc = "Auto Farm" }),
     Esp   = Window:Tab({ Title = "ESP",   Icon = "brain",   Desc = "ESP Items" }),
-    Extra   = Window:Tab({ Title = "Extra",   Icon = "brain",   Desc = "Extra" })
+    Extra   = Window:Tab({ Title = "Extra",   Icon = "brain",   Desc = "Extra" }),
+    PlayerInspector   = Window:Tab({ Title = "Player Inspector",   Icon = "brain",   Desc = "Player Inspector" })
 
 }
 
