@@ -4,61 +4,82 @@ return function(C, R, UI)
     C  = C  or _G.C
     UI = UI or _G.UI
 
-    local Services = (C and C.Services) or {}
-    local Players  = Services.Players or game:GetService("Players")
-    local UIS      = game:GetService("UserInputService")
-
-    local lp = (C and C.LocalPlayer) or Players.LocalPlayer
+    local Players = (C and C.Services and C.Services.Players) or game:GetService("Players")
+    local lp = Players.LocalPlayer
     local playerGui = lp:WaitForChild("PlayerGui")
 
-    local function getPlayerNames()
-      local t = {}
+    local Tabs = (UI and UI.Tabs) or {}
+    local tab  = Tabs.PlayerInspector
+    assert(tab, "PlayerInspector tab not found (UI.Tabs.PlayerInspector)")
+
+    local selectedUid = nil
+    local playerDD = nil
+
+    local function playersList()
+      local vals = {}
       for _, p in ipairs(Players:GetPlayers()) do
-        t[#t+1] = p.Name
+        vals[#vals + 1] = string.format("%s#%d", p.Name, p.UserId)
       end
-      table.sort(t)
-      return t
+      table.sort(vals)
+      return vals
     end
 
-    local function findPlayerByName(name)
-      if type(name) ~= "string" or name == "" then return nil end
-      return Players:FindFirstChild(name)
+    local function parseSelectionSingle(choice)
+      if type(choice) == "table" then
+        local v = choice.Value or choice[1]
+        local uid = tonumber((tostring(v or ""):match("#(%d+)$") or ""))
+        return uid
+      end
+      local uid = tonumber((tostring(choice or ""):match("#(%d+)$") or ""))
+      return uid
+    end
+
+    local function findPlayerByUid(uid)
+      if not uid then return nil end
+      for _, p in ipairs(Players:GetPlayers()) do
+        if p.UserId == uid then return p end
+      end
+      return nil
     end
 
     local function buildInfoText(p)
       local lines = {}
-      lines[#lines+1] = "Player: " .. (p and p.Name or "N/A")
-      if p then lines[#lines+1] = "UserId: " .. tostring(p.UserId) end
-      lines[#lines+1] = ""
-
-      local attrs = p and p:GetAttributes() or {}
-      local function addKey(k)
-        local v = attrs[k]
-        lines[#lines+1] = k .. ": " .. (v == nil and "N/A" or tostring(v))
+      if not p then
+        lines[#lines + 1] = "Player: N/A"
+        return table.concat(lines, "\n")
       end
 
-      addKey("Class")
-      addKey("ClassLevel")
-      addKey("Diamonds")
-      addKey("Coins")
-      addKey("Hunger")
+      local attrs = p:GetAttributes() or {}
+
+      local function addKV(k, v)
+        lines[#lines + 1] = tostring(k) .. ": " .. (v == nil and "N/A" or tostring(v))
+      end
+
+      addKV("Player", p.Name)
+      addKV("UserId", p.UserId)
+      lines[#lines + 1] = ""
+
+      addKV("Class", attrs.Class)
+      addKV("ClassLevel", attrs.ClassLevel)
+      addKV("Diamonds", attrs.Diamonds)
+      addKV("Coins", attrs.Coins)
+      addKV("Hunger", attrs.Hunger)
 
       local ammoKeys = {}
       for k, _ in pairs(attrs) do
         if type(k) == "string" and string.find(string.lower(k), "ammo", 1, true) then
-          ammoKeys[#ammoKeys+1] = k
+          ammoKeys[#ammoKeys + 1] = k
         end
       end
       table.sort(ammoKeys)
 
-      lines[#lines+1] = ""
-      lines[#lines+1] = "Ammo Attributes:"
+      lines[#lines + 1] = ""
+      lines[#lines + 1] = "Ammo Attributes:"
       if #ammoKeys == 0 then
-        lines[#lines+1] = "(none)"
+        lines[#lines + 1] = "(none)"
       else
         for _, k in ipairs(ammoKeys) do
-          local v = attrs[k]
-          lines[#lines+1] = "  " .. k .. ": " .. (v == nil and "N/A" or tostring(v))
+          addKV("  " .. k, attrs[k])
         end
       end
 
@@ -66,28 +87,27 @@ return function(C, R, UI)
     end
 
     local function openInfoWindow(text)
-      local old = playerGui:FindFirstChild("PlayerInfoWindow")
+      local old = playerGui:FindFirstChild("PlayerInspectorWindow")
       if old then old:Destroy() end
 
       local sg = Instance.new("ScreenGui")
-      sg.Name = "PlayerInfoWindow"
+      sg.Name = "PlayerInspectorWindow"
       sg.ResetOnSpawn = false
       sg.Parent = playerGui
 
       local frame = Instance.new("Frame")
-      frame.Name = "Window"
-      frame.Size = UDim2.new(0, 360, 0, 260)
-      frame.Position = UDim2.new(0.5, -180, 0.5, -130)
+      frame.Size = UDim2.new(0, 420, 0, 300)
+      frame.Position = UDim2.new(0.5, -210, 0.5, -150)
       frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
       frame.BorderSizePixel = 0
+      frame.Active = true
       frame.Parent = sg
 
       local title = Instance.new("TextLabel")
-      title.Name = "Title"
-      title.Size = UDim2.new(1, -40, 0, 28)
+      title.Size = UDim2.new(1, -44, 0, 28)
       title.Position = UDim2.new(0, 10, 0, 6)
       title.BackgroundTransparency = 1
-      title.Text = "Player Attributes"
+      title.Text = "Player Inspector"
       title.TextColor3 = Color3.fromRGB(235, 235, 235)
       title.Font = Enum.Font.SourceSansBold
       title.TextSize = 18
@@ -95,7 +115,6 @@ return function(C, R, UI)
       title.Parent = frame
 
       local close = Instance.new("TextButton")
-      close.Name = "Close"
       close.Size = UDim2.new(0, 28, 0, 28)
       close.Position = UDim2.new(1, -34, 0, 6)
       close.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
@@ -110,7 +129,6 @@ return function(C, R, UI)
       end)
 
       local sep = Instance.new("Frame")
-      sep.Name = "Sep"
       sep.Size = UDim2.new(1, -20, 0, 1)
       sep.Position = UDim2.new(0, 10, 0, 40)
       sep.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
@@ -118,7 +136,6 @@ return function(C, R, UI)
       sep.Parent = frame
 
       local scroll = Instance.new("ScrollingFrame")
-      scroll.Name = "Scroll"
       scroll.Size = UDim2.new(1, -20, 1, -58)
       scroll.Position = UDim2.new(0, 10, 0, 48)
       scroll.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
@@ -127,133 +144,103 @@ return function(C, R, UI)
       scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
       scroll.Parent = frame
 
-      local txt = Instance.new("TextLabel")
-      txt.Name = "Body"
-      txt.Size = UDim2.new(1, -12, 0, 0)
-      txt.Position = UDim2.new(0, 6, 0, 6)
-      txt.BackgroundTransparency = 1
-      txt.Text = text or ""
-      txt.TextColor3 = Color3.fromRGB(215, 215, 215)
-      txt.Font = Enum.Font.Code
-      txt.TextSize = 14
-      txt.TextXAlignment = Enum.TextXAlignment.Left
-      txt.TextYAlignment = Enum.TextYAlignment.Top
-      txt.TextWrapped = true
-      txt.Parent = scroll
+      local body = Instance.new("TextLabel")
+      body.Size = UDim2.new(1, -12, 0, 0)
+      body.Position = UDim2.new(0, 6, 0, 6)
+      body.BackgroundTransparency = 1
+      body.Text = text or ""
+      body.TextColor3 = Color3.fromRGB(215, 215, 215)
+      body.Font = Enum.Font.Code
+      body.TextSize = 14
+      body.TextXAlignment = Enum.TextXAlignment.Left
+      body.TextYAlignment = Enum.TextYAlignment.Top
+      body.TextWrapped = true
+      body.Parent = scroll
 
       local function relayout()
-        local h = txt.TextBounds.Y + 12
-        txt.Size = UDim2.new(1, -12, 0, h)
+        local h = body.TextBounds.Y + 12
+        body.Size = UDim2.new(1, -12, 0, h)
         scroll.CanvasSize = UDim2.new(0, 0, 0, h + 6)
       end
       relayout()
 
-      local dragging = false
-      local dragStartPos, frameStartPos
+      do
+        local dragging = false
+        local startPos, startFrame
 
-      local function inputBegan(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-          local x, y = input.Position.X, input.Position.Y
+        local function inHeader(inputPos)
           local fx, fy = frame.AbsolutePosition.X, frame.AbsolutePosition.Y
-          local fw, fh = frame.AbsoluteSize.X, frame.AbsoluteSize.Y
-          if x >= fx and x <= fx + fw and y >= fy and y <= fy + 40 then
-            dragging = true
-            dragStartPos = Vector2.new(x, y)
-            frameStartPos = frame.Position
+          local fw = frame.AbsoluteSize.X
+          return inputPos.X >= fx and inputPos.X <= fx + fw and inputPos.Y >= fy and inputPos.Y <= fy + 40
+        end
+
+        local UIS = game:GetService("UserInputService")
+
+        UIS.InputBegan:Connect(function(input)
+          if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if inHeader(input.Position) then
+              dragging = true
+              startPos = Vector2.new(input.Position.X, input.Position.Y)
+              startFrame = frame.Position
+            end
           end
+        end)
+
+        UIS.InputEnded:Connect(function(input)
+          if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+          end
+        end)
+
+        UIS.InputChanged:Connect(function(input)
+          if not dragging then return end
+          if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
+          local dx = input.Position.X - startPos.X
+          local dy = input.Position.Y - startPos.Y
+          frame.Position = UDim2.new(startFrame.X.Scale, startFrame.X.Offset + dx, startFrame.Y.Scale, startFrame.Y.Offset + dy)
+        end)
+      end
+    end
+
+    local function buildPlayerDropdownOnce()
+      if playerDD then return end
+      local vals = playersList()
+      playerDD = tab:Dropdown({
+        Title = "Player",
+        Values = vals,
+        Multi = false,
+        AllowNone = true,
+        Callback = function(choice)
+          selectedUid = parseSelectionSingle(choice)
         end
+      })
+      if not selectedUid and #vals > 0 then
+        selectedUid = parseSelectionSingle(vals[1])
       end
+    end
 
-      local function inputEnded(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-          dragging = false
+    buildPlayerDropdownOnce()
+
+    tab:Button({
+      Title = "View Selected Player",
+      Callback = function()
+        if not playerDD then
+          buildPlayerDropdownOnce()
         end
+        local p = findPlayerByUid(selectedUid)
+        local text = buildInfoText(p)
+        openInfoWindow(text)
       end
+    })
 
-      local function inputChanged(input)
-        if not dragging then return end
-        if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
-        local dx = input.Position.X - dragStartPos.X
-        local dy = input.Position.Y - dragStartPos.Y
-        frame.Position = UDim2.new(frameStartPos.X.Scale, frameStartPos.X.Offset + dx, frameStartPos.Y.Scale, frameStartPos.Y.Offset + dy)
+    tab:Button({
+      Title = "Refresh Player List",
+      Callback = function()
+        playerDD = nil
+        selectedUid = nil
+        buildPlayerDropdownOnce()
       end
-
-      UIS.InputBegan:Connect(inputBegan)
-      UIS.InputEnded:Connect(inputEnded)
-      UIS.InputChanged:Connect(inputChanged)
-    end
-
-    local function safeCall(obj, methodName, ...)
-      if not obj then return nil end
-      local fn = obj[methodName]
-      if type(fn) ~= "function" then return nil end
-      local ok, res = pcall(fn, obj, ...)
-      if ok then return res end
-      return nil
-    end
-
-    local function addButton(tab, title, cb)
-      return safeCall(tab, "Button", title, cb)
-          or safeCall(tab, "AddButton", title, cb)
-          or safeCall(tab, "CreateButton", { Title = title, Callback = cb })
-          or safeCall(tab, "Add", "Button", { Title = title, Callback = cb })
-    end
-
-    local function addDropdown(tab, title, values, default, cb)
-      return safeCall(tab, "Dropdown", title, values, cb)
-          or safeCall(tab, "AddDropdown", title, values, cb)
-          or safeCall(tab, "CreateDropdown", { Title = title, Values = values, Default = default, Callback = cb })
-          or safeCall(tab, "Add", "Dropdown", { Title = title, Values = values, Default = default, Callback = cb })
-    end
-
-    local Tabs = (UI and UI.Tabs) or {}
-    local tab = Tabs.PlayerInspector or Tabs.Players or Tabs.Debug or Tabs.Main
-
-    if not tab and UI and UI.Window then
-      tab = safeCall(UI.Window, "Tab", "PlayerInspector")
-        or safeCall(UI.Window, "AddTab", "PlayerInspector")
-    end
-    if not tab then return end
-
-    local state = (C and C.State) or {}
-    if C then C.State = state end
-    if state.SelectedInspectPlayer == nil then
-      state.SelectedInspectPlayer = lp and lp.Name or ""
-    end
-
-    local names = getPlayerNames()
-    if #names > 0 and (state.SelectedInspectPlayer == "" or not findPlayerByName(state.SelectedInspectPlayer)) then
-      state.SelectedInspectPlayer = names[1]
-    end
-
-    local dd = addDropdown(tab, "Player", names, state.SelectedInspectPlayer, function(v)
-      if type(v) == "string" then
-        state.SelectedInspectPlayer = v
-      elseif type(v) == "table" then
-        local pick = v.Value or v[1]
-        if type(pick) == "string" then state.SelectedInspectPlayer = pick end
-      end
-    end)
-
-    addButton(tab, "View Selected Player", function()
-      local selected = state.SelectedInspectPlayer
-      local p = findPlayerByName(selected)
-      local text = buildInfoText(p)
-      openInfoWindow(text)
-    end)
-
-    local function tryUpdateDropdown()
-      local newNames = getPlayerNames()
-      if dd and type(dd) == "table" then
-        if type(dd.SetValues) == "function" then pcall(dd.SetValues, dd, newNames) end
-        if type(dd.Set) == "function" and state.SelectedInspectPlayer and state.SelectedInspectPlayer ~= "" then
-          pcall(dd.Set, dd, state.SelectedInspectPlayer)
-        end
-      end
-    end
-
-    Players.PlayerAdded:Connect(function() tryUpdateDropdown() end)
-    Players.PlayerRemoving:Connect(function() tryUpdateDropdown() end)
+    })
   end
 
   main()
