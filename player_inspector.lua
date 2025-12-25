@@ -1,4 +1,3 @@
--- player_inspector.lua
 return function(C, R, UI)
   local function main()
     C  = C  or _G.C
@@ -42,14 +41,87 @@ return function(C, R, UI)
       return nil
     end
 
+    local function mergeInto(dst, src)
+      if type(src) ~= "table" then return end
+      for k, v in pairs(src) do
+        if dst[k] == nil then
+          dst[k] = v
+        end
+      end
+    end
+
+    local function collectValueObjects(root, out, limit)
+      if not root or not root.Parent then return end
+      limit = tonumber(limit) or 600
+      local n = 0
+
+      local function consider(obj)
+        if n >= limit then return false end
+        if obj:IsA("ValueBase") then
+          local name = obj.Name
+          if out[name] == nil then
+            local ok, val = pcall(function() return obj.Value end)
+            if ok then out[name] = val end
+          end
+        end
+        n += 1
+        return n < limit
+      end
+
+      for _, child in ipairs(root:GetChildren()) do
+        if not consider(child) then return end
+      end
+
+      local desc = root:GetDescendants()
+      for i = 1, #desc do
+        if not consider(desc[i]) then return end
+      end
+    end
+
+    local function collectAllStats(p)
+      local stats = {}
+
+      if p then
+        mergeInto(stats, p:GetAttributes() or {})
+
+        local ch = p.Character
+        if ch then
+          mergeInto(stats, ch:GetAttributes() or {})
+        end
+
+        local ls = p:FindFirstChild("leaderstats")
+        if ls then
+          collectValueObjects(ls, stats, 300)
+        end
+
+        local common = { "Stats", "stats", "Data", "data", "Profile", "profile" }
+        for _, name in ipairs(common) do
+          local folder = p:FindFirstChild(name)
+          if folder then
+            collectValueObjects(folder, stats, 600)
+          end
+        end
+      end
+
+      return stats
+    end
+
+    local function pickKey(stats, candidates)
+      for _, k in ipairs(candidates) do
+        if stats[k] ~= nil then return k, stats[k] end
+      end
+      return candidates[1], nil
+    end
+
     local function buildInfoText(p)
       local lines = {}
+
       if not p then
         lines[#lines + 1] = "Player: N/A"
         return table.concat(lines, "\n")
       end
 
-      local attrs = p:GetAttributes() or {}
+      local stats = collectAllStats(p)
 
       local function addKV(k, v)
         lines[#lines + 1] = tostring(k) .. ": " .. (v == nil and "N/A" or tostring(v))
@@ -59,14 +131,20 @@ return function(C, R, UI)
       addKV("UserId", p.UserId)
       lines[#lines + 1] = ""
 
-      addKV("Class", attrs.Class)
-      addKV("ClassLevel", attrs.ClassLevel)
-      addKV("Diamonds", attrs.Diamonds)
-      addKV("Coins", attrs.Coins)
-      addKV("Hunger", attrs.Hunger)
+      local classK, classV = pickKey(stats, { "Class", "PlayerClass", "class" })
+      local lvlK,   lvlV   = pickKey(stats, { "ClassLevel", "Level", "classLevel", "lvl" })
+      local diaK,   diaV   = pickKey(stats, { "Diamonds", "Diamond", "Gems", "diamonds" })
+      local coinK,  coinV  = pickKey(stats, { "Coins", "Coin", "Gold", "coins" })
+      local hunK,   hunV   = pickKey(stats, { "Hunger", "hunger" })
+
+      addKV(classK, classV)
+      addKV(lvlK, lvlV)
+      addKV(diaK, diaV)
+      addKV(coinK, coinV)
+      addKV(hunK, hunV)
 
       local ammoKeys = {}
-      for k, _ in pairs(attrs) do
+      for k, _ in pairs(stats) do
         if type(k) == "string" and string.find(string.lower(k), "ammo", 1, true) then
           ammoKeys[#ammoKeys + 1] = k
         end
@@ -74,12 +152,12 @@ return function(C, R, UI)
       table.sort(ammoKeys)
 
       lines[#lines + 1] = ""
-      lines[#lines + 1] = "Ammo Attributes:"
+      lines[#lines + 1] = "Ammo:"
       if #ammoKeys == 0 then
-        lines[#lines + 1] = "(none)"
+        lines[#lines + 1] = "(none found)"
       else
         for _, k in ipairs(ammoKeys) do
-          addKV("  " .. k, attrs[k])
+          addKV("  " .. k, stats[k])
         end
       end
 
@@ -162,19 +240,19 @@ return function(C, R, UI)
         body.Size = UDim2.new(1, -12, 0, h)
         scroll.CanvasSize = UDim2.new(0, 0, 0, h + 6)
       end
-      relayout()
+
+      task.defer(relayout)
 
       do
         local dragging = false
         local startPos, startFrame
+        local UIS = game:GetService("UserInputService")
 
         local function inHeader(inputPos)
           local fx, fy = frame.AbsolutePosition.X, frame.AbsolutePosition.Y
           local fw = frame.AbsoluteSize.X
           return inputPos.X >= fx and inputPos.X <= fx + fw and inputPos.Y >= fy and inputPos.Y <= fy + 40
         end
-
-        local UIS = game:GetService("UserInputService")
 
         UIS.InputBegan:Connect(function(input)
           if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -202,9 +280,10 @@ return function(C, R, UI)
       end
     end
 
-    local function buildPlayerDropdownOnce()
+    local function ensureDropdown()
       if playerDD then return end
       local vals = playersList()
+
       playerDD = tab:Dropdown({
         Title = "Player",
         Values = vals,
@@ -214,31 +293,56 @@ return function(C, R, UI)
           selectedUid = parseSelectionSingle(choice)
         end
       })
-      if not selectedUid and #vals > 0 then
+
+      if (not selectedUid) and #vals > 0 then
         selectedUid = parseSelectionSingle(vals[1])
       end
     end
 
-    buildPlayerDropdownOnce()
+    local function updateDropdownValues()
+      if not playerDD then return end
+      local vals = playersList()
+
+      local ok = false
+      if type(playerDD) == "table" then
+        if type(playerDD.SetValues) == "function" then
+          ok = pcall(playerDD.SetValues, playerDD, vals)
+        elseif type(playerDD.Refresh) == "function" then
+          ok = pcall(playerDD.Refresh, playerDD, vals)
+        elseif type(playerDD.Update) == "function" then
+          ok = pcall(playerDD.Update, playerDD, vals)
+        end
+      end
+
+      if selectedUid then
+        local stillThere = false
+        for _, s in ipairs(vals) do
+          local uid = tonumber((tostring(s):match("#(%d+)$") or ""))
+          if uid == selectedUid then
+            stillThere = true
+            break
+          end
+        end
+        if not stillThere then
+          selectedUid = (#vals > 0) and parseSelectionSingle(vals[1]) or nil
+        end
+      elseif #vals > 0 then
+        selectedUid = parseSelectionSingle(vals[1])
+      end
+
+      return ok
+    end
+
+    ensureDropdown()
 
     tab:Button({
       Title = "View Selected Player",
       Callback = function()
-        if not playerDD then
-          buildPlayerDropdownOnce()
-        end
+        ensureDropdown()
+        updateDropdownValues()
         local p = findPlayerByUid(selectedUid)
         local text = buildInfoText(p)
         openInfoWindow(text)
-      end
-    })
-
-    tab:Button({
-      Title = "Refresh Player List",
-      Callback = function()
-        playerDD = nil
-        selectedUid = nil
-        buildPlayerDropdownOnce()
       end
     })
   end
