@@ -22,9 +22,25 @@ return function(C, R, UI)
         local ToolDamageObject = RemoteEvents:WaitForChild("ToolDamageObject")
         local EquipItemHandle  = RemoteEvents:WaitForChild("EquipItemHandle")
 
-        local CHOP_RADIUS       = 60
-        local TELEPORT_DISTANCE = 30
-        local UID_SUFFIX        = "0000000000"
+        local CHOP_RADIUS            = 60
+        local TELEPORT_DISTANCE      = 30
+        local TELEPORT_WAIT_DEFAULT  = 1
+        local UID_SUFFIX             = "0000000000"
+
+        C.State = C.State or {}
+        if C.State.FarmTeleportWaitSec == nil then
+            C.State.FarmTeleportWaitSec = TELEPORT_WAIT_DEFAULT
+        end
+
+        local function getTeleportWaitSec()
+            local v = tonumber(C.State.FarmTeleportWaitSec)
+            if v == nil then v = TELEPORT_WAIT_DEFAULT end
+            if v < 0 then v = 0 end
+            if v > 30 then v = 30 end
+            return v
+        end
+
+        local lastTeleportAt = 0
 
         local function findInInventory(name)
             local inv = lp:FindFirstChild("Inventory")
@@ -161,12 +177,17 @@ return function(C, R, UI)
         end
 
         local function teleportNearTree(treeModel)
+            local now = os.clock()
+            if (now - lastTeleportAt) < getTeleportWaitSec() then
+                return false
+            end
+
             local char = lp.Character
-            if not char then return end
+            if not char then return false end
             local hrp = char:FindFirstChild("HumanoidRootPart")
-            if not hrp then return end
+            if not hrp then return false end
             local hitPart = bestTreeHitPart(treeModel)
-            if not hitPart then return end
+            if not hitPart then return false end
 
             local treePos = hitPart.Position
             local hrpPos  = hrp.Position
@@ -185,6 +206,8 @@ return function(C, R, UI)
             )
 
             hrp.CFrame = CFrame.new(targetPos, Vector3.new(treePos.X, targetPos.Y, treePos.Z))
+            lastTeleportAt = now
+            return true
         end
 
         local function buildNameSet(baseSet, extra)
@@ -215,8 +238,8 @@ return function(C, R, UI)
         local AXE_PREFER = { "Strong Axe", "Chainsaw", "Good Axe", "Old Axe" }
 
         local TREE_NAMES_BASE = { ["Small Tree"] = true, ["Snowy Small Tree"] = true, ["Small Webbed Tree"] = true }
-        local EXTRA_SMALL_TREE_NAMES = {["Christmas Pine"] = true } -- add exact names here
-        local EXTRA_BIG_TREE_NAMES = {["Northern Pine"] = true} -- add exact names here
+        local EXTRA_SMALL_TREE_NAMES = { ["Christmas Pine"] = true }
+        local EXTRA_BIG_TREE_NAMES   = { ["Northern Pine"] = true }
 
         local TREE_NAMES = buildNameSet(TREE_NAMES_BASE, EXTRA_SMALL_TREE_NAMES)
 
@@ -342,19 +365,12 @@ return function(C, R, UI)
                 end
 
                 local char = lp.Character
-                if not char then
-                    return
-                end
-
+                if not char then return end
                 local hrp = char:FindFirstChild("HumanoidRootPart")
-                if not hrp then
-                    return
-                end
+                if not hrp then return end
 
                 local axe = getPreferredAxe()
-                if not axe then
-                    return
-                end
+                if not axe then return end
 
                 ensureEquipped(axe)
                 local axeName    = axe.Name
@@ -430,9 +446,7 @@ return function(C, R, UI)
         end
 
         local function startSmallFarm()
-            if smallRunning then
-                return
-            end
+            if smallRunning then return end
             smallRunning = true
             clearSmallState()
             refreshSmallTreeList()
@@ -551,8 +565,8 @@ return function(C, R, UI)
             if not tool then return end
             ensureEquipped(tool)
 
-            local axeName       = tool.Name
-            local requiredHits  = REQUIRED_HITS[axeName] or 35
+            local axeName      = tool.Name
+            local requiredHits = REQUIRED_HITS[axeName] or 35
 
             if #bigTreeList == 0 then
                 buildBigTreeList(requiredHits)
@@ -638,18 +652,14 @@ return function(C, R, UI)
         end
 
         local function startBigFarm()
-            if bigRunning then
-                return
-            end
+            if bigRunning then return end
             bigRunning = true
             if bigLoopConn then
                 bigLoopConn:Disconnect()
                 bigLoopConn = nil
             end
             bigLoopConn = RunService.Heartbeat:Connect(function()
-                if not bigRunning then
-                    return
-                end
+                if not bigRunning then return end
                 stepBigChopper()
             end)
         end
@@ -666,13 +676,263 @@ return function(C, R, UI)
             bigCurrentIndex = 1
         end
 
+        -- CIRCLE FARM (SMALL + BIG) AROUND CAMPFIRE/ORIGIN
+        local circleRunning   = false
+        local circleLoopConn  = nil
+        local circleTreeList  = {}
+        local circleIndex     = 1
+        local circleLastScan  = 0
+        local circleLastHitAt = setmetatable({}, { __mode = "k" })
+        local circleSmallHits = setmetatable({}, { __mode = "k" })
+
+        local CIRCLE_RESCAN_EVERY = 4.0
+
+        local function getHRP()
+            local ch = lp.Character
+            if not ch then return nil end
+            return ch:FindFirstChild("HumanoidRootPart")
+        end
+
+        local function campfireCandidatePos(inst)
+            if not inst then return nil end
+            if inst:IsA("BasePart") then
+                return inst.Position
+            end
+            if inst:IsA("Model") then
+                if inst.PrimaryPart and inst.PrimaryPart:IsA("BasePart") then
+                    return inst.PrimaryPart.Position
+                end
+                local p = inst:FindFirstChildWhichIsA("BasePart")
+                return p and p.Position or nil
+            end
+            return nil
+        end
+
+        local function findCampfireCenter()
+            local hrp = getHRP()
+            local hrpPos = hrp and hrp.Position or nil
+
+            local bestPos = nil
+            local bestD = nil
+
+            for _, inst in ipairs(WS:GetDescendants()) do
+                local n = inst.Name
+                if type(n) == "string" then
+                    local ln = string.lower(n)
+                    if ln:find("campfire", 1, true) then
+                        local p = campfireCandidatePos(inst)
+                        if p then
+                            local d
+                            if hrpPos then
+                                d = (p - hrpPos).Magnitude
+                            else
+                                d = (p - Vector3.new(0, 0, 0)).Magnitude
+                            end
+                            if (not bestPos) or (d < bestD) then
+                                bestPos = p
+                                bestD = d
+                            end
+                        end
+                    end
+                end
+            end
+
+            return bestPos or Vector3.new(0, 0, 0)
+        end
+
+        local function rebuildCircleTreeList(centerPos)
+            local list = {}
+            for _, inst in ipairs(WS:GetDescendants()) do
+                if inst:IsA("Model") then
+                    if isSmallTreeModel(inst) or isBigTreeModel(inst) then
+                        local part = bestTreeHitPart(inst)
+                        if part then
+                            table.insert(list, inst)
+                        end
+                    end
+                end
+            end
+
+            table.sort(list, function(a, b)
+                local pa = bestTreeHitPart(a)
+                local pb = bestTreeHitPart(b)
+                local da = pa and (pa.Position - centerPos).Magnitude or math.huge
+                local db = pb and (pb.Position - centerPos).Magnitude or math.huge
+                if da == db then
+                    return (a.Name or "") < (b.Name or "")
+                end
+                return da < db
+            end)
+
+            circleTreeList = list
+            circleIndex = 1
+        end
+
+        local function stepCircleFarm()
+            local char = lp.Character
+            if not char then return end
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+
+            local centerPos = findCampfireCenter()
+
+            local now = os.clock()
+            if (#circleTreeList == 0) or ((now - circleLastScan) >= CIRCLE_RESCAN_EVERY) then
+                circleLastScan = now
+                rebuildCircleTreeList(centerPos)
+                if #circleTreeList == 0 then
+                    return
+                end
+            end
+
+            if circleIndex > #circleTreeList then
+                circleIndex = 1
+            end
+
+            local tree = circleTreeList[circleIndex]
+            if not tree or not tree.Parent then
+                table.remove(circleTreeList, circleIndex)
+                return
+            end
+
+            local isSmall = isSmallTreeModel(tree)
+            local isBig   = isBigTreeModel(tree)
+            if (not isSmall) and (not isBig) then
+                table.remove(circleTreeList, circleIndex)
+                return
+            end
+
+            local hitPart = bestTreeHitPart(tree)
+            if not hitPart then
+                table.remove(circleTreeList, circleIndex)
+                return
+            end
+
+            local distToPlayer = (hitPart.Position - hrp.Position).Magnitude
+            if distToPlayer > CHOP_RADIUS then
+                teleportNearTree(tree)
+                return
+            end
+
+            if isBig then
+                local tool = getBigTreeTool()
+                if not tool then return end
+                ensureEquipped(tool)
+
+                local requiredHits = REQUIRED_HITS[tool.Name] or 35
+                local remoteCount  = getCurrentHitCount(tree)
+
+                if remoteCount >= requiredHits then
+                    table.remove(circleTreeList, circleIndex)
+                    circleLastHitAt[tree] = nil
+                    TreeImpactCF[tree] = nil
+                    TreeHitSeed[tree]  = nil
+                    return
+                end
+
+                local lastHit = circleLastHitAt[tree] or 0
+                if (now - lastHit) < PER_TREE_COOLDOWN then
+                    circleIndex = circleIndex + 1
+                    return
+                end
+
+                local hitId    = nextPerTreeHitId(tree)
+                local impactCF = impactCFForTree(tree, hitPart)
+                HitTreeRemote(tree, tool, hitId, impactCF)
+
+                circleLastHitAt[tree] = now
+                circleIndex = circleIndex + 1
+                return
+            end
+
+            if isSmall then
+                local tool = getPreferredAxe()
+                if not tool then return end
+                ensureEquipped(tool)
+
+                local needed = AXE_HITS[tool.Name] or 13
+                local count  = circleSmallHits[tree] or 0
+
+                if count >= needed then
+                    table.remove(circleTreeList, circleIndex)
+                    circleSmallHits[tree] = nil
+                    TreeImpactCF[tree] = nil
+                    TreeHitSeed[tree]  = nil
+                    return
+                end
+
+                local hitId    = nextPerTreeHitId(tree)
+                local impactCF = impactCFForTree(tree, hitPart)
+                HitTreeRemote(tree, tool, hitId, impactCF)
+                circleSmallHits[tree] = count + 1
+
+                circleIndex = circleIndex + 1
+                return
+            end
+        end
+
+        local function startCircleFarm()
+            if circleRunning then return end
+            circleRunning = true
+            circleTreeList = {}
+            circleIndex = 1
+            circleLastScan = 0
+            if circleLoopConn then
+                circleLoopConn:Disconnect()
+                circleLoopConn = nil
+            end
+            circleLoopConn = RunService.Heartbeat:Connect(function()
+                if not circleRunning then return end
+                stepCircleFarm()
+            end)
+        end
+
+        local function stopCircleFarm()
+            circleRunning = false
+            if circleLoopConn then
+                circleLoopConn:Disconnect()
+                circleLoopConn = nil
+            end
+            circleTreeList = {}
+            circleIndex = 1
+            circleLastScan = 0
+        end
+
         tab:Section({ Title = "Tree Farming" })
+
+        if tab.Slider then
+            tab:Slider({
+                Title = "Teleport wait (sec)",
+                Min = 0,
+                Max = 10,
+                Value = getTeleportWaitSec(),
+                Rounding = 2,
+                Callback = function(v)
+                    C.State.FarmTeleportWaitSec = tonumber(v) or TELEPORT_WAIT_DEFAULT
+                end
+            })
+        end
+
+        tab:Toggle({
+            Title = "Circle Clear (Campfire/Origin) - Small+Big",
+            Value = false,
+            Callback = function(state)
+                if state then
+                    stopSmallFarm()
+                    stopBigFarm()
+                    startCircleFarm()
+                else
+                    stopCircleFarm()
+                end
+            end
+        })
 
         tab:Toggle({
             Title = "Tree Farm (Small Trees)",
             Value = false,
             Callback = function(state)
                 if state then
+                    stopCircleFarm()
                     startSmallFarm()
                 else
                     stopSmallFarm()
@@ -685,6 +945,7 @@ return function(C, R, UI)
             Value = false,
             Callback = function(state)
                 if state then
+                    stopCircleFarm()
                     startBigFarm()
                 else
                     stopBigFarm()
