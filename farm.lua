@@ -22,21 +22,25 @@ return function(C, R, UI)
         local ToolDamageObject = RemoteEvents:WaitForChild("ToolDamageObject")
         local EquipItemHandle  = RemoteEvents:WaitForChild("EquipItemHandle")
 
-        local CHOP_RADIUS            = 60
-        local TELEPORT_DISTANCE      = 30
-        local TELEPORT_WAIT_DEFAULT  = 1
-        local UID_SUFFIX             = "0000000000"
+        local CHOP_RADIUS       = 60
+        local TELEPORT_DISTANCE = 30
+        local UID_SUFFIX        = "0000000000"
+
+        local SWING_COOLDOWN_BIG = 0.5
+        local TELEPORT_THROTTLE  = 0.15
 
         C.State = C.State or {}
         if C.State.FarmTeleportWaitSec == nil then
-            C.State.FarmTeleportWaitSec = TELEPORT_WAIT_DEFAULT
+            C.State.FarmTeleportWaitSec = 1
         end
 
-        local function getTeleportWaitSec()
+        -- NOTE: we keep the same state key for compatibility, but its meaning is now:
+        -- "how long to stay on a BIG tree before switching"
+        local function getSwitchTreeSec()
             local v = tonumber(C.State.FarmTeleportWaitSec)
-            if v == nil then v = TELEPORT_WAIT_DEFAULT end
+            if v == nil then v = 1 end
             if v < 0 then v = 0 end
-            if v > 30 then v = 30 end
+            if v > 10 then v = 10 end
             return v
         end
 
@@ -89,31 +93,19 @@ return function(C, R, UI)
         end
 
         local function bestTreeHitPart(tree)
-            if not (tree and tree:IsA("Model")) then
-                return nil
-            end
+            if not (tree and tree:IsA("Model")) then return nil end
 
             local hr = tree:FindFirstChild("HitRegisters")
             if hr then
                 local t = hr:FindFirstChild("Trunk")
-                if t and t:IsA("BasePart") then
-                    return t
-                end
+                if t and t:IsA("BasePart") then return t end
                 local any = hr:FindFirstChildWhichIsA("BasePart")
-                if any then
-                    return any
-                end
+                if any then return any end
             end
 
             local t2 = tree:FindFirstChild("Trunk")
-            if t2 and t2:IsA("BasePart") then
-                return t2
-            end
-
-            if tree.PrimaryPart and tree.PrimaryPart:IsA("BasePart") then
-                return tree.PrimaryPart
-            end
-
+            if t2 and t2:IsA("BasePart") then return t2 end
+            if tree.PrimaryPart and tree.PrimaryPart:IsA("BasePart") then return tree.PrimaryPart end
             return tree:FindFirstChildWhichIsA("BasePart")
         end
 
@@ -123,9 +115,7 @@ return function(C, R, UI)
             end
 
             local outward = hitPart.CFrame.LookVector
-            if outward.Magnitude == 0 then
-                outward = Vector3.new(0, 0, -1)
-            end
+            if outward.Magnitude == 0 then outward = Vector3.new(0, 0, -1) end
             outward = outward.Unit
 
             local origin = hitPart.Position + outward * 1.0
@@ -170,15 +160,13 @@ return function(C, R, UI)
         end
 
         local function HitTreeRemote(treeModel, tool, hitId, impactCF)
-            if not (treeModel and tool and hitId and impactCF) then
-                return
-            end
+            if not (treeModel and tool and hitId and impactCF) then return end
             ToolDamageObject:InvokeServer(treeModel, tool, hitId, impactCF)
         end
 
         local function teleportNearTree(treeModel)
             local now = os.clock()
-            if (now - lastTeleportAt) < getTeleportWaitSec() then
+            if (now - lastTeleportAt) < TELEPORT_THROTTLE then
                 return false
             end
 
@@ -214,17 +202,13 @@ return function(C, R, UI)
             local out = {}
             if type(baseSet) == "table" then
                 for k, v in pairs(baseSet) do
-                    if v == true and type(k) == "string" then
-                        out[k] = true
-                    end
+                    if v == true and type(k) == "string" then out[k] = true end
                 end
             end
             if type(extra) == "table" then
                 for k, v in pairs(extra) do
                     if type(k) == "number" then
-                        if type(v) == "string" then
-                            out[v] = true
-                        end
+                        if type(v) == "string" then out[v] = true end
                     elseif type(k) == "string" and v == true then
                         out[k] = true
                     end
@@ -244,13 +228,9 @@ return function(C, R, UI)
         local TREE_NAMES = buildNameSet(TREE_NAMES_BASE, EXTRA_SMALL_TREE_NAMES)
 
         local function isSmallTreeModel(model)
-            if not (model and model:IsA("Model")) then
-                return false
-            end
+            if not (model and model:IsA("Model")) then return false end
             local name = model.Name
-            if TREE_NAMES[name] then
-                return bestTreeHitPart(model) ~= nil
-            end
+            if TREE_NAMES[name] then return bestTreeHitPart(model) ~= nil end
             local lower = string.lower(name or "")
             if lower:find("small", 1, true) and lower:find("tree", 1, true) then
                 return bestTreeHitPart(model) ~= nil
@@ -261,9 +241,7 @@ return function(C, R, UI)
         local function getPreferredAxe()
             for _, name in ipairs(AXE_PREFER) do
                 local item = findInInventory(name)
-                if item then
-                    return item
-                end
+                if item then return item end
             end
             return nil
         end
@@ -311,14 +289,10 @@ return function(C, R, UI)
         end
 
         local function ensureSmallSpawnListener()
-            if smallSpawnConn or not smallRunning then
-                return
-            end
+            if smallSpawnConn or not smallRunning then return end
             smallWaitingSpawn = true
             smallSpawnConn = WS.DescendantAdded:Connect(function(inst)
-                if not smallRunning then
-                    return
-                end
+                if not smallRunning then return end
                 if inst:IsA("Model") and isSmallTreeModel(inst) then
                     registerSmallTree(inst)
                     smallWaitingSpawn = false
@@ -360,9 +334,7 @@ return function(C, R, UI)
             end
 
             smallLoopConn = RunService.Heartbeat:Connect(function()
-                if not smallRunning then
-                    return
-                end
+                if not smallRunning then return end
 
                 local char = lp.Character
                 if not char then return end
@@ -416,10 +388,6 @@ return function(C, R, UI)
                     end
                 end
 
-                if #treesInRange == 0 then
-                    return
-                end
-
                 for _, tree in ipairs(treesInRange) do
                     if tree.Parent and isSmallTreeModel(tree) then
                         local needed = AXE_HITS[axeName] or baseNeeded
@@ -466,16 +434,11 @@ return function(C, R, UI)
         local BIG_TREE_NAMES_BASE = { TreeBig1 = true, TreeBig2 = true, TreeBig3 = true }
         local BIG_TREE_NAMES = buildNameSet(BIG_TREE_NAMES_BASE, EXTRA_BIG_TREE_NAMES)
 
-        local REQUIRED_HITS     = { ["Strong Axe"] = 35, ["Chainsaw"] = 35 }
-        local PER_TREE_COOLDOWN = 0.5
+        local REQUIRED_HITS = { ["Strong Axe"] = 35, ["Chainsaw"] = 35 }
 
         local function isBigTreeName(name)
-            if BIG_TREE_NAMES[name] then
-                return true
-            end
-            if type(name) ~= "string" then
-                return false
-            end
+            if BIG_TREE_NAMES[name] then return true end
+            if type(name) ~= "string" then return false end
             return name:match("^WebbedTreeBig%d*$") ~= nil
         end
 
@@ -488,43 +451,40 @@ return function(C, R, UI)
 
         local function getCurrentHitCount(treeModel)
             local bucket = attrBucket(treeModel)
-            if not (bucket and bucket.GetAttributes) then
-                return 0
-            end
+            if not (bucket and bucket.GetAttributes) then return 0 end
             local attrs = bucket:GetAttributes()
             local maxN  = 0
             for key in pairs(attrs) do
                 local n = parseHitAttrKey(key)
-                if n and n > maxN then
-                    maxN = n
-                end
+                if n and n > maxN then maxN = n end
             end
             return maxN
         end
 
         local function getBigTreeTool()
             local chainsaw = findInInventory("Chainsaw")
-            if chainsaw then
-                return chainsaw
-            end
+            if chainsaw then return chainsaw end
             local strongAxe = findInInventory("Strong Axe")
-            if strongAxe then
-                return strongAxe
-            end
+            if strongAxe then return strongAxe end
             return nil
         end
 
         local bigTreeList     = {}
         local bigLocalHits    = {}
-        local bigLastHitTime  = {}
         local bigCurrentIndex = 1
-        local bigRunning      = false
-        local bigLoopConn     = nil
+
+        local bigRunning   = false
+        local bigLoopConn  = nil
+
+        -- NEW: lock a target big tree for switchSec, swing every 0.5s while valid
+        local bigTargetTree     = nil
+        local bigTargetEndAt    = 0
+        local bigNextSwingAt    = 0
+        local bigTargetWaitOnly = false
 
         local function buildBigTreeList(requiredHits)
             bigTreeList     = {}
             bigLocalHits    = {}
-            bigLastHitTime  = {}
             bigCurrentIndex = 1
 
             for _, inst in ipairs(WS:GetDescendants()) do
@@ -532,8 +492,7 @@ return function(C, R, UI)
                     local existing = getCurrentHitCount(inst)
                     if existing < requiredHits then
                         table.insert(bigTreeList, inst)
-                        bigLocalHits[inst]   = existing
-                        bigLastHitTime[inst] = 0
+                        bigLocalHits[inst] = existing
                     end
                 end
             end
@@ -544,18 +503,58 @@ return function(C, R, UI)
         end
 
         local function removeBigTree(tree)
+            if not tree then return end
             for i = #bigTreeList, 1, -1 do
                 if bigTreeList[i] == tree then
                     table.remove(bigTreeList, i)
                 end
             end
-            bigLocalHits[tree]   = nil
-            bigLastHitTime[tree] = nil
-            TreeImpactCF[tree]   = nil
-            TreeHitSeed[tree]    = nil
+            bigLocalHits[tree] = nil
+            TreeImpactCF[tree] = nil
+            TreeHitSeed[tree]  = nil
+        end
+
+        local function pickNextBigTree(requiredHits)
+            if #bigTreeList == 0 then
+                buildBigTreeList(requiredHits)
+            end
+            if #bigTreeList == 0 then
+                return nil
+            end
+
+            if bigCurrentIndex > #bigTreeList then
+                bigCurrentIndex = 1
+            end
+
+            local total = #bigTreeList
+            local tries = 0
+            while tries < total do
+                tries += 1
+                local tree = bigTreeList[bigCurrentIndex]
+                if tree and tree.Parent and isBigTreeModel(tree) then
+                    local remoteCount = getCurrentHitCount(tree)
+                    if remoteCount < requiredHits then
+                        return tree
+                    else
+                        removeBigTree(tree)
+                        total = #bigTreeList
+                        if total == 0 then return nil end
+                        if bigCurrentIndex > total then bigCurrentIndex = 1 end
+                    end
+                else
+                    removeBigTree(tree)
+                    total = #bigTreeList
+                    if total == 0 then return nil end
+                    if bigCurrentIndex > total then bigCurrentIndex = 1 end
+                end
+            end
+
+            return nil
         end
 
         local function stepBigChopper()
+            local now = os.clock()
+
             local char = lp.Character
             if not char then return end
             local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -565,99 +564,115 @@ return function(C, R, UI)
             if not tool then return end
             ensureEquipped(tool)
 
-            local axeName      = tool.Name
-            local requiredHits = REQUIRED_HITS[axeName] or 35
+            local requiredHits = REQUIRED_HITS[tool.Name] or 35
+            local switchSec    = getSwitchTreeSec()
 
-            if #bigTreeList == 0 then
-                buildBigTreeList(requiredHits)
-                if #bigTreeList == 0 then
-                    return
+            -- if we're in a "wait only" phase (tree down/invalid) do nothing until timer ends
+            if bigTargetTree == nil and bigTargetWaitOnly then
+                if now >= bigTargetEndAt then
+                    bigTargetWaitOnly = false
+                    bigTargetEndAt    = 0
+                    bigNextSwingAt    = 0
                 end
-            end
-
-            local total = #bigTreeList
-            if total == 0 then return end
-            if bigCurrentIndex > total then bigCurrentIndex = 1 end
-
-            local selectedTree, selectedBaseCount
-            local tries = 0
-
-            while tries < total do
-                tries += 1
-                local tree = bigTreeList[bigCurrentIndex]
-
-                if not tree or not tree.Parent or not isBigTreeModel(tree) then
-                    removeBigTree(tree)
-                    total = #bigTreeList
-                    if total == 0 then return end
-                    if bigCurrentIndex > total then bigCurrentIndex = 1 end
-                else
-                    local remoteCount = getCurrentHitCount(tree)
-                    local base = math.max(remoteCount, bigLocalHits[tree] or 0)
-
-                    if base >= requiredHits then
-                        removeBigTree(tree)
-                        total = #bigTreeList
-                        if total == 0 then return end
-                        if bigCurrentIndex > total then bigCurrentIndex = 1 end
-                    else
-                        local now  = os.clock()
-                        local last = bigLastHitTime[tree] or 0
-
-                        if (now - last) < PER_TREE_COOLDOWN then
-                            bigCurrentIndex = bigCurrentIndex + 1
-                            if bigCurrentIndex > total then bigCurrentIndex = 1 end
-                        else
-                            selectedTree = tree
-                            selectedBaseCount = base
-                            break
-                        end
-                    end
-                end
-            end
-
-            if not selectedTree then
                 return
             end
 
-            local hitPart = bestTreeHitPart(selectedTree)
+            -- acquire target if needed
+            if not bigTargetTree then
+                local t = pickNextBigTree(requiredHits)
+                if not t then return end
+                bigTargetTree  = t
+                bigTargetEndAt = now + math.max(0, switchSec)
+                bigNextSwingAt = 0
+            end
+
+            -- timer expired: switch target (but we still ensure at least one swing happened via swing scheduling)
+            if now >= bigTargetEndAt and bigNextSwingAt ~= 0 then
+                bigTargetTree  = nil
+                bigNextSwingAt = 0
+                bigCurrentIndex = bigCurrentIndex + 1
+                return
+            end
+
+            -- enforce swing cooldown
+            if now < bigNextSwingAt then
+                return
+            end
+
+            local tree = bigTargetTree
+
+            -- if target vanished or is no longer valid, we still wait out the timer doing nothing
+            if (not tree) or (not tree.Parent) or (not isBigTreeModel(tree)) then
+                bigTargetTree     = nil
+                bigTargetWaitOnly = true
+                return
+            end
+
+            local hitPart = bestTreeHitPart(tree)
             if not hitPart then
-                removeBigTree(selectedTree)
+                removeBigTree(tree)
+                bigTargetTree     = nil
+                bigTargetWaitOnly = true
                 return
             end
 
+            -- if already downed, wait out the timer doing nothing
+            local remoteCount = getCurrentHitCount(tree)
+            if remoteCount >= requiredHits then
+                removeBigTree(tree)
+                bigTargetTree     = nil
+                bigTargetWaitOnly = true
+                return
+            end
+
+            -- teleport if needed (teleport is throttled separately; no "wasted swing timer")
             if (hitPart.Position - hrp.Position).Magnitude > CHOP_RADIUS then
-                teleportNearTree(selectedTree)
-            end
-
-            local remoteCount2 = getCurrentHitCount(selectedTree)
-            local base2        = math.max(remoteCount2, selectedBaseCount or 0)
-            if base2 >= requiredHits then
-                removeBigTree(selectedTree)
+                teleportNearTree(tree)
+                -- still allow swinging if we end up close enough this tick; re-check distance next tick
+                bigNextSwingAt = now + 0.05
                 return
             end
 
-            local hitId    = nextPerTreeHitId(selectedTree)
-            local impactCF = impactCFForTree(selectedTree, hitPart)
-            HitTreeRemote(selectedTree, tool, hitId, impactCF)
+            -- swing
+            local hitId    = nextPerTreeHitId(tree)
+            local impactCF = impactCFForTree(tree, hitPart)
+            HitTreeRemote(tree, tool, hitId, impactCF)
 
-            bigLocalHits[selectedTree]   = base2 + 1
-            bigLastHitTime[selectedTree] = os.clock()
+            bigLocalHits[tree] = (bigLocalHits[tree] or remoteCount) + 1
+            bigNextSwingAt     = now + SWING_COOLDOWN_BIG
 
-            bigCurrentIndex = bigCurrentIndex + 1
-            total = #bigTreeList
-            if total > 0 and bigCurrentIndex > total then
-                bigCurrentIndex = 1
+            -- if switchSec == 0, we want "one swing then move on"
+            if switchSec == 0 then
+                bigTargetTree  = nil
+                bigCurrentIndex = bigCurrentIndex + 1
+                return
+            end
+
+            -- if timer expired after this swing, switch next tick
+            if now >= bigTargetEndAt then
+                bigTargetTree  = nil
+                bigCurrentIndex = bigCurrentIndex + 1
             end
         end
 
         local function startBigFarm()
             if bigRunning then return end
             bigRunning = true
+
             if bigLoopConn then
                 bigLoopConn:Disconnect()
                 bigLoopConn = nil
             end
+
+            bigTreeList     = {}
+            bigLocalHits    = {}
+            bigCurrentIndex = 1
+
+            bigTargetTree     = nil
+            bigTargetEndAt    = 0
+            bigNextSwingAt    = 0
+            bigTargetWaitOnly = false
+
             bigLoopConn = RunService.Heartbeat:Connect(function()
                 if not bigRunning then return end
                 stepBigChopper()
@@ -672,8 +687,12 @@ return function(C, R, UI)
             end
             bigTreeList     = {}
             bigLocalHits    = {}
-            bigLastHitTime  = {}
             bigCurrentIndex = 1
+
+            bigTargetTree     = nil
+            bigTargetEndAt    = 0
+            bigNextSwingAt    = 0
+            bigTargetWaitOnly = false
         end
 
         -- CIRCLE FARM (SMALL + BIG) AROUND CAMPFIRE/ORIGIN
@@ -682,10 +701,14 @@ return function(C, R, UI)
         local circleTreeList  = {}
         local circleIndex     = 1
         local circleLastScan  = 0
-        local circleLastHitAt = setmetatable({}, { __mode = "k" })
-        local circleSmallHits = setmetatable({}, { __mode = "k" })
 
         local CIRCLE_RESCAN_EVERY = 4.0
+
+        -- NEW: circle-mode "locked big tree target" state
+        local circleTargetTree     = nil
+        local circleTargetEndAt    = 0
+        local circleNextSwingAt    = 0
+        local circleTargetWaitOnly = false
 
         local function getHRP()
             local ch = lp.Character
@@ -765,10 +788,23 @@ return function(C, R, UI)
             end)
 
             circleTreeList = list
-            circleIndex = 1
+            if circleIndex < 1 then circleIndex = 1 end
+            if circleIndex > #circleTreeList then circleIndex = 1 end
+        end
+
+        local function circleRemoveAt(idx)
+            local t = circleTreeList[idx]
+            table.remove(circleTreeList, idx)
+            if circleIndex > #circleTreeList then circleIndex = 1 end
+            if t then
+                TreeImpactCF[t] = nil
+                TreeHitSeed[t]  = nil
+            end
         end
 
         local function stepCircleFarm()
+            local now = os.clock()
+
             local char = lp.Character
             if not char then return end
             local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -776,63 +812,67 @@ return function(C, R, UI)
 
             local centerPos = findCampfireCenter()
 
-            local now = os.clock()
-            if (#circleTreeList == 0) or ((now - circleLastScan) >= CIRCLE_RESCAN_EVERY) then
+            if ((now - circleLastScan) >= CIRCLE_RESCAN_EVERY) then
                 circleLastScan = now
                 rebuildCircleTreeList(centerPos)
-                if #circleTreeList == 0 then
+            end
+
+            local switchSec = getSwitchTreeSec()
+
+            -- if we're in a "wait only" phase, do nothing until timer ends
+            if circleTargetTree == nil and circleTargetWaitOnly then
+                if now >= circleTargetEndAt then
+                    circleTargetWaitOnly = false
+                    circleTargetEndAt    = 0
+                    circleNextSwingAt    = 0
+                end
+                return
+            end
+
+            -- if we have an active BIG target, keep swinging it every 0.5s until timer ends
+            if circleTargetTree then
+                if now >= circleTargetEndAt and circleNextSwingAt ~= 0 then
+                    circleTargetTree  = nil
+                    circleNextSwingAt = 0
+                    circleIndex = circleIndex + 1
+                    if circleIndex > #circleTreeList then circleIndex = 1 end
                     return
                 end
-            end
 
-            if circleIndex > #circleTreeList then
-                circleIndex = 1
-            end
+                if now < circleNextSwingAt then
+                    return
+                end
 
-            local tree = circleTreeList[circleIndex]
-            if not tree or not tree.Parent then
-                table.remove(circleTreeList, circleIndex)
-                return
-            end
+                local tree = circleTargetTree
+                if (not tree) or (not tree.Parent) or (not isBigTreeModel(tree)) then
+                    circleTargetTree     = nil
+                    circleTargetWaitOnly = true
+                    return
+                end
 
-            local isSmall = isSmallTreeModel(tree)
-            local isBig   = isBigTreeModel(tree)
-            if (not isSmall) and (not isBig) then
-                table.remove(circleTreeList, circleIndex)
-                return
-            end
-
-            local hitPart = bestTreeHitPart(tree)
-            if not hitPart then
-                table.remove(circleTreeList, circleIndex)
-                return
-            end
-
-            local distToPlayer = (hitPart.Position - hrp.Position).Magnitude
-            if distToPlayer > CHOP_RADIUS then
-                teleportNearTree(tree)
-                return
-            end
-
-            if isBig then
                 local tool = getBigTreeTool()
                 if not tool then return end
                 ensureEquipped(tool)
 
                 local requiredHits = REQUIRED_HITS[tool.Name] or 35
-                local remoteCount  = getCurrentHitCount(tree)
-
-                if remoteCount >= requiredHits then
-                    table.remove(circleTreeList, circleIndex)
-                    circleLastHitAt[tree] = nil
-                    TreeImpactCF[tree] = nil
-                    TreeHitSeed[tree]  = nil
+                local hitPart = bestTreeHitPart(tree)
+                if not hitPart then
+                    circleTargetTree     = nil
+                    circleTargetWaitOnly = true
                     return
                 end
 
-                local lastHit = circleLastHitAt[tree] or 0
-                if (now - lastHit) < PER_TREE_COOLDOWN then
-                    circleIndex = circleIndex + 1
+                -- if already downed, wait out timer doing nothing
+                local remoteCount = getCurrentHitCount(tree)
+                if remoteCount >= requiredHits then
+                    circleTargetTree     = nil
+                    circleTargetWaitOnly = true
+                    return
+                end
+
+                if (hitPart.Position - hrp.Position).Magnitude > CHOP_RADIUS then
+                    teleportNearTree(tree)
+                    circleNextSwingAt = now + 0.05
                     return
                 end
 
@@ -840,33 +880,82 @@ return function(C, R, UI)
                 local impactCF = impactCFForTree(tree, hitPart)
                 HitTreeRemote(tree, tool, hitId, impactCF)
 
-                circleLastHitAt[tree] = now
-                circleIndex = circleIndex + 1
+                circleNextSwingAt = now + SWING_COOLDOWN_BIG
+
+                if switchSec == 0 then
+                    circleTargetTree  = nil
+                    circleIndex = circleIndex + 1
+                    if circleIndex > #circleTreeList then circleIndex = 1 end
+                end
+
                 return
             end
 
+            -- no active target: pick next tree from circle list
+            if #circleTreeList == 0 then
+                rebuildCircleTreeList(centerPos)
+                if #circleTreeList == 0 then return end
+            end
+
+            if circleIndex < 1 then circleIndex = 1 end
+            if circleIndex > #circleTreeList then circleIndex = 1 end
+
+            local tree = circleTreeList[circleIndex]
+            if not tree or not tree.Parent then
+                circleRemoveAt(circleIndex)
+                return
+            end
+
+            local isSmall = isSmallTreeModel(tree)
+            local isBig   = isBigTreeModel(tree)
+
+            if (not isSmall) and (not isBig) then
+                circleRemoveAt(circleIndex)
+                return
+            end
+
+            local hitPart = bestTreeHitPart(tree)
+            if not hitPart then
+                circleRemoveAt(circleIndex)
+                return
+            end
+
+            if (hitPart.Position - hrp.Position).Magnitude > CHOP_RADIUS then
+                teleportNearTree(tree)
+                return
+            end
+
+            -- SMALL TREE: always just hit and move on (no dwell timer)
             if isSmall then
                 local tool = getPreferredAxe()
                 if not tool then return end
                 ensureEquipped(tool)
 
                 local needed = AXE_HITS[tool.Name] or 13
-                local count  = circleSmallHits[tree] or 0
+                local count  = 0
 
-                if count >= needed then
-                    table.remove(circleTreeList, circleIndex)
-                    circleSmallHits[tree] = nil
-                    TreeImpactCF[tree] = nil
-                    TreeHitSeed[tree]  = nil
-                    return
-                end
-
+                -- we don't maintain per-tree state here; small trees are usually 1-hit w/ Strong Axe
                 local hitId    = nextPerTreeHitId(tree)
                 local impactCF = impactCFForTree(tree, hitPart)
                 HitTreeRemote(tree, tool, hitId, impactCF)
-                circleSmallHits[tree] = count + 1
+                count = count + 1
 
-                circleIndex = circleIndex + 1
+                if count >= needed then
+                    circleRemoveAt(circleIndex)
+                else
+                    circleIndex = circleIndex + 1
+                    if circleIndex > #circleTreeList then circleIndex = 1 end
+                end
+                return
+            end
+
+            -- BIG TREE: lock target + swing every 0.5s until switch timer ends
+            if isBig then
+                circleTargetTree  = tree
+                circleTargetEndAt = now + math.max(0, switchSec)
+                circleNextSwingAt = 0
+
+                -- if switchSec == 0 we still want one swing; next tick will perform and then clear
                 return
             end
         end
@@ -874,13 +963,21 @@ return function(C, R, UI)
         local function startCircleFarm()
             if circleRunning then return end
             circleRunning = true
-            circleTreeList = {}
-            circleIndex = 1
-            circleLastScan = 0
+
+            circleTreeList  = {}
+            circleIndex     = 1
+            circleLastScan  = 0
+
+            circleTargetTree     = nil
+            circleTargetEndAt    = 0
+            circleNextSwingAt    = 0
+            circleTargetWaitOnly = false
+
             if circleLoopConn then
                 circleLoopConn:Disconnect()
                 circleLoopConn = nil
             end
+
             circleLoopConn = RunService.Heartbeat:Connect(function()
                 if not circleRunning then return end
                 stepCircleFarm()
@@ -894,27 +991,29 @@ return function(C, R, UI)
                 circleLoopConn = nil
             end
             circleTreeList = {}
-            circleIndex = 1
+            circleIndex    = 1
             circleLastScan = 0
+
+            circleTargetTree     = nil
+            circleTargetEndAt    = 0
+            circleNextSwingAt    = 0
+            circleTargetWaitOnly = false
         end
 
         tab:Section({ Title = "Tree Farming" })
 
+        -- IMPORTANT: match your UI slider format (prevents "attempt to index number with default")
         if tab.Slider then
             tab:Slider({
-                Title = "Teleport wait (sec)",
-                Value = { Min = 0, Max = 10, Default = getTeleportWaitSec() },
+                Title = "Switch big tree after (sec)",
+                Value = { Min = 0, Max = 10, Default = getSwitchTreeSec() },
                 Rounding = 2,
                 Callback = function(v)
                     local nv = v
                     if type(v) == "table" then
                         nv = v.Value or v.Current or v.CurrentValue or v.Default or v.min or v.max
                     end
-                    nv = tonumber(nv)
-                    if nv == nil then nv = TELEPORT_WAIT_DEFAULT end
-                    if nv < 0 then nv = 0 end
-                    if nv > 30 then nv = 30 end
-                    C.State.FarmTeleportWaitSec = nv
+                    C.State.FarmTeleportWaitSec = tonumber(nv) or 0
                 end
             })
         end
@@ -939,6 +1038,7 @@ return function(C, R, UI)
             Callback = function(state)
                 if state then
                     stopCircleFarm()
+                    stopBigFarm()
                     startSmallFarm()
                 else
                     stopSmallFarm()
@@ -952,6 +1052,7 @@ return function(C, R, UI)
             Callback = function(state)
                 if state then
                     stopCircleFarm()
+                    stopSmallFarm()
                     startBigFarm()
                 else
                     stopBigFarm()
