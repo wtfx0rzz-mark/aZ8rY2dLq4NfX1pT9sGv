@@ -17,6 +17,11 @@ return function(C, R, UI)
         local lp = Players.LocalPlayer
         if not lp then return end
 
+        C.Farm = C.Farm or {}
+        if type(C.Farm._cleanup) == "function" then
+            pcall(C.Farm._cleanup)
+        end
+
         local RemoteEvents = RS:WaitForChild("RemoteEvents")
         local ToolDamageObject = RemoteEvents:WaitForChild("ToolDamageObject")
         local EquipItemHandle = RemoteEvents:WaitForChild("EquipItemHandle")
@@ -32,6 +37,8 @@ return function(C, R, UI)
         local CIRCLE_START_RADIUS = 90
         local CIRCLE_RADIUS_STEP = 70
         local CIRCLE_RADIUS_MAX = 1200
+
+        local MAX_TREE_QUEUE = 250
 
         C.State = C.State or {}
         if C.State.FarmTeleportWaitSec == nil then C.State.FarmTeleportWaitSec = 1 end
@@ -259,28 +266,17 @@ return function(C, R, UI)
         local smallTreeList = {}
         local smallHitCounts = {}
 
-        local function registerSmallTree(m)
-            if not m then return end
-            for _, t in ipairs(smallTreeList) do
-                if t == m then return end
-            end
-            table.insert(smallTreeList, m)
-            smallHitCounts[m] = smallHitCounts[m] or 0
-        end
-
-        local function removeSmallTreeFromList(tree)
-            for i = #smallTreeList, 1, -1 do
-                if smallTreeList[i] == tree then table.remove(smallTreeList, i) end
-            end
-            smallHitCounts[tree] = nil
-        end
-
         local function scanForAllSmallTrees()
             local list = {}
             for _, inst in ipairs(WS:GetDescendants()) do
                 if inst:IsA("Model") and isSmallTreeModel(inst) then
-                    table.insert(list, inst)
+                    list[#list + 1] = inst
                 end
+            end
+            if #list > MAX_TREE_QUEUE then
+                local trimmed = {}
+                for i = 1, MAX_TREE_QUEUE do trimmed[i] = list[i] end
+                list = trimmed
             end
             smallTreeList = list
             smallHitCounts = {}
@@ -321,7 +317,7 @@ return function(C, R, UI)
                 for _, tree in ipairs(smallTreeList) do
                     local part = bestTreeHitPart(tree)
                     if part and (part.Position - hrp.Position).Magnitude <= CHOP_RADIUS then
-                        table.insert(treesInRange, tree)
+                        treesInRange[#treesInRange + 1] = tree
                     end
                 end
                 for _, tree in ipairs(treesInRange) do
@@ -329,7 +325,10 @@ return function(C, R, UI)
                         local needed = AXE_HITS[axeName] or baseNeeded
                         local count = smallHitCounts[tree] or 0
                         if count >= needed then
-                            removeSmallTreeFromList(tree)
+                            for i = #smallTreeList, 1, -1 do
+                                if smallTreeList[i] == tree then table.remove(smallTreeList, i) end
+                            end
+                            smallHitCounts[tree] = nil
                         else
                             local hitPart = bestTreeHitPart(tree)
                             if hitPart then
@@ -338,11 +337,17 @@ return function(C, R, UI)
                                 HitTreeRemote(tree, axe, hitId, impactCF)
                                 smallHitCounts[tree] = count + 1
                             else
-                                removeSmallTreeFromList(tree)
+                                for i = #smallTreeList, 1, -1 do
+                                    if smallTreeList[i] == tree then table.remove(smallTreeList, i) end
+                                end
+                                smallHitCounts[tree] = nil
                             end
                         end
                     else
-                        removeSmallTreeFromList(tree)
+                        for i = #smallTreeList, 1, -1 do
+                            if smallTreeList[i] == tree then table.remove(smallTreeList, i) end
+                        end
+                        smallHitCounts[tree] = nil
                     end
                 end
             end)
@@ -377,7 +382,10 @@ return function(C, R, UI)
             for _, inst in ipairs(WS:GetDescendants()) do
                 if inst:IsA("Model") and isBigTreeModel(inst) then
                     local existing = getCurrentHitCount(inst)
-                    if existing < requiredHits then table.insert(bigTreeList, inst) end
+                    if existing < requiredHits then
+                        bigTreeList[#bigTreeList + 1] = inst
+                        if #bigTreeList >= MAX_TREE_QUEUE then break end
+                    end
                 end
             end
             table.sort(bigTreeList, function(a, b) return (a.Name or "") < (b.Name or "") end)
@@ -581,7 +589,9 @@ return function(C, R, UI)
                     local part = bestTreeHitPart(inst)
                     if part then
                         local d = (part.Position - centerPos).Magnitude
-                        if d <= rMax then table.insert(list, inst) end
+                        if d <= rMax then
+                            list[#list + 1] = inst
+                        end
                     end
                 end
             end
@@ -593,6 +603,11 @@ return function(C, R, UI)
                 if da == db then return (a.Name or "") < (b.Name or "") end
                 return da < db
             end)
+            if #list > MAX_TREE_QUEUE then
+                local trimmed = {}
+                for i = 1, MAX_TREE_QUEUE do trimmed[i] = list[i] end
+                list = trimmed
+            end
             circleTreeList = list
             if circleIndex < 1 then circleIndex = 1 end
             if circleIndex > #circleTreeList then circleIndex = 1 end
@@ -785,6 +800,14 @@ return function(C, R, UI)
             circleNextSwingAt = 0
             circleTargetWaitOnly = false
         end
+
+        local function cleanupAll()
+            stopCircleFarm()
+            stopSmallFarm()
+            stopBigFarm()
+        end
+
+        C.Farm._cleanup = cleanupAll
 
         tab:Section({ Title = "Tree Farming" })
 
