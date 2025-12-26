@@ -43,9 +43,6 @@ return function(C, R, UI)
     local upDrop       = 5
     local scanInterval = 0.1
 
-    local PILE_RADIUS    = 1.25
-    local LAYER_SIZE     = 10
-    local LAYER_HEIGHT   = 0.35
     local UNANCHOR_BATCH = 10
     local UNANCHOR_STEP  = 0.04
     local NUDGE_DOWN     = 4
@@ -53,6 +50,12 @@ return function(C, R, UI)
 
     local PLACE_BATCH    = 10
     local PLACE_YIELD_FN = function() Run.Heartbeat:Wait() end
+
+    local CLUSTER_RADIUS_MIN  = 0.75
+    local CLUSTER_RADIUS_STEP = 0.05
+    local CLUSTER_RADIUS_MAX  = 2.35
+    local AIR_DROP_WAVE_AMPLITUDE = 0.8
+    local AIR_DROP_WAVE_FREQUENCY = 1.35
 
     local function getRemote(...)
         local f = RS:FindFirstChild("RemoteEvents")
@@ -219,7 +222,6 @@ return function(C, R, UI)
         for name,_ in pairs(Selected.WA or {})      do set[name] = true end
         for name,_ in pairs(Selected.Misc or {})    do set[name] = true end
         for name,_ in pairs(Selected.Pelts or {})   do set[name] = true end
-
         if wantMossy       then set["Mossy Coin"]   = true end
         if wantCultist     then set["Cultist"]      = true end
         if wantSapling     then set["Sapling"]      = true end
@@ -228,101 +230,42 @@ return function(C, R, UI)
         if wantKey         then set["Key"]          = true end
         if wantFlashlight  then set["Flashlight"]   = true end
         if wantTamingFlute then set["Taming flute"] = true end
-
         return set
     end
 
     local function nameMatches(selectedSet, m)
         local itemsFolder = itemsRootOrNil()
-        if itemsFolder and not m:IsDescendantOf(itemsFolder) then
-            return false
-        end
-
+        if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
         local nm = m and m.Name or ""
         local l  = nm:lower()
-
         if selectedSet["Apple"] and nm == "Apple" then
             if itemsFolder and m.Parent ~= itemsFolder then return false end
             if isInsideTree(m) then return false end
             return true
         end
-
         if selectedSet["Berry"] and nm == "Berry" then
             if itemsFolder and m.Parent ~= itemsFolder then return false end
             if isInsideTree(m) then return false end
             return true
         end
-
         if selectedSet[nm] then return true end
-
-        if selectedSet["Mossy Coin"] and (nm == "Mossy Coin" or nm:match("^Mossy Coin%d+$")) then
-            return true
-        end
-
-        if selectedSet["Cultist"] and m:IsA("Model") and l:find("cultist",1,true) and hasHumanoid(m) then
-            return true
-        end
-
-        if selectedSet["Sapling"] and nm == "Sapling" then
-            return true
-        end
-
-        if selectedSet["Alpha Wolf Pelt"] and l:find("alpha",1,true) and l:find("wolf",1,true) then
-            return true
-        end
-
-        if selectedSet["Bear Pelt"] and l:find("bear",1,true) and not l:find("polar",1,true) then
-            return true
-        end
-
-        if selectedSet["Wolf Pelt"] and nm == "Wolf Pelt" then
-            return true
-        end
-
-        if selectedSet["Bunny Foot"] and nm == "Bunny Foot" then
-            return true
-        end
-
-        if selectedSet["Polar Bear Pelt"] and nm == "Polar Bear Pelt" then
-            return true
-        end
-
-        if selectedSet["Arctic Fox Pelt"] and nm == "Arctic Fox Pelt" then
-            return true
-        end
-
-        if selectedSet["Spear"] and l:find("spear",1,true) and not hasHumanoid(m) then
-            return true
-        end
-
-        if selectedSet["Sword"] and l:find("sword",1,true) and not hasHumanoid(m) then
-            return true
-        end
-
-        if selectedSet["Crossbow"] and l:find("crossbow",1,true) and not l:find("cultist",1,true) and not hasHumanoid(m) then
-            return true
-        end
-
-        if selectedSet["Blueprint"] and l:find("blueprint",1,true) then
-            return true
-        end
-
-        if selectedSet["Flashlight"] and l:find("flashlight",1,true) and not hasHumanoid(m) then
-            return true
-        end
-
-        if selectedSet["Cultist Gem"] and l:find("cultist",1,true) and l:find("gem",1,true) then
-            return true
-        end
-
-        if selectedSet["Forest Gem"] and (l:find("forest gem",1,true) or (l:find("forest",1,true) and l:find("fragment",1,true))) then
-            return true
-        end
-
-        if selectedSet["Tusk"] and l:find("tusk",1,true) then
-            return true
-        end
-
+        if selectedSet["Mossy Coin"] and (nm == "Mossy Coin" or nm:match("^Mossy Coin%d+$")) then return true end
+        if selectedSet["Cultist"] and m:IsA("Model") and l:find("cultist",1,true) and hasHumanoid(m) then return true end
+        if selectedSet["Sapling"] and nm == "Sapling" then return true end
+        if selectedSet["Alpha Wolf Pelt"] and l:find("alpha",1,true) and l:find("wolf",1,true) then return true end
+        if selectedSet["Bear Pelt"] and l:find("bear",1,true) and not l:find("polar",1,true) then return true end
+        if selectedSet["Wolf Pelt"] and nm == "Wolf Pelt" then return true end
+        if selectedSet["Bunny Foot"] and nm == "Bunny Foot" then return true end
+        if selectedSet["Polar Bear Pelt"] and nm == "Polar Bear Pelt" then return true end
+        if selectedSet["Arctic Fox Pelt"] and nm == "Arctic Fox Pelt" then return true end
+        if selectedSet["Spear"] and l:find("spear",1,true) and not hasHumanoid(m) then return true end
+        if selectedSet["Sword"] and l:find("sword",1,true) and not hasHumanoid(m) then return true end
+        if selectedSet["Crossbow"] and l:find("crossbow",1,true) and not l:find("cultist",1,true) and not hasHumanoid(m) then return true end
+        if selectedSet["Blueprint"] and l:find("blueprint",1,true) then return true end
+        if selectedSet["Flashlight"] and l:find("flashlight",1,true) and not hasHumanoid(m) then return true end
+        if selectedSet["Cultist Gem"] and l:find("cultist",1,true) and l:find("gem",1,true) then return true end
+        if selectedSet["Forest Gem"] and (l:find("forest gem",1,true) or (l:find("forest",1,true) and l:find("fragment",1,true))) then return true end
+        if selectedSet["Tusk"] and l:find("tusk",1,true) then return true end
         return false
     end
 
@@ -330,14 +273,10 @@ return function(C, R, UI)
         local cur = part
         local lastModel = nil
         while cur and cur ~= WS and cur ~= itemsFolder do
-            if cur:IsA("Model") then
-                lastModel = cur
-            end
+            if cur:IsA("Model") then lastModel = cur end
             cur = cur.Parent
         end
-        if lastModel and lastModel.Parent == itemsFolder then
-            return lastModel
-        end
+        if lastModel and lastModel.Parent == itemsFolder then return lastModel end
         return lastModel
     end
 
@@ -345,43 +284,22 @@ return function(C, R, UI)
         if not part or not part:IsA("BasePart") then return nil end
         local itemsFolder = itemsRootOrNil()
         local m = topModelUnderItems(part, itemsFolder) or part:FindFirstAncestorOfClass("Model")
-        if m and nameMatches(selectedSet, m) then
-            return m
-        end
+        if m and nameMatches(selectedSet, m) then return m end
         return nil
     end
 
     local function canGather(m, selectedSet, origin, rad)
         if not (m and m.Parent and m:IsA("Model")) then return false end
-
         local itemsFolder = itemsRootOrNil()
-        if itemsFolder and not m:IsDescendantOf(itemsFolder) then
-            return false
-        end
-
-        if isExcludedModel(m) or isUnderLogWall(m) then
-            return false
-        end
-
-        if m.Name == "Log" and isWallVariant(m) then
-            return false
-        end
-
+        if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
+        if isExcludedModel(m) or isUnderLogWall(m) then return false end
+        if m.Name == "Log" and isWallVariant(m) then return false end
         local mp = mainPart(m)
-        if not mp or mp.Anchored then
-            return false
-        end
-
+        if not mp or mp.Anchored then return false end
         if origin and rad then
-            if (mp.Position - origin).Magnitude > rad then
-                return false
-            end
+            if (mp.Position - origin).Magnitude > rad then return false end
         end
-
-        if not nameMatches(selectedSet, m) then
-            return false
-        end
-
+        if not nameMatches(selectedSet, m) then return false end
         return true
     end
 
@@ -395,16 +313,12 @@ return function(C, R, UI)
         if gathered[m] then return end
         gathered[m] = true
         list[#list+1] = m
-        if isCultist(m) then
-            cultistCount = cultistCount + 1
-        end
+        if isCultist(m) then cultistCount = cultistCount + 1 end
     end
 
     local function removeGather(m)
         if not gathered[m] then return end
-        if isCultist(m) then
-            cultistCount = math.max(0, cultistCount - 1)
-        end
+        if isCultist(m) then cultistCount = math.max(0, cultistCount - 1) end
         gathered[m] = nil
         for i = #list, 1, -1 do
             if list[i] == m then
@@ -478,7 +392,6 @@ return function(C, R, UI)
         for _,d in ipairs(pool:GetDescendants()) do
             repeat
                 if not (d:IsA("Model") or d:IsA("BasePart")) then break end
-
                 local m
                 if d:IsA("Model") then
                     if not nameMatches(selectedSet, d) then break end
@@ -487,12 +400,10 @@ return function(C, R, UI)
                     m = nearestSelectedModelFromPart(d, selectedSet)
                     if not m then break end
                 end
-
                 if gathered[m] then break end
                 if isCultist(m) and cultistCount >= CULTIST_LIMIT then break end
                 if not canGather(m, selectedSet, origin, rad) then break end
                 local mp = mainPart(m); if not mp then break end
-
                 if not dragStart(m) then break end
                 task.wait(START_YIELD)
                 pcall(function() mp:SetNetworkOwner(lp) end)
@@ -510,23 +421,18 @@ return function(C, R, UI)
         lastScan = now
         if not gatherOn then return end
         if not anySelection() then return end
-
         local root = hrp(); if not root then return end
         local origin = root.Position
         local rad = gatherRadius()
         local selectedSet = buildSelectedSet()
-
         refreshOverlapFilter()
-
         local ok, parts = pcall(function()
             return WS:GetPartBoundsInRadius(origin, rad, overlapParams)
         end)
-
         if not ok or type(parts) ~= "table" then
             captureIfNear_FullScan(origin, rad, selectedSet)
             return
         end
-
         for _,p in ipairs(parts) do
             repeat
                 if not p or not p.Parent or not p:IsA("BasePart") then break end
@@ -536,7 +442,6 @@ return function(C, R, UI)
                 if isCultist(m) and cultistCount >= CULTIST_LIMIT then break end
                 if not canGather(m, selectedSet, origin, rad) then break end
                 local mp = mainPart(m); if not mp then break end
-
                 if not dragStart(m) then break end
                 task.wait(START_YIELD)
                 pcall(function() mp:SetNetworkOwner(lp) end)
@@ -554,19 +459,15 @@ return function(C, R, UI)
         local items = itemsRootOrNil()
         if not items or not child:IsDescendantOf(items) then return end
         if not anySelection() then return end
-
         local root = hrp(); if not root then return end
         local origin = root.Position
         local rad = gatherRadius()
         local selectedSet = buildSelectedSet()
-
         if gathered[child] then return end
         if isCultist(child) and cultistCount >= CULTIST_LIMIT then return end
         if not canGather(child, selectedSet, origin, rad) then return end
-
         local mp = mainPart(child); if not mp then return end
         if not dragStart(child) then return end
-
         task.delay(START_YIELD, function()
             if not gatherOn then dragStop(child); return end
             if not child or not child.Parent then dragStop(child); return end
@@ -614,32 +515,48 @@ return function(C, R, UI)
         if itemsChildConn then pcall(function() itemsChildConn:Disconnect() end) end; itemsChildConn = nil
     end
 
-    local function groundAheadCF()
-        local root = hrp(); if not root then return nil end
-        local forward = root.CFrame.LookVector
-        local ahead   = root.Position + forward * forwardDrop + Vector3.new(0, 40, 0)
+    local function raycastGround(pos, ignoreList)
         local params  = RaycastParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = { lp.Character }
-        local rc = WS:Raycast(ahead, Vector3.new(0, -200, 0), params)
-        local hitPos = rc and rc.Position or (root.Position + forward * forwardDrop)
-        local drop   = hitPos + Vector3.new(0, upDrop, 0)
-        return CFrame.lookAt(drop, drop + forward)
+        params.FilterDescendantsInstances = ignoreList or { lp.Character }
+        local start = pos + Vector3.new(0, 60, 0)
+        local rc = WS:Raycast(start, Vector3.new(0, -260, 0), params)
+        return rc
     end
 
-    local function pileCF(i, baseCF)
-        local idx0   = i - 1
-        local layer  = math.floor(idx0 / LAYER_SIZE)
-        local inLayer= idx0 % LAYER_SIZE
-        local angle  = (inLayer / LAYER_SIZE) * math.pi * 2
-        local r      = (0.25 + (inLayer % 7) * 0.07) * PILE_RADIUS
-        local x      = math.cos(angle) * r + (math.random() - 0.5) * 0.12
-        local z      = math.sin(angle) * r + (math.random() - 0.5) * 0.12
-        local y      = layer * LAYER_HEIGHT
-        return baseCF * CFrame.new(x, y, z)
+    local function baseDropAnchor()
+        local root = hrp(); if not root then return nil end
+        local forward = root.CFrame.LookVector
+        local targetXZ = root.Position + forward * forwardDrop
+        local rc = raycastGround(targetXZ, { lp.Character })
+        local hitPos = rc and rc.Position or targetXZ
+        local dropPos = hitPos + Vector3.new(0, upDrop, 0)
+        local baseCF = CFrame.lookAt(dropPos, dropPos + forward)
+        return baseCF, forward, hitPos
     end
 
-    local function finalizePileDrop(items)
+    local dropCounter = 0
+    local function ringOffset()
+        dropCounter += 1
+        local i = dropCounter
+        local a = i * 2.399963229728653
+        local r = math.min(CLUSTER_RADIUS_MIN + CLUSTER_RADIUS_STEP * (i - 1), CLUSTER_RADIUS_MAX)
+        return Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
+    end
+
+    local function sprinkleCF(baseForward, baseGroundPos)
+        local off = ringOffset()
+        local jitterX = (math.random() - 0.5) * 0.14
+        local jitterZ = (math.random() - 0.5) * 0.14
+        local worldXZ = baseGroundPos + Vector3.new(off.X + jitterX, 0, off.Z + jitterZ)
+        local rc = raycastGround(worldXZ, { lp.Character })
+        local gPos = rc and rc.Position or worldXZ
+        local waveY = math.sin(dropCounter * AIR_DROP_WAVE_FREQUENCY) * AIR_DROP_WAVE_AMPLITUDE
+        local dropPos = gPos + Vector3.new(0, upDrop + waveY, 0)
+        return CFrame.lookAt(dropPos, dropPos + baseForward)
+    end
+
+    local function finalizeSprinkleDrop(items)
         for _,m in ipairs(items) do
             if m and m.Parent then
                 dragStop(m)
@@ -657,7 +574,6 @@ return function(C, R, UI)
                 end
             end
         end
-
         local n = #items
         local i = 1
         while i <= n do
@@ -680,18 +596,13 @@ return function(C, R, UI)
     end
 
     local function placeDown()
-        local baseCF = groundAheadCF(); if not baseCF then return end
+        local baseCF, baseForward, baseGroundPos = baseDropAnchor()
+        if not baseCF then return end
         if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = false end
         stopGather()
-
         local n = #list
         if n == 0 then return end
-
-        local cfs = table.create(n)
-        for i = 1, n do
-            cfs[i] = pileCF(i, baseCF)
-        end
-
+        dropCounter = 0
         local placed = 0
         for i = 1, n do
             local m = list[i]
@@ -700,7 +611,8 @@ return function(C, R, UI)
                 task.wait(0.06)
                 setAnchoredModel(m, true)
                 setNoCollideModel(m, true)
-                pivotModel(m, cfs[i])
+                local cf = sprinkleCF(baseForward, baseGroundPos)
+                pivotModel(m, cf)
                 dragStop(m)
                 placed += 1
                 if placed % PLACE_BATCH == 0 then
@@ -708,9 +620,8 @@ return function(C, R, UI)
                 end
             end
         end
-
         task.wait(0.05)
-        finalizePileDrop(list)
+        finalizeSprinkleDrop(list)
         clearAll()
     end
 
@@ -827,13 +738,13 @@ return function(C, R, UI)
             stack.BackgroundTransparency = 1
             stack.BorderSizePixel = 0
             stack.Parent = edgeGui
-            local list = Instance.new("UIListLayout")
-            list.Name = "VList"
-            list.FillDirection = Enum.FillDirection.Vertical
-            list.SortOrder = Enum.SortOrder.LayoutOrder
-            list.Padding = UDim.new(0, 6)
-            list.HorizontalAlignment = Enum.HorizontalAlignment.Right
-            list.Parent = stack
+            local listLay = Instance.new("UIListLayout")
+            listLay.Name = "VList"
+            listLay.FillDirection = Enum.FillDirection.Vertical
+            listLay.SortOrder = Enum.SortOrder.LayoutOrder
+            listLay.Padding = UDim.new(0, 6)
+            listLay.HorizontalAlignment = Enum.HorizontalAlignment.Right
+            listLay.Parent = stack
         end
         local btn = stack:FindFirstChild("PlaceEdge")
         if not btn then
