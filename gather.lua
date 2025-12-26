@@ -1,5 +1,4 @@
 -- gather.lua
-
 return function(C, R, UI)
     local function run()
         C  = C  or _G.C
@@ -73,6 +72,18 @@ return function(C, R, UI)
         local CLUSTER_RADIUS_MAX  = 2.35
         local AIR_DROP_WAVE_AMPLITUDE = 0.8
         local AIR_DROP_WAVE_FREQUENCY = 1.35
+
+        local PLACE_USE_DELAY          = false
+        local PLACE_INITIAL_DELAY_SEC  = 0.00
+        local PLACE_PER_ITEM_DELAY_SEC = 0.00
+
+        local PLACE_USE_NUDGE_DOWN     = false
+        local PLACE_NUDGE_DOWN_STUDS   = 16
+
+        local function waitIf(v)
+            v = tonumber(v)
+            if v and v > 0 then task.wait(v) end
+        end
 
         local function getRemote(...)
             local f = RS:FindFirstChild("RemoteEvents")
@@ -365,11 +376,6 @@ return function(C, R, UI)
             end
         end
 
-        local function resetCarry()
-            releaseAll()
-            clearAll()
-        end
-
         local function anySelection()
             if wantMossy or wantCultist or wantSapling or wantBlueprint or wantForestGem or wantKey or wantFlashlight or wantTamingFlute then
                 return true
@@ -380,12 +386,11 @@ return function(C, R, UI)
             return false
         end
 
-        local lastScan    = 0
+        local lastScan   = 0
         local START_YIELD = 0.06
 
         local overlapParams = OverlapParams.new()
-        local MAX_PARTS = 5000
-        overlapParams.MaxParts = MAX_PARTS
+        overlapParams.MaxParts = 1000
 
         local function refreshOverlapFilter()
             local items = itemsRootOrNil()
@@ -437,9 +442,6 @@ return function(C, R, UI)
             end
         end
 
-        local lastFullScan = 0
-        local FULLSCAN_WHEN_MAXPARTS_EVERY = 0.6
-
         local function captureIfNear()
             local now = os.clock()
             if now - lastScan < scanInterval then return end
@@ -451,21 +453,13 @@ return function(C, R, UI)
             local rad = gatherRadius()
             local selectedSet = buildSelectedSet()
             refreshOverlapFilter()
-
             local ok, parts = pcall(function()
                 return WS:GetPartBoundsInRadius(origin, rad, overlapParams)
             end)
-
-            if (not ok) or (type(parts) ~= "table") then
+            if not ok or type(parts) ~= "table" then
                 captureIfNear_FullScan(origin, rad, selectedSet)
                 return
             end
-
-            if #parts >= MAX_PARTS and (now - lastFullScan) >= FULLSCAN_WHEN_MAXPARTS_EVERY then
-                lastFullScan = now
-                captureIfNear_FullScan(origin, rad, selectedSet)
-            end
-
             for _,p in ipairs(parts) do
                 repeat
                     if not p or not p.Parent or not p:IsA("BasePart") then break end
@@ -488,41 +482,28 @@ return function(C, R, UI)
 
         local function onItemsChildAdded(child)
             if not gatherOn then return end
-            if not child or not (child:IsA("Model") or child:IsA("BasePart")) then return end
-            if not anySelection() then return end
-
+            if not child or not child:IsA("Model") then return end
             local items = itemsRootOrNil()
-            if not items then return end
-            if not child:IsDescendantOf(items) then return end
-
+            if not items or not child:IsDescendantOf(items) then return end
+            if not anySelection() then return end
             local root = hrp(); if not root then return end
             local origin = root.Position
             local rad = gatherRadius()
             local selectedSet = buildSelectedSet()
-
-            local m
-            if child:IsA("Model") then
-                m = child
-            else
-                m = nearestSelectedModelFromPart(child, selectedSet)
-            end
-            if not m then return end
-            if gathered[m] then return end
-            if isCultist(m) and cultistCount >= CULTIST_LIMIT then return end
-            if not canGather(m, selectedSet, origin, rad) then return end
-
-            local mp = mainPart(m); if not mp then return end
-            if not dragStart(m) then return end
-
+            if gathered[child] then return end
+            if isCultist(child) and cultistCount >= CULTIST_LIMIT then return end
+            if not canGather(child, selectedSet, origin, rad) then return end
+            local mp = mainPart(child); if not mp then return end
+            if not dragStart(child) then return end
             task.delay(START_YIELD, function()
-                if not gatherOn then dragStop(m); return end
-                if not m or not m.Parent then dragStop(m); return end
-                local mp2 = mainPart(m); if not mp2 then dragStop(m); return end
+                if not gatherOn then dragStop(child); return end
+                if not child or not child.Parent then dragStop(child); return end
+                local mp2 = mainPart(child); if not mp2 then dragStop(child); return end
                 pcall(function() mp2:SetNetworkOwner(lp) end)
-                setNoCollideModel(m, true)
-                setAnchoredModel(m, true)
-                addGather(m)
-                dragStop(m)
+                setNoCollideModel(child, true)
+                setAnchoredModel(child, true)
+                addGather(child)
+                dragStop(child)
             end)
         end
 
@@ -550,11 +531,6 @@ return function(C, R, UI)
             if items then
                 if itemsChildConn then pcall(function() itemsChildConn:Disconnect() end) end
                 itemsChildConn = items.ChildAdded:Connect(onItemsChildAdded)
-                if items.DescendantAdded then
-                    items.DescendantAdded:Connect(function(d)
-                        onItemsChildAdded(d)
-                    end)
-                end
             end
             if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = true end
         end
@@ -575,12 +551,11 @@ return function(C, R, UI)
             return Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
         end
 
-        local function baseDropAnchor()
+        local function baseDropAnchorSnapshot()
             local root = hrp(); if not root then return nil end
             local forward = root.CFrame.LookVector
             local basePos = root.Position + Vector3.new(0, DROP_ABOVE_HEAD_STUDS, 0) + forward * forwardDrop
-            local baseCF = CFrame.lookAt(basePos, basePos + forward)
-            return baseCF, forward, basePos
+            return forward, basePos
         end
 
         local function sprinkleCF(baseForward, basePos)
@@ -592,76 +567,63 @@ return function(C, R, UI)
             return CFrame.lookAt(dropPos, dropPos + baseForward)
         end
 
-        local function finalizeSprinkleDrop(items)
-            for _,m in ipairs(items) do
-                if m and m.Parent then
-                    dragStop(m)
-                    setNoCollideModel(m, false)
-                    local mp = mainPart(m)
-                    if mp then
-                        pcall(function() mp:SetNetworkOwner(nil) end)
-                        pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
-                    end
-                    for _,p in ipairs(m:GetDescendants()) do
-                        if p:IsA("BasePart") then
-                            p.AssemblyLinearVelocity  = Vector3.new()
-                            p.AssemblyAngularVelocity = Vector3.new()
-                        end
+        local function dropOneItem(m, baseForward, basePos)
+            if not (m and m.Parent) then return end
+            local mp = mainPart(m)
+            if not mp then return end
+
+            pcall(function() mp:SetNetworkOwner(lp) end)
+            setNoCollideModel(m, true)
+            setAnchoredModel(m, true)
+
+            local cf = sprinkleCF(baseForward, basePos)
+            pivotModel(m, cf)
+
+            waitIf(PLACE_PER_ITEM_DELAY_SEC)
+
+            setAnchoredModel(m, false)
+            setNoCollideModel(m, false)
+
+            if PLACE_USE_NUDGE_DOWN then
+                for _,p in ipairs(m:GetDescendants()) do
+                    if p:IsA("BasePart") then
+                        p.AssemblyLinearVelocity  = Vector3.new(0, -PLACE_NUDGE_DOWN_STUDS, 0)
+                        p.AssemblyAngularVelocity = Vector3.new()
                     end
                 end
             end
 
-            local n = #items
-            local i = 1
-            while i <= n do
-                for j = i, math.min(i + UNANCHOR_BATCH - 1, n) do
-                    local m = items[j]
-                    if m and m.Parent then
-                        setAnchoredModel(m, false)
-                        for _,p in ipairs(m:GetDescendants()) do
-                            if p:IsA("BasePart") then
-                                p.AssemblyLinearVelocity  = Vector3.new(0, -NUDGE_DOWN, 0)
-                                p.AssemblyAngularVelocity = Vector3.new()
-                            end
-                        end
-                    end
-                    task.wait(0.006 + ((j % 7) * 0.002))
-                end
-                task.wait(UNANCHOR_STEP)
-                i = i + UNANCHOR_BATCH
-            end
+            pcall(function() mp:SetNetworkOwner(nil) end)
+            pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
+
+            dragSafeStop(m)
         end
 
         local function placeDown()
-            local baseCF, baseForward, basePos = baseDropAnchor()
-            if not baseCF then return end
+            local baseForward, basePos = baseDropAnchorSnapshot()
+            if not baseForward then return end
 
             if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = false end
             stopGather()
 
             local n = #list
-            if n == 0 then
-                return
-            end
+            if n == 0 then return end
+
+            local items = table.create(n)
+            for i = 1, n do items[i] = list[i] end
 
             dropCounter = 0
-            local placed = 0
 
-            for i = 1, n do
-                local m = list[i]
+            if PLACE_USE_DELAY then
+                waitIf(PLACE_INITIAL_DELAY_SEC)
+            end
+
+            local placed = 0
+            for i = 1, #items do
+                local m = items[i]
                 if m and m.Parent then
-                    dragStart(m)
-                    task.wait(0.06)
-                    setAnchoredModel(m, true)
-                    setNoCollideModel(m, true)
-                    local cf = sprinkleCF(baseForward, basePos)
-                    if m:IsA("Model") then
-                        m:PivotTo(cf)
-                    else
-                        local p = mainPart(m)
-                        if p then p.CFrame = cf end
-                    end
-                    dragStop(m)
+                    pcall(function() dragStart(m) end)
+                    dropOneItem(m, baseForward, basePos)
                     placed += 1
                     if placed % PLACE_BATCH == 0 then
                         PLACE_YIELD_FN()
@@ -669,19 +631,20 @@ return function(C, R, UI)
                 end
             end
 
-            finalizeSprinkleDrop(list)
             clearAll()
         end
 
         C.Gather = C.Gather or {}
         C.Gather.IsOn      = function() return gatherOn end
         C.Gather.PlaceDown = placeDown
-        C.Gather.ResetCarry = resetCarry
 
         tab:Section({ Title = "Gather Settings", Icon = "sliders" })
 
         tab:Slider({
             Title = "Distance",
+            Min = 0,
+            Max = 500,
+            Default = gatherRadius(),
             Value = { Min = 0, Max = 500, Default = gatherRadius() },
             Callback = function(v)
                 local nv = v
@@ -698,26 +661,14 @@ return function(C, R, UI)
         tab:Button({
             Title = "Gather Items",
             Callback = function()
-                if not anySelection() then return end
-
-                if gatherOn then
-                    local root = hrp()
-                    if root then
-                        local origin = root.Position
-                        local rad = gatherRadius()
-                        local selectedSet = buildSelectedSet()
-                        captureIfNear_FullScan(origin, rad, selectedSet)
-                    end
-                    return
+                if anySelection() then
+                    clearAll()
+                    startGather()
                 end
-
-                resetCarry()
-                startGather()
             end
         })
 
         tab:Button({ Title = "Drop Items", Callback = function() placeDown() end })
-        tab:Button({ Title = "Reset / Release Carry", Callback = function() resetCarry() end })
 
         local function dropdownMulti(args)
             return tab:Dropdown({
@@ -846,7 +797,7 @@ return function(C, R, UI)
 
         lp.CharacterAdded:Connect(function()
             if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = false end
-            resetCarry()
+            releaseAll()
             if gatherOn then
                 task.defer(function()
                     stopGather()
