@@ -30,57 +30,6 @@ return function(C, R, UI)
 
     local TRAP_MAX_RADIUS = 20
 
-    C.Debug = C.Debug or {}
-    C.Debug.Errors = C.Debug.Errors or {}
-    local ERR = C.Debug.Errors
-    ERR.max = ERR.max or 300
-    ERR.buf = ERR.buf or {}
-    ERR.count = ERR.count or {}
-
-    local function _tb(e)
-        return debug.traceback(tostring(e), 2)
-    end
-
-    local function _pushErr(tag, trace)
-        tag = tostring(tag or "err")
-        trace = tostring(trace or "")
-        local key = tag .. "\n" .. trace
-        ERR.count[key] = (ERR.count[key] or 0) + 1
-        local rec = { t = os.date("%Y-%m-%d %H:%M:%S"), tag = tag, trace = trace, n = ERR.count[key] }
-
-        local b = ERR.buf
-        b[#b + 1] = rec
-        local over = #b - ERR.max
-        if over > 0 then
-            for _ = 1, over do table.remove(b, 1) end
-        end
-
-        if rec.n == 1 or (rec.n % 10 == 0) then
-            warn(("[Combat][%s] x%d\n%s"):format(tag, rec.n, trace))
-        end
-    end
-
-    local function safeCall(tag, fn, ...)
-        local args = table.pack(...)
-        local ok, res = xpcall(function()
-            return fn(table.unpack(args, 1, args.n))
-        end, _tb)
-        if not ok then
-            _pushErr(tag, res)
-            return false, res
-        end
-        return true, res
-    end
-
-    local function dumpErrorsText()
-        local out = {}
-        for i = 1, #ERR.buf do
-            local e = ERR.buf[i]
-            out[#out + 1] = ("[%d] %s | %s | x%d\n%s\n"):format(i, e.t, e.tag, e.n, e.trace)
-        end
-        return table.concat(out, "\n")
-    end
-
     --------------------------------------------------------------------
     -- AURA VISUAL (CIRCLE) (NO RAYCASTS)
     --------------------------------------------------------------------
@@ -108,7 +57,7 @@ return function(C, R, UI)
             for _, child in ipairs(pg:GetChildren()) do
                 if child:IsA("ScreenGui") then
                     if child.Name == "AuraCircleGui_v4" or child.Name:match("^AuraCircleGui") or child.Name == "CombatAuraCircleGui" then
-                        safeCall("auraVis.cleanupLegacy.DestroyGui", function() child:Destroy() end)
+                        pcall(function() child:Destroy() end)
                     end
                 end
             end
@@ -116,7 +65,7 @@ return function(C, R, UI)
         local rf = WS:FindFirstChild("__Aura__")
         if rf then
             local a = rf:FindFirstChild("AuraAnchor_" .. tostring(lp.UserId))
-            if a then safeCall("auraVis.cleanupLegacy.DestroyAnchor", function() a:Destroy() end) end
+            if a then pcall(function() a:Destroy() end) end
         end
     end
 
@@ -147,7 +96,7 @@ return function(C, R, UI)
 
         if not self.anchor or not self.anchor.Parent then
             local oldAnchor = self.folder:FindFirstChild("AuraAnchor_" .. tostring(lp.UserId))
-            if oldAnchor then safeCall("auraVis.ensure.DestroyOldAnchor", function() oldAnchor:Destroy() end) end
+            if oldAnchor then pcall(function() oldAnchor:Destroy() end) end
 
             local a = Instance.new("Part")
             a.Name = "AuraAnchor_" .. tostring(lp.UserId)
@@ -183,12 +132,12 @@ return function(C, R, UI)
         if not self.adorn then return end
         r = tonumber(r) or 0
         if r <= 0 then
-            safeCall("auraVis.applyRadius.Hide", function() self.adorn.Visible = false end)
+            pcall(function() self.adorn.Visible = false end)
             self.adorn.Radius = 0
             self.adorn.InnerRadius = 0
             return
         end
-        safeCall("auraVis.applyRadius.Show", function() self.adorn.Visible = true end)
+        pcall(function() self.adorn.Visible = true end)
         self.adorn.Radius = r
         local inner = r - 0.6
         if inner < 0 then inner = 0 end
@@ -230,13 +179,13 @@ return function(C, R, UI)
         self:applyRadius(C.State.AuraRadius)
         self.acc = 0
 
-        if self.charConn then safeCall("auraVis.start.DisconnectCharConn", function() self.charConn:Disconnect() end) end
+        if self.charConn then pcall(function() self.charConn:Disconnect() end) end
         self.charConn = lp.CharacterAdded:Connect(function(ch)
             self.character = ch
             self.hrp = ch:WaitForChild("HumanoidRootPart")
         end)
 
-        if self.conn then safeCall("auraVis.start.DisconnectConn", function() self.conn:Disconnect() end) end
+        if self.conn then pcall(function() self.conn:Disconnect() end) end
         self.conn = Run.Heartbeat:Connect(function(dt)
             if not self.enabled then return end
             self.acc += dt
@@ -249,19 +198,21 @@ return function(C, R, UI)
 
     function auraVis:stop()
         self.enabled = false
-        if self.conn then safeCall("auraVis.stop.DisconnectConn", function() self.conn:Disconnect() end) end
-        if self.charConn then safeCall("auraVis.stop.DisconnectCharConn", function() self.charConn:Disconnect() end) end
+        if self.conn then pcall(function() self.conn:Disconnect() end) end
+        if self.charConn then pcall(function() self.charConn:Disconnect() end) end
         self.conn = nil
         self.charConn = nil
-        if self.gui then safeCall("auraVis.stop.DestroyGui", function() self.gui:Destroy() end) end
+        if self.gui then pcall(function() self.gui:Destroy() end) end
         self.gui = nil
         self.adorn = nil
-        if self.anchor then safeCall("auraVis.stop.DestroyAnchor", function() self.anchor:Destroy() end) end
+        if self.anchor then pcall(function() self.anchor:Destroy() end) end
         self.anchor = nil
     end
 
     local function syncAuraVisualRadius()
-        if auraVis.enabled then auraVis:applyRadius(C.State.AuraRadius) end
+        if auraVis.enabled then
+            auraVis:applyRadius(C.State.AuraRadius)
+        end
     end
 
     --------------------------------------------------------------------
@@ -399,7 +350,9 @@ return function(C, R, UI)
         end
 
         local function char_computeImpactCFrame(hitPart)
-            if not (hitPart and hitPart:IsA("BasePart")) then return CFrame.new() end
+            if not (hitPart and hitPart:IsA("BasePart")) then
+                return CFrame.new()
+            end
             local rot = hitPart.CFrame - hitPart.CFrame.Position
             return CFrame.new(hitPart.Position + Vector3.new(0, 0.02, 0)) * rot
         end
@@ -482,10 +435,16 @@ return function(C, R, UI)
         local function char_chopWave(targetModels)
             if not CharacterAura.running then return end
             local toolName, cd = char_bestAvailableWeapon()
-            if not toolName then task.wait(0.2) return end
+            if not toolName then
+                task.wait(0.2)
+                return
+            end
 
             local tool = char_ensureEquipped(toolName)
-            if not tool then task.wait(0.2) return end
+            if not tool then
+                task.wait(0.2)
+                return
+            end
 
             local cap = math.min(#targetModels, TUNE.CHAR_MAX_PER_WAVE)
             local anySent = false
@@ -508,7 +467,7 @@ return function(C, R, UI)
 
                             task.spawn(function()
                                 if not (CharacterAura.running and mdl and mdl.Parent) then return end
-                                safeCall("CharacterAura.char_HitTarget", function()
+                                pcall(function()
                                     char_HitTarget(mdl, tool, hitId, impactCF)
                                 end)
                             end)
@@ -527,7 +486,9 @@ return function(C, R, UI)
 
             if anySent then
                 local waitT = cd
-                if soonest < math.huge then waitT = math.min(cd, soonest) end
+                if soonest < math.huge then
+                    waitT = math.min(cd, soonest)
+                end
                 task.wait(math.max(0.02, waitT))
             else
                 if soonest < math.huge then
@@ -664,7 +625,9 @@ return function(C, R, UI)
         local function st_isSmallTreeModel(model)
             if not (model and model:IsA("Model")) then return false end
             local name = model.Name
-            if TREE_NAMES[name] then return st_bestTreeHitPart(model) ~= nil end
+            if TREE_NAMES[name] then
+                return st_bestTreeHitPart(model) ~= nil
+            end
             if type(name) ~= "string" then return false end
             local lower = name:lower()
             if lower:find("small", 1, true) and lower:find("tree", 1, true) then
@@ -677,7 +640,9 @@ return function(C, R, UI)
             local current = part and part.Parent
             while current do
                 if current:IsA("Model") then
-                    if st_isSmallTreeModel(current) then return current end
+                    if st_isSmallTreeModel(current) then
+                        return current
+                    end
                 end
                 current = current.Parent
             end
@@ -709,7 +674,9 @@ return function(C, R, UI)
         end
 
         local function st_computeImpactCFrame(hitPart)
-            if not (hitPart and hitPart:IsA("BasePart")) then return CFrame.new() end
+            if not (hitPart and hitPart:IsA("BasePart")) then
+                return CFrame.new()
+            end
             local rot = hitPart.CFrame - hitPart.CFrame.Position
             return CFrame.new(hitPart.Position + Vector3.new(0, 0.02, 0)) * rot
         end
@@ -746,7 +713,9 @@ return function(C, R, UI)
 
             local roots = { WS, RS:FindFirstChild("Assets"), RS:FindFirstChild("CutsceneSets") }
             local includeRoots = {}
-            for _, r in ipairs(roots) do if r then includeRoots[#includeRoots + 1] = r end end
+            for _, r in ipairs(roots) do
+                if r then includeRoots[#includeRoots + 1] = r end
+            end
             if #includeRoots == 0 then includeRoots[1] = WS end
 
             local params = OverlapParams.new()
@@ -781,12 +750,22 @@ return function(C, R, UI)
         local function st_chopWaveTrees(targetModels, swingDelay)
             local toolName
             for _, n in ipairs(TUNE.ChopPrefer) do
-                if st_findItem(n) then toolName = n break end
+                if st_findItem(n) then
+                    toolName = n
+                    break
+                end
             end
-            if not toolName then task.wait(0.35) return end
+
+            if not toolName then
+                task.wait(0.35)
+                return
+            end
 
             local tool = st_ensureEquipped(toolName)
-            if not tool then task.wait(0.35) return end
+            if not tool then
+                task.wait(0.35)
+                return
+            end
 
             for _, mdl in ipairs(targetModels) do
                 task.spawn(function()
@@ -795,15 +774,11 @@ return function(C, R, UI)
                     if not hitPart then return end
                     local impactCF = st_impactCFForTree(mdl, hitPart)
                     local hitId = st_nextPerTreeHitId(mdl)
-
-                    safeCall("SmallTreeAura.SetAttribute", function()
+                    pcall(function()
                         local bucket = st_attrBucket(mdl)
                         if bucket then bucket:SetAttribute(hitId, true) end
                     end)
-
-                    safeCall("SmallTreeAura.st_HitTarget", function()
-                        st_HitTarget(mdl, tool, hitId, impactCF)
-                    end)
+                    st_HitTarget(mdl, tool, hitId, impactCF)
                 end)
             end
             task.wait(swingDelay)
@@ -855,7 +830,12 @@ return function(C, R, UI)
     BigTreeAura._cursor = 1
 
     do
-        local BIG_TREE_NAMES = { TreeBig1 = true, TreeBig2 = true, TreeBig3 = true }
+        local BIG_TREE_NAMES = {
+            TreeBig1 = true,
+            TreeBig2 = true,
+            TreeBig3 = true,
+        }
+
         local TreeImpactCF = setmetatable({}, { __mode = "k" })
         local TreeHitSeed  = setmetatable({}, { __mode = "k" })
 
@@ -960,7 +940,9 @@ return function(C, R, UI)
             local current = part and part.Parent
             while current do
                 if current:IsA("Model") then
-                    if bt_isBigTreeName(current.Name) then return current end
+                    if bt_isBigTreeName(current.Name) then
+                        return current
+                    end
                 end
                 current = current.Parent
             end
@@ -992,7 +974,9 @@ return function(C, R, UI)
         end
 
         local function bt_computeImpactCFrame(hitPart)
-            if not (hitPart and hitPart:IsA("BasePart")) then return CFrame.new() end
+            if not (hitPart and hitPart:IsA("BasePart")) then
+                return CFrame.new()
+            end
             local rot = hitPart.CFrame - hitPart.CFrame.Position
             return CFrame.new(hitPart.Position + Vector3.new(0, 0.02, 0)) * rot
         end
@@ -1029,7 +1013,9 @@ return function(C, R, UI)
 
             local roots = { WS, RS:FindFirstChild("Assets"), RS:FindFirstChild("CutsceneSets") }
             local includeRoots = {}
-            for _, r in ipairs(roots) do if r then includeRoots[#includeRoots + 1] = r end end
+            for _, r in ipairs(roots) do
+                if r then includeRoots[#includeRoots + 1] = r end
+            end
             if #includeRoots == 0 then includeRoots[1] = WS end
 
             local params = OverlapParams.new()
@@ -1063,10 +1049,16 @@ return function(C, R, UI)
 
         local function bt_chopWaveTrees(targetModels, swingDelay)
             local toolName = bt_hasBigTreeTool()
-            if not toolName then task.wait(0.5) return end
+            if not toolName then
+                task.wait(0.5)
+                return
+            end
 
             local tool = bt_ensureEquipped(toolName)
-            if not tool then task.wait(0.35) return end
+            if not tool then
+                task.wait(0.35)
+                return
+            end
 
             for _, mdl in ipairs(targetModels) do
                 task.spawn(function()
@@ -1075,15 +1067,11 @@ return function(C, R, UI)
                     if not hitPart then return end
                     local impactCF = bt_impactCFForTree(mdl, hitPart)
                     local hitId = bt_nextPerTreeHitId(mdl)
-
-                    safeCall("BigTreeAura.SetAttribute", function()
+                    pcall(function()
                         local bucket = bt_attrBucket(mdl)
                         if bucket then bucket:SetAttribute(hitId, true) end
                     end)
-
-                    safeCall("BigTreeAura.bt_HitTarget", function()
-                        bt_HitTarget(mdl, tool, hitId, impactCF)
-                    end)
+                    bt_HitTarget(mdl, tool, hitId, impactCF)
                 end)
             end
             task.wait(swingDelay)
@@ -1170,7 +1158,9 @@ return function(C, R, UI)
 
         local function ta_getAllBearTraps()
             local now = os.clock()
-            if trapCache and (now - trapCacheAt) < 2.0 then return trapCache end
+            if trapCache and (now - trapCacheAt) < 2.0 then
+                return trapCache
+            end
             trapCacheAt = now
             trapCache = {}
 
@@ -1190,12 +1180,9 @@ return function(C, R, UI)
             ta_resolveTrapRemotes()
 
             task.spawn(function()
-                if TRAP_REMOTES.StartDrag then
-                    safeCall("TrapAura.StartDrag", function() TRAP_REMOTES.StartDrag:FireServer(trap) end)
-                end
+                if TRAP_REMOTES.StartDrag then pcall(function() TRAP_REMOTES.StartDrag:FireServer(trap) end) end
                 task.wait(0.03)
-
-                safeCall("TrapAura.PivotTo", function()
+                pcall(function()
                     if trap:IsA("Model") then
                         trap:PivotTo(cf)
                     else
@@ -1203,13 +1190,8 @@ return function(C, R, UI)
                         if bp then bp.CFrame = cf end
                     end
                 end)
-
-                if TRAP_REMOTES.StopDrag then
-                    safeCall("TrapAura.StopDrag", function() TRAP_REMOTES.StopDrag:FireServer(trap) end)
-                end
-                if setNow and TRAP_REMOTES.SetTrap then
-                    safeCall("TrapAura.SetTrap", function() TRAP_REMOTES.SetTrap:FireServer(trap) end)
-                end
+                if TRAP_REMOTES.StopDrag then pcall(function() TRAP_REMOTES.StopDrag:FireServer(trap) end) end
+                if setNow and TRAP_REMOTES.SetTrap then pcall(function() TRAP_REMOTES.SetTrap:FireServer(trap) end) end
             end)
         end
 
@@ -1405,7 +1387,7 @@ return function(C, R, UI)
             if not (selectedTrap and selectedTrap.Parent) then return end
             ta_resolveTrapRemotes()
             if TRAP_REMOTES.SetTrap then
-                safeCall("TrapManual.SetTrap", function() TRAP_REMOTES.SetTrap:FireServer(selectedTrap) end)
+                pcall(function() TRAP_REMOTES.SetTrap:FireServer(selectedTrap) end)
             end
         end
 
@@ -1526,29 +1508,6 @@ return function(C, R, UI)
     -- UI WIRING
     --------------------------------------------------------------------
 
-    safeCall("UI.ErrorsButtons", function()
-        if CombatTab and CombatTab.Button then
-            CombatTab:Button({
-                Title = "Copy Combat Errors",
-                Callback = function()
-                    local txt = dumpErrorsText()
-                    if setclipboard then
-                        setclipboard(txt)
-                    else
-                        warn(txt)
-                    end
-                end
-            })
-            CombatTab:Button({
-                Title = "Clear Combat Errors",
-                Callback = function()
-                    ERR.buf = {}
-                    ERR.count = {}
-                end
-            })
-        end
-    end)
-
     CombatTab:Toggle({
         Title = "Kill Aura",
         Value = C.State.Toggles.CharacterAura or false,
@@ -1579,8 +1538,8 @@ return function(C, R, UI)
                     BigTreeAura.Start()
                 else
                     C.State.Toggles.BigTreeAura = false
-                    if bigToggle and bigToggle.Set then bigToggle:Set(false) end
-                    if bigToggle and bigToggle.SetValue then bigToggle:SetValue(false) end
+                    pcall(function() if bigToggle and bigToggle.Set then bigToggle:Set(false) end end)
+                    pcall(function() if bigToggle and bigToggle.SetValue then bigToggle:SetValue(false) end end)
                 end
             else
                 C.State.Toggles.BigTreeAura = false
@@ -1594,7 +1553,9 @@ return function(C, R, UI)
         Value = { Min = 0, Max = 200, Default = 75 },
         Callback = function(v)
             local nv = v
-            if type(v) == "table" then nv = v.Value or v.Current or v.CurrentValue or v.Default or v.min or v.max end
+            if type(v) == "table" then
+                nv = v.Value or v.Current or v.CurrentValue or v.Default or v.min or v.max
+            end
             nv = tonumber(nv)
             if nv then
                 C.State.AuraRadius = math.clamp(nv, 0, 200)
@@ -1626,7 +1587,11 @@ return function(C, R, UI)
         Value = C.State.Toggles.DrawAuraCircle or false,
         Callback = function(on)
             C.State.Toggles.DrawAuraCircle = on
-            if on then auraVis:start() else auraVis:stop() end
+            if on then
+                auraVis:start()
+            else
+                auraVis:stop()
+            end
         end
     })
 
@@ -1637,8 +1602,8 @@ return function(C, R, UI)
             if C.State.Toggles.BigTreeAura and not BigTreeAura.HasTool() then
                 C.State.Toggles.BigTreeAura = false
                 BigTreeAura.Stop()
-                if bigToggle and bigToggle.Set then bigToggle:Set(false) end
-                if bigToggle and bigToggle.SetValue then bigToggle:SetValue(false) end
+                pcall(function() if bigToggle and bigToggle.Set then bigToggle:Set(false) end end)
+                pcall(function() if bigToggle and bigToggle.SetValue then bigToggle:SetValue(false) end end)
             end
         end
         inv.ChildRemoved:Connect(check)
