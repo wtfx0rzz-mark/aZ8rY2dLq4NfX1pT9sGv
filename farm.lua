@@ -903,12 +903,18 @@ return function(C, R, UI)
         if tab.Slider then
             tab:Slider({
                 Title = "Teleport wait (sec)",
-                Min = 0,
-                Max = 10,
-                Value = getTeleportWaitSec(),
+                Value = { Min = 0, Max = 10, Default = getTeleportWaitSec() },
                 Rounding = 2,
                 Callback = function(v)
-                    C.State.FarmTeleportWaitSec = tonumber(v) or TELEPORT_WAIT_DEFAULT
+                    local nv = v
+                    if type(v) == "table" then
+                        nv = v.Value or v.Current or v.CurrentValue or v.Default or v.min or v.max
+                    end
+                    nv = tonumber(nv)
+                    if nv == nil then nv = TELEPORT_WAIT_DEFAULT end
+                    if nv < 0 then nv = 0 end
+                    if nv > 30 then nv = 30 end
+                    C.State.FarmTeleportWaitSec = nv
                 end
             })
         end
