@@ -873,6 +873,72 @@ return function(C, R, UI)
         _G[key] = Run.Heartbeat:Connect(updateCorpseUiAndMove)
     end
 
+    local STREAM_Enable = false
+    local STREAM_RADIUS = 500
+    local STREAM_TIMEOUT = 2.5
+    local STREAM_INTERVAL = 6.0
+
+    local streamConn = nil
+    local streamAcc = 0
+    local streamBusy = false
+
+    local function requestStreamAt(pos)
+        pcall(function()
+            WS:RequestStreamAroundAsync(pos, STREAM_TIMEOUT)
+        end)
+    end
+
+    local function doStreamPass()
+        if streamBusy then return end
+        streamBusy = true
+        task.spawn(function()
+            local root = hrp()
+            if not root then
+                streamBusy = false
+                return
+            end
+
+            local c = root.Position
+            requestStreamAt(c + Vector3.new(0, 150, 0))
+            requestStreamAt(c)
+
+            local r = STREAM_RADIUS
+            requestStreamAt(c + Vector3.new( r, 0,  0))
+            requestStreamAt(c + Vector3.new(-r, 0,  0))
+            requestStreamAt(c + Vector3.new( 0, 0,  r))
+            requestStreamAt(c + Vector3.new( 0, 0, -r))
+
+            streamBusy = false
+        end)
+    end
+
+    local function setStreamEnabled(on)
+        STREAM_Enable = on and true or false
+        streamAcc = 0
+        streamBusy = false
+
+        if not STREAM_Enable then
+            if streamConn then
+                pcall(function() streamConn:Disconnect() end)
+                streamConn = nil
+            end
+            return
+        end
+
+        if not streamConn then
+            streamConn = Run.Heartbeat:Connect(function(dt)
+                if not STREAM_Enable then return end
+                streamAcc += dt
+                if streamAcc >= STREAM_INTERVAL then
+                    streamAcc = 0
+                    doStreamPass()
+                end
+            end)
+        end
+
+        doStreamPass()
+    end
+
     local SAP_Enable = false
     local sap_seen = setmetatable({}, { __mode = "k" })
     local sap_conns = {}
@@ -1050,7 +1116,7 @@ return function(C, R, UI)
         layout.CellSize = UDim2.new(0, 70, 0, 70)
         layout.CellPadding = UDim2.new(0, 5, 0, 5)
         layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-        layout.VerticalAlignment   = Enum.VerticalAlignment.Center
+        layout.VerticalAlignment   = Enum.HorizontalAlignment.Center
         layout.FillDirection       = Enum.FillDirection.Horizontal
         layout.SortOrder           = Enum.SortOrder.LayoutOrder
         layout.Parent = frame
@@ -1286,6 +1352,28 @@ return function(C, R, UI)
                 corpseScanAcc = CORPSE_SCAN_INTERVAL
                 if btn and btn.SetTitle then
                     btn:SetTitle("Corpse Movement Controls: " .. (newState and "ON" or "OFF"))
+                end
+            end
+        })
+    end
+
+    tab:Section({ Title = "Streaming" })
+    if tab.Toggle then
+        tab:Toggle({
+            Title = ("Force Streaming (RequestStreamAroundAsync) • %dstuds"):format(STREAM_RADIUS),
+            Default = false,
+            Callback = function(v)
+                setStreamEnabled(v)
+            end
+        })
+    else
+        tab:Button({
+            Title = "Force Streaming: OFF",
+            Callback = function(btn)
+                local newState = not STREAM_Enable
+                setStreamEnabled(newState)
+                if btn and btn.SetTitle then
+                    btn:SetTitle("Force Streaming: " .. (newState and "ON" or "OFF"))
                 end
             end
         })
