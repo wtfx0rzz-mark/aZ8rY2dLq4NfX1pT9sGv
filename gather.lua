@@ -540,27 +540,22 @@ return function(C, R, UI)
             return Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
         end
 
-        -- UPDATED: drop anchor is based on player (like Bring), not ground
         local function baseDropAnchor()
             local root = hrp(); if not root then return nil end
             local forward = root.CFrame.LookVector
-
             local basePos =
                 root.Position
                 + Vector3.new(0, DROP_ABOVE_HEAD_STUDS, 0)
                 + forward * forwardDrop
-
             local baseCF = CFrame.lookAt(basePos, basePos + forward)
             return baseCF, forward, basePos
         end
 
-        -- UPDATED: sprinkle around the same base position (no ground raycast)
         local function sprinkleCF(baseForward, basePos)
             local off = ringOffset()
             local jitterX = (math.random() - 0.5) * 0.14
             local jitterZ = (math.random() - 0.5) * 0.14
             local waveY = math.sin(dropCounter * AIR_DROP_WAVE_FREQUENCY) * AIR_DROP_WAVE_AMPLITUDE
-
             local dropPos = basePos + Vector3.new(off.X + jitterX, upDrop + waveY, off.Z + jitterZ)
             return CFrame.lookAt(dropPos, dropPos + baseForward)
         end
@@ -605,7 +600,24 @@ return function(C, R, UI)
             end
         end
 
+        local function immediateDropOne(m)
+            if not (m and m.Parent) then return end
+            setNoCollideModel(m, false)
+            setAnchoredModel(m, false)
+            for _,p in ipairs(m:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    p.AssemblyLinearVelocity  = Vector3.new(0, -NUDGE_DOWN, 0)
+                    p.AssemblyAngularVelocity = Vector3.new()
+                end
+            end
+        end
+
         local function placeDown()
+            -- USER TWEAKS
+            local PLACE_STAGE_ALL_BEFORE_DROP  = false
+            local PLACE_PER_ITEM_WAIT_ENABLED  = false
+            local PLACE_PER_ITEM_WAIT_SEC      = 0.06
+
             local baseCF, baseForward, basePos = baseDropAnchor()
             if not baseCF then return end
 
@@ -621,22 +633,41 @@ return function(C, R, UI)
             for i = 1, n do
                 local m = list[i]
                 if m and m.Parent then
-                    dragStart(m)
-                    task.wait(0.06)
-                    setAnchoredModel(m, true)
-                    setNoCollideModel(m, true)
-                    local cf = sprinkleCF(baseForward, basePos)
-                    pivotModel(m, cf)
-                    dragStop(m)
-                    placed += 1
-                    if placed % PLACE_BATCH == 0 then
-                        PLACE_YIELD_FN()
+                    if dragStart(m) then
+                        if PLACE_PER_ITEM_WAIT_ENABLED and (tonumber(PLACE_PER_ITEM_WAIT_SEC) or 0) > 0 then
+                            task.wait(tonumber(PLACE_PER_ITEM_WAIT_SEC))
+                        end
+
+                        local mp = mainPart(m)
+                        if mp then pcall(function() mp:SetNetworkOwner(lp) end) end
+
+                        setAnchoredModel(m, true)
+                        setNoCollideModel(m, true)
+
+                        local cf = sprinkleCF(baseForward, basePos)
+                        pivotModel(m, cf)
+
+                        dragStop(m)
+                        placed += 1
+
+                        if PLACE_STAGE_ALL_BEFORE_DROP then
+                            if placed % PLACE_BATCH == 0 then
+                                PLACE_YIELD_FN()
+                            end
+                        else
+                            immediateDropOne(m)
+                            if placed % PLACE_BATCH == 0 then
+                                PLACE_YIELD_FN()
+                            end
+                        end
                     end
                 end
             end
 
-            task.wait(0.05)
-            finalizeSprinkleDrop(list)
+            if PLACE_STAGE_ALL_BEFORE_DROP then
+                finalizeSprinkleDrop(list)
+            end
+
             clearAll()
         end
 
@@ -781,9 +812,9 @@ return function(C, R, UI)
                 btn.BorderSizePixel = 0
                 btn.Visible     = false
                 btn.LayoutOrder = 1000
-                btn.Parent      = stack
+                btn.Parent = stack
 
-                local corner  = Instance.new("UICorner")
+                local corner = Instance.new("UICorner")
                 corner.CornerRadius = UDim.new(0, 8)
                 corner.Parent = btn
             end
