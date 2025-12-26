@@ -58,6 +58,8 @@ return function(C, R, UI)
         local upDrop       = 5
         local scanInterval = 0.1
 
+        local DROP_ABOVE_HEAD_STUDS = 10
+
         local UNANCHOR_BATCH = 10
         local UNANCHOR_STEP  = 0.04
         local NUDGE_DOWN     = 4
@@ -85,7 +87,6 @@ return function(C, R, UI)
 
         local RF_Start  = getRemote("RequestStartDraggingItem","StartDraggingItem")
         local RF_Stop   = getRemote("RequestStopDraggingItem","StopDraggingItem","StopDraggingItemRemote")
-        local HEARTBEAT = Run.Heartbeat
 
         local DragActive = {}
         local DRAG_TTL   = 3.0
@@ -219,16 +220,14 @@ return function(C, R, UI)
             dragTrackRelease(m)
         end
 
-        if not _G.__GatherDragTTLConn then
-            _G.__GatherDragTTLConn = HEARTBEAT:Connect(function()
-                local now = os.clock()
-                for m, rec in pairs(DragActive) do
-                    if (not m) or (not m.Parent) or (now - rec.t0) > DRAG_TTL then
-                        dragTrackRelease(m)
-                    end
+        Run.Heartbeat:Connect(function()
+            local now = os.clock()
+            for m, rec in pairs(DragActive) do
+                if (not m) or (not m.Parent) or (now - rec.t0) > DRAG_TTL then
+                    dragTrackRelease(m)
                 end
-            end)
-        end
+            end
+        end)
 
         local function buildSelectedSet()
             local set = {}
@@ -532,26 +531,6 @@ return function(C, R, UI)
             if itemsChildConn then pcall(function() itemsChildConn:Disconnect() end) end; itemsChildConn = nil
         end
 
-        local function raycastGround(pos, ignoreList)
-            local params  = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            params.FilterDescendantsInstances = ignoreList or { lp.Character }
-            local start = pos + Vector3.new(0, 60, 0)
-            local rc = WS:Raycast(start, Vector3.new(0, -260, 0), params)
-            return rc
-        end
-
-        local function baseDropAnchor()
-            local root = hrp(); if not root then return nil end
-            local forward = root.CFrame.LookVector
-            local targetXZ = root.Position + forward * forwardDrop
-            local rc = raycastGround(targetXZ, { lp.Character })
-            local hitPos = rc and rc.Position or targetXZ
-            local dropPos = hitPos + Vector3.new(0, upDrop, 0)
-            local baseCF = CFrame.lookAt(dropPos, dropPos + forward)
-            return baseCF, forward, hitPos
-        end
-
         local dropCounter = 0
         local function ringOffset()
             dropCounter += 1
@@ -561,15 +540,28 @@ return function(C, R, UI)
             return Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
         end
 
-        local function sprinkleCF(baseForward, baseGroundPos)
+        -- UPDATED: drop anchor is based on player (like Bring), not ground
+        local function baseDropAnchor()
+            local root = hrp(); if not root then return nil end
+            local forward = root.CFrame.LookVector
+
+            local basePos =
+                root.Position
+                + Vector3.new(0, DROP_ABOVE_HEAD_STUDS, 0)
+                + forward * forwardDrop
+
+            local baseCF = CFrame.lookAt(basePos, basePos + forward)
+            return baseCF, forward, basePos
+        end
+
+        -- UPDATED: sprinkle around the same base position (no ground raycast)
+        local function sprinkleCF(baseForward, basePos)
             local off = ringOffset()
             local jitterX = (math.random() - 0.5) * 0.14
             local jitterZ = (math.random() - 0.5) * 0.14
-            local worldXZ = baseGroundPos + Vector3.new(off.X + jitterX, 0, off.Z + jitterZ)
-            local rc = raycastGround(worldXZ, { lp.Character })
-            local gPos = rc and rc.Position or worldXZ
             local waveY = math.sin(dropCounter * AIR_DROP_WAVE_FREQUENCY) * AIR_DROP_WAVE_AMPLITUDE
-            local dropPos = gPos + Vector3.new(0, upDrop + waveY, 0)
+
+            local dropPos = basePos + Vector3.new(off.X + jitterX, upDrop + waveY, off.Z + jitterZ)
             return CFrame.lookAt(dropPos, dropPos + baseForward)
         end
 
@@ -591,6 +583,7 @@ return function(C, R, UI)
                     end
                 end
             end
+
             local n = #items
             local i = 1
             while i <= n do
@@ -613,14 +606,18 @@ return function(C, R, UI)
         end
 
         local function placeDown()
-            local baseCF, baseForward, baseGroundPos = baseDropAnchor()
+            local baseCF, baseForward, basePos = baseDropAnchor()
             if not baseCF then return end
+
             if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = false end
             stopGather()
+
             local n = #list
             if n == 0 then return end
+
             dropCounter = 0
             local placed = 0
+
             for i = 1, n do
                 local m = list[i]
                 if m and m.Parent then
@@ -628,7 +625,7 @@ return function(C, R, UI)
                     task.wait(0.06)
                     setAnchoredModel(m, true)
                     setNoCollideModel(m, true)
-                    local cf = sprinkleCF(baseForward, baseGroundPos)
+                    local cf = sprinkleCF(baseForward, basePos)
                     pivotModel(m, cf)
                     dragStop(m)
                     placed += 1
@@ -637,6 +634,7 @@ return function(C, R, UI)
                     end
                 end
             end
+
             task.wait(0.05)
             finalizeSprinkleDrop(list)
             clearAll()
@@ -749,6 +747,7 @@ return function(C, R, UI)
                 edgeGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
                 edgeGui.Parent = playerGui
             end
+
             local stack = edgeGui:FindFirstChild("EdgeStack")
             if not stack then
                 stack = Instance.new("Frame")
@@ -759,6 +758,7 @@ return function(C, R, UI)
                 stack.BackgroundTransparency = 1
                 stack.BorderSizePixel = 0
                 stack.Parent = edgeGui
+
                 local listLay = Instance.new("UIListLayout")
                 listLay.Name = "VList"
                 listLay.FillDirection = Enum.FillDirection.Vertical
@@ -767,6 +767,7 @@ return function(C, R, UI)
                 listLay.HorizontalAlignment = Enum.HorizontalAlignment.Right
                 listLay.Parent = stack
             end
+
             local btn = stack:FindFirstChild("PlaceEdge")
             if not btn then
                 btn = Instance.new("TextButton")
@@ -781,10 +782,12 @@ return function(C, R, UI)
                 btn.Visible     = false
                 btn.LayoutOrder = 1000
                 btn.Parent      = stack
+
                 local corner  = Instance.new("UICorner")
                 corner.CornerRadius = UDim.new(0, 8)
                 corner.Parent = btn
             end
+
             return btn
         end
 
@@ -798,10 +801,7 @@ return function(C, R, UI)
             placeDown()
         end)
 
-        if _G.__GatherCharConn then
-            pcall(function() _G.__GatherCharConn:Disconnect() end)
-        end
-        _G.__GatherCharConn = lp.CharacterAdded:Connect(function()
+        lp.CharacterAdded:Connect(function()
             if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = false end
             releaseAll()
             if gatherOn then
