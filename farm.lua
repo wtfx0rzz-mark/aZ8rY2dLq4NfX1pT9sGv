@@ -539,10 +539,7 @@ return function(C, R, UI)
         local circleTreeList = {}
         local circleIndex = 1
         local circleSmallHitCounts = {}
-        local circleTargetTree = nil
-        local circleTargetEndAt = 0
-        local circleNextSwingAt = 0
-        local circleTargetWaitOnly = false
+        local circleNextBigHitAt = 0
 
         local function getHRP()
             local ch = lp.Character
@@ -653,69 +650,6 @@ return function(C, R, UI)
             circleEnsureList(centerPos)
             if #circleTreeList == 0 then return end
 
-            local switchSec = getSwitchTreeSec()
-
-            if circleTargetTree == nil and circleTargetWaitOnly then
-                if now >= circleTargetEndAt then
-                    circleTargetWaitOnly = false
-                    circleTargetEndAt = 0
-                    circleNextSwingAt = 0
-                end
-                return
-            end
-
-            if circleTargetTree then
-                if now >= circleTargetEndAt and circleNextSwingAt ~= 0 then
-                    circleTargetTree = nil
-                    circleNextSwingAt = 0
-                    circleAdvanceIndex()
-                    return
-                end
-                if now < circleNextSwingAt then return end
-
-                local tree = circleTargetTree
-                if (not tree) or (not tree.Parent) or (not isBigTreeModel(tree)) then
-                    circleTargetTree = nil
-                    circleTargetWaitOnly = true
-                    return
-                end
-
-                local tool = getBigTreeTool()
-                if not tool then return end
-                ensureEquipped(tool)
-                local requiredHits = REQUIRED_HITS[tool.Name] or 35
-
-                local hitPart = bestTreeHitPart(tree)
-                if not hitPart then
-                    circleTargetTree = nil
-                    circleTargetWaitOnly = true
-                    return
-                end
-
-                if getCurrentHitCount(tree) >= requiredHits then
-                    circleTargetTree = nil
-                    circleTargetWaitOnly = true
-                    return
-                end
-
-                if (hitPart.Position - hrp.Position).Magnitude > CHOP_RADIUS then
-                    teleportNearTree(tree)
-                    circleNextSwingAt = now + 0.05
-                    return
-                end
-
-                local hitId = nextPerTreeHitId(tree)
-                local impactCF = impactCFForTree(tree, hitPart)
-                HitTreeRemote(tree, tool, hitId, impactCF)
-                circleNextSwingAt = now + SWING_COOLDOWN_BIG
-
-                if switchSec == 0 then
-                    circleTargetTree = nil
-                    circleAdvanceIndex()
-                end
-                return
-            end
-
             if circleIndex < 1 then circleIndex = 1 end
             if circleIndex > #circleTreeList then circleIndex = 1 end
 
@@ -763,9 +697,31 @@ return function(C, R, UI)
             end
 
             if isBig then
-                circleTargetTree = tree
-                circleTargetEndAt = now + math.max(0, switchSec)
-                circleNextSwingAt = 0
+                if now < circleNextBigHitAt then
+                    circleAdvanceIndex()
+                    return
+                end
+
+                local tool = getBigTreeTool()
+                if not tool then
+                    circleAdvanceIndex()
+                    return
+                end
+                ensureEquipped(tool)
+
+                local requiredHits = REQUIRED_HITS[tool.Name] or 35
+                if getCurrentHitCount(tree) >= requiredHits then
+                    circleRemoveAt(circleIndex)
+                    circleAdvanceIndex()
+                    return
+                end
+
+                local hitId = nextPerTreeHitId(tree)
+                local impactCF = impactCFForTree(tree, hitPart)
+                HitTreeRemote(tree, tool, hitId, impactCF)
+
+                circleNextBigHitAt = now + SWING_COOLDOWN_BIG
+                circleAdvanceIndex()
                 return
             end
         end
@@ -778,10 +734,7 @@ return function(C, R, UI)
             circleTreeList = {}
             circleIndex = 1
             circleSmallHitCounts = {}
-            circleTargetTree = nil
-            circleTargetEndAt = 0
-            circleNextSwingAt = 0
-            circleTargetWaitOnly = false
+            circleNextBigHitAt = 0
             if circleLoopConn then circleLoopConn:Disconnect() circleLoopConn = nil end
             circleLoopConn = RunService.Heartbeat:Connect(function()
                 if not circleRunning then return end
@@ -795,10 +748,7 @@ return function(C, R, UI)
             circleTreeList = {}
             circleIndex = 1
             circleSmallHitCounts = {}
-            circleTargetTree = nil
-            circleTargetEndAt = 0
-            circleNextSwingAt = 0
-            circleTargetWaitOnly = false
+            circleNextBigHitAt = 0
         end
 
         local function cleanupAll()
