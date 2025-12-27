@@ -18,15 +18,16 @@ return function(C, R, UI)
     C.Config = C.Config or {}
 
     local TUNE = C.Config
-    TUNE.CHOP_SWING_DELAY     = TUNE.CHOP_SWING_DELAY     or 0.50
-    TUNE.TREE_NAME            = TUNE.TREE_NAME            or "Small Tree"
-    TUNE.UID_SUFFIX           = TUNE.UID_SUFFIX           or "0000000000"
-    TUNE.ChopPrefer           = TUNE.ChopPrefer           or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
-    TUNE.MAX_TARGETS_PER_WAVE = TUNE.MAX_TARGETS_PER_WAVE or 20
-    TUNE.CHAR_MAX_PER_WAVE    = TUNE.CHAR_MAX_PER_WAVE    or 20
-    TUNE.CHAR_DEBOUNCE_SEC    = TUNE.CHAR_DEBOUNCE_SEC    or 0.5
-    TUNE.CHAR_HIT_STEP_WAIT   = TUNE.CHAR_HIT_STEP_WAIT   or 0.0
-    TUNE.CHAR_SORT            = (TUNE.CHAR_SORT ~= false)
+    TUNE.CHOP_SWING_DELAY       = TUNE.CHOP_SWING_DELAY       or 0.50
+    TUNE.TREE_NAME              = TUNE.TREE_NAME              or "Small Tree"
+    TUNE.UID_SUFFIX             = TUNE.UID_SUFFIX             or "0000000000"
+    TUNE.ChopPrefer             = TUNE.ChopPrefer             or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
+    TUNE.MAX_TARGETS_PER_WAVE   = TUNE.MAX_TARGETS_PER_WAVE   or 20
+    TUNE.CHAR_MAX_PER_WAVE      = TUNE.CHAR_MAX_PER_WAVE      or 20
+    TUNE.CHAR_DEBOUNCE_SEC      = TUNE.CHAR_DEBOUNCE_SEC      or 0.5
+    TUNE.CHAR_HIT_STEP_WAIT     = TUNE.CHAR_HIT_STEP_WAIT     or 0.0
+    TUNE.CHAR_SORT              = (TUNE.CHAR_SORT ~= false)
+    TUNE.SMALL_TREE_STEP_WAIT   = TUNE.SMALL_TREE_STEP_WAIT   or 0.10
 
     local TRAP_MAX_RADIUS = 20
 
@@ -767,20 +768,31 @@ return function(C, R, UI)
                 return
             end
 
-            for _, mdl in ipairs(targetModels) do
-                task.spawn(function()
-                    if not (mdl and mdl.Parent) then return end
-                    local hitPart = st_bestTreeHitPart(mdl)
-                    if not hitPart then return end
+            local stepWait = tonumber(TUNE.SMALL_TREE_STEP_WAIT) or 0.10
+            if stepWait < 0 then stepWait = 0 end
+
+            for i = 1, #targetModels do
+                local mdl = targetModels[i]
+                if not (SmallTreeAura.running and mdl and mdl.Parent) then break end
+
+                local hitPart = st_bestTreeHitPart(mdl)
+                if hitPart then
                     local impactCF = st_impactCFForTree(mdl, hitPart)
                     local hitId = st_nextPerTreeHitId(mdl)
                     pcall(function()
                         local bucket = st_attrBucket(mdl)
                         if bucket then bucket:SetAttribute(hitId, true) end
                     end)
-                    st_HitTarget(mdl, tool, hitId, impactCF)
-                end)
+                    pcall(function()
+                        st_HitTarget(mdl, tool, hitId, impactCF)
+                    end)
+                end
+
+                if stepWait > 0 and i < #targetModels then
+                    task.wait(stepWait)
+                end
             end
+
             task.wait(swingDelay)
         end
 
