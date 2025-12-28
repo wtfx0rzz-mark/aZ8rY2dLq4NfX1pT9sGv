@@ -33,6 +33,11 @@ return function(C, R, UI)
         return ch and ch:FindFirstChild("HumanoidRootPart")
     end
 
+    local function humanoid()
+        local ch = lp.Character or lp.CharacterAdded:Wait()
+        return ch and ch:FindFirstChildOfClass("Humanoid")
+    end
+
     local function mainPart(m)
         if not m then return nil end
         if m:IsA("BasePart") then return m end
@@ -1025,6 +1030,13 @@ return function(C, R, UI)
     local PREC_BaseRight  = nil
     local PREC_CamOffset  = nil
 
+    local PREC_CamRight = nil
+    local PREC_CamUp    = nil
+    local PREC_CamBack  = nil
+
+    local PREC_YawLook  = nil
+    local PREC_YawRight = nil
+
     local moveForward = false
     local moveBack    = false
     local moveLeft    = false
@@ -1033,11 +1045,13 @@ return function(C, R, UI)
     local moveDown    = false
 
     local moveGui        = nil
-    local moveConn       = nil
     local moveGuiConns   = {}
+
+    local PREC_STEP_KEY = "__PRECISION_MOVE_RS__"
 
     local origCamType    = nil
     local origCamSubject = nil
+    local origAutoRotate = nil
 
     local function clearMoveFlags()
         moveForward = false
@@ -1048,6 +1062,12 @@ return function(C, R, UI)
         moveDown    = false
     end
 
+    local function unbindPrecisionStep()
+        pcall(function()
+            Run:UnbindFromRenderStep(PREC_STEP_KEY)
+        end)
+    end
+
     local function destroyMoveGui()
         clearMoveFlags()
         for _,c in ipairs(moveGuiConns) do
@@ -1056,35 +1076,39 @@ return function(C, R, UI)
         table.clear(moveGuiConns)
         if moveGui then pcall(function() moveGui:Destroy() end) end
         moveGui = nil
-        if moveConn then moveConn:Disconnect(); moveConn = nil end
+        unbindPrecisionStep()
     end
 
-    local function ensureMoveHeartbeat()
-        if moveConn then return end
+    local function ensurePrecisionStep()
+        unbindPrecisionStep()
 
-        moveConn = Run.Heartbeat:Connect(function(dt)
+        Run:BindToRenderStep(PREC_STEP_KEY, Enum.RenderPriority.Camera.Value + 1, function(dt)
             if not PREC_Enable then return end
-            local root = hrp(); if not root then return end
-            if not PREC_BaseLook or not PREC_BaseRight or not PREC_CamOffset then return end
+
+            local root = hrp()
+            if not root then return end
+
+            if not PREC_CamOffset or not PREC_CamRight or not PREC_CamUp or not PREC_CamBack then return end
+            if not PREC_YawLook or not PREC_YawRight then return end
+
+            local hum = humanoid()
+            if hum then
+                if hum.AutoRotate ~= false then
+                    hum.AutoRotate = false
+                end
+            end
 
             local rootPos = root.Position
 
             local cam = workspace.CurrentCamera
             if cam then
                 local camPos = rootPos + PREC_CamOffset
-                cam.CFrame = CFrame.new(camPos, camPos + PREC_BaseLook)
+                cam.CFrame = CFrame.fromMatrix(camPos, PREC_CamRight, PREC_CamUp, PREC_CamBack)
             end
 
-            local forward3D = PREC_BaseLook
-            local right3D   = PREC_BaseRight
-
-            local forward = Vector3.new(forward3D.X, 0, forward3D.Z)
-            if forward.Magnitude < 1e-4 then forward = Vector3.new(0, 0, -1) else forward = forward.Unit end
-
-            local right = Vector3.new(right3D.X, 0, right3D.Z)
-            if right.Magnitude < 1e-4 then right = Vector3.new(1, 0, 0) else right = right.Unit end
-
-            local up = Vector3.new(0, 1, 0)
+            local forward = PREC_YawLook
+            local right   = PREC_YawRight
+            local up      = Vector3.new(0, 1, 0)
 
             local dir = Vector3.new(0, 0, 0)
             if moveForward then dir += forward end
@@ -1097,14 +1121,11 @@ return function(C, R, UI)
             if dir.Magnitude <= 0 then return end
             dir = dir.Unit
 
-            local step   = PREC_Speed * dt
+            local step   = (PREC_Speed or 0) * (dt or 0)
+            if step <= 0 then return end
+
             local newPos = rootPos + dir * step
-
-            local look = PREC_BaseLook or root.CFrame.LookVector
-            if look.Magnitude < 1e-4 then look = Vector3.new(0, 0, -1) end
-
-            local newCF = CFrame.new(newPos, newPos + look.Unit)
-            root.CFrame = newCF
+            root.CFrame = CFrame.fromMatrix(newPos, PREC_YawRight, Vector3.new(0,1,0), -PREC_YawLook)
             zeroAssembly(root)
         end)
     end
@@ -1134,8 +1155,8 @@ return function(C, R, UI)
 
         local win = Instance.new("Frame")
         win.Name = "MoveWindow"
-        win.Size = UDim2.new(0, 240, 0, 320)
-        win.Position = UDim2.new(1, -260, 1, -430)
+        win.Size = UDim2.new(0, 240, 0, 308)
+        win.Position = UDim2.new(1, -260, 1, -390)
         win.BackgroundTransparency = 0.15
         win.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
         win.BorderSizePixel = 0
@@ -1162,7 +1183,7 @@ return function(C, R, UI)
         local pad = Instance.new("Frame")
         pad.Name = "Pad"
         pad.Size = UDim2.new(0, 220, 0, 220)
-        pad.Position = UDim2.new(0, 10, 0, 28)
+        pad.Position = UDim2.new(0, 10, 0, 26)
         pad.BackgroundTransparency = 1
         pad.BorderSizePixel = 0
         pad.Parent = win
@@ -1213,8 +1234,8 @@ return function(C, R, UI)
 
         local sliderFrame = Instance.new("Frame")
         sliderFrame.Name = "SpeedSliderFrame"
-        sliderFrame.Size = UDim2.new(0, 220, 0, 58)
-        sliderFrame.Position = UDim2.new(0, 10, 0, 252)
+        sliderFrame.Size = UDim2.new(0, 220, 0, 52)
+        sliderFrame.Position = UDim2.new(0, 10, 0, 250)
         sliderFrame.BackgroundTransparency = 1
         sliderFrame.BorderSizePixel = 0
         sliderFrame.Parent = win
@@ -1321,33 +1342,55 @@ return function(C, R, UI)
         applyAlpha(DEFAULT_ALPHA)
 
         moveGui = gui
-        ensureMoveHeartbeat()
+        ensurePrecisionStep()
     end
 
     local function setPrecisionEnabled(onRaw)
         local on = toBool(onRaw)
         local cam = workspace.CurrentCamera
         local root = hrp()
+        local hum = humanoid()
 
         if on and not PREC_Enable then
             PREC_Enable = true
+
+            if hum then
+                origAutoRotate = hum.AutoRotate
+                hum.AutoRotate = false
+            end
 
             if cam and root then
                 origCamType = cam.CameraType
                 origCamSubject = cam.CameraSubject
 
                 local baseCF = cam.CFrame
+
                 PREC_BaseLook  = baseCF.LookVector
                 PREC_BaseRight = baseCF.RightVector
                 PREC_CamOffset = baseCF.Position - root.Position
+
+                PREC_CamRight = baseCF.RightVector
+                PREC_CamUp    = baseCF.UpVector
+                PREC_CamBack  = -baseCF.LookVector
+
+                local lookFlat = Vector3.new(baseCF.LookVector.X, 0, baseCF.LookVector.Z)
+                if lookFlat.Magnitude < 1e-4 then lookFlat = Vector3.new(0,0,-1) else lookFlat = lookFlat.Unit end
+
+                local rightFlat = Vector3.new(baseCF.RightVector.X, 0, baseCF.RightVector.Z)
+                if rightFlat.Magnitude < 1e-4 then rightFlat = Vector3.new(1,0,0) else rightFlat = rightFlat.Unit end
+
+                PREC_YawLook  = lookFlat
+                PREC_YawRight = rightFlat
 
                 cam.CameraType = Enum.CameraType.Scriptable
             end
 
             createMoveGui()
             if moveGui then moveGui.Enabled = true end
+            ensurePrecisionStep()
         elseif (not on) and PREC_Enable then
             PREC_Enable = false
+
             destroyMoveGui()
 
             if cam then
@@ -1355,8 +1398,16 @@ return function(C, R, UI)
                 if origCamSubject then cam.CameraSubject = origCamSubject end
             end
 
+            if hum and origAutoRotate ~= nil then
+                hum.AutoRotate = origAutoRotate
+            end
+
             origCamType, origCamSubject = nil, nil
+            origAutoRotate = nil
+
             PREC_BaseLook, PREC_BaseRight, PREC_CamOffset = nil, nil, nil
+            PREC_CamRight, PREC_CamUp, PREC_CamBack = nil, nil, nil
+            PREC_YawLook, PREC_YawRight = nil, nil
         end
     end
 
