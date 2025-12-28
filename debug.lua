@@ -14,6 +14,20 @@ return function(C, R, UI)
 
     local RADIUS = 20
 
+    local function toBool(v)
+        if type(v) == "boolean" then return v end
+        if type(v) == "table" then
+            if type(v.Value) == "boolean" then return v.Value end
+            if type(v.Enabled) == "boolean" then return v.Enabled end
+            if type(v.State) == "boolean" then return v.State end
+            if type(v.On) == "boolean" then return v.On end
+            if type(v.Toggled) == "boolean" then return v.Toggled end
+            if type(v.Checked) == "boolean" then return v.Checked end
+            if type(v.IsOn) == "boolean" then return v.IsOn end
+        end
+        return v and true or false
+    end
+
     local function hrp()
         local ch = lp.Character or lp.CharacterAdded:Wait()
         return ch and ch:FindFirstChild("HumanoidRootPart")
@@ -728,6 +742,9 @@ return function(C, R, UI)
         gui.Name = "CorpseMoveGui"
         gui.ResetOnSpawn = false
         gui.Enabled = false
+        gui.IgnoreGuiInset = true
+        gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        gui.DisplayOrder = 9999
         gui.Parent = pg
 
         local frame = Instance.new("Frame")
@@ -1015,8 +1032,9 @@ return function(C, R, UI)
     local moveUp      = false
     local moveDown    = false
 
-    local moveGui     = nil
-    local moveConn    = nil
+    local moveGui        = nil
+    local moveConn       = nil
+    local moveGuiConns   = {}
 
     local origCamType    = nil
     local origCamSubject = nil
@@ -1032,6 +1050,10 @@ return function(C, R, UI)
 
     local function destroyMoveGui()
         clearMoveFlags()
+        for _,c in ipairs(moveGuiConns) do
+            pcall(function() c:Disconnect() end)
+        end
+        table.clear(moveGuiConns)
         if moveGui then pcall(function() moveGui:Destroy() end) end
         moveGui = nil
         if moveConn then moveConn:Disconnect(); moveConn = nil end
@@ -1094,29 +1116,40 @@ return function(C, R, UI)
     end
 
     local function createMoveGui()
-        if moveGui then return end
+        if moveGui and moveGui.Parent then
+            moveGui.Enabled = true
+            return
+        end
 
         local pg = lp:FindFirstChildOfClass("PlayerGui") or lp:WaitForChild("PlayerGui")
 
         local gui = Instance.new("ScreenGui")
         gui.Name = "PrecisionMoveGui"
         gui.ResetOnSpawn = false
+        gui.Enabled = true
+        gui.IgnoreGuiInset = true
+        gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        gui.DisplayOrder = 9999
         gui.Parent = pg
 
         local frame = Instance.new("Frame")
         frame.Name = "Pad"
         frame.Size = UDim2.new(0, 220, 0, 220)
         frame.Position = UDim2.new(1, -230, 1, -380)
-        frame.BackgroundTransparency = 1
+        frame.BackgroundTransparency = 0.25
         frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
         frame.BorderSizePixel = 0
         frame.Parent = gui
+
+        local cornerF = Instance.new("UICorner")
+        cornerF.CornerRadius = UDim.new(0, 10)
+        cornerF.Parent = frame
 
         local layout = Instance.new("UIGridLayout")
         layout.CellSize = UDim2.new(0, 70, 0, 70)
         layout.CellPadding = UDim2.new(0, 5, 0, 5)
         layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-        layout.VerticalAlignment   = Enum.HorizontalAlignment.Center
+        layout.VerticalAlignment   = Enum.VerticalAlignment.Center
         layout.FillDirection       = Enum.FillDirection.Horizontal
         layout.SortOrder           = Enum.SortOrder.LayoutOrder
         layout.Parent = frame
@@ -1160,15 +1193,19 @@ return function(C, R, UI)
         sliderFrame.Name = "SpeedSliderFrame"
         sliderFrame.Size = UDim2.new(0, 220, 0, 40)
         sliderFrame.Position = UDim2.new(1, -230, 1, -150)
-        sliderFrame.BackgroundTransparency = 1
+        sliderFrame.BackgroundTransparency = 0.25
         sliderFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
         sliderFrame.BorderSizePixel = 0
         sliderFrame.Parent = gui
 
+        local cornerS = Instance.new("UICorner")
+        cornerS.CornerRadius = UDim.new(0, 10)
+        cornerS.Parent = sliderFrame
+
         local label = Instance.new("TextLabel")
         label.Name = "Label"
-        label.Size = UDim2.new(1, 0, 0, 18)
-        label.Position = UDim2.new(0, 0, 0, 0)
+        label.Size = UDim2.new(1, -10, 0, 18)
+        label.Position = UDim2.new(0, 5, 0, 2)
         label.BackgroundTransparency = 1
         label.TextColor3 = Color3.fromRGB(255, 255, 255)
         label.TextSize = 14
@@ -1235,7 +1272,7 @@ return function(C, R, UI)
             applyAlpha(rel)
         end
 
-        thumb.InputBegan:Connect(function(input)
+        moveGuiConns[#moveGuiConns+1] = thumb.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 dragging = true
                 dragInput = input
@@ -1243,11 +1280,11 @@ return function(C, R, UI)
             end
         end)
 
-        thumb.InputEnded:Connect(function(input)
+        moveGuiConns[#moveGuiConns+1] = thumb.InputEnded:Connect(function(input)
             if input == dragInput then dragging = false; dragInput = nil end
         end)
 
-        bar.InputBegan:Connect(function(input)
+        moveGuiConns[#moveGuiConns+1] = bar.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 dragging = true
                 dragInput = input
@@ -1255,11 +1292,11 @@ return function(C, R, UI)
             end
         end)
 
-        UIS.InputChanged:Connect(function(input)
+        moveGuiConns[#moveGuiConns+1] = UIS.InputChanged:Connect(function(input)
             if dragging then setFromX(input.Position.X) end
         end)
 
-        UIS.InputEnded:Connect(function(input)
+        moveGuiConns[#moveGuiConns+1] = UIS.InputEnded:Connect(function(input)
             if input == dragInput then dragging = false; dragInput = nil end
         end)
 
@@ -1269,7 +1306,8 @@ return function(C, R, UI)
         ensureMoveHeartbeat()
     end
 
-    local function setPrecisionEnabled(on)
+    local function setPrecisionEnabled(onRaw)
+        local on = toBool(onRaw)
         local cam = workspace.CurrentCamera
         local root = hrp()
 
@@ -1277,8 +1315,8 @@ return function(C, R, UI)
             PREC_Enable = true
 
             if cam and root then
-                if not origCamType then origCamType = cam.CameraType end
-                if not origCamSubject then origCamSubject = cam.CameraSubject end
+                origCamType = cam.CameraType
+                origCamSubject = cam.CameraSubject
 
                 local baseCF = cam.CFrame
                 PREC_BaseLook  = baseCF.LookVector
@@ -1289,14 +1327,18 @@ return function(C, R, UI)
             end
 
             createMoveGui()
+            if moveGui then moveGui.Enabled = true end
         elseif (not on) and PREC_Enable then
             PREC_Enable = false
             destroyMoveGui()
+
             if cam then
                 if origCamType then cam.CameraType = origCamType end
                 if origCamSubject then cam.CameraSubject = origCamSubject end
             end
+
             origCamType, origCamSubject = nil, nil
+            PREC_BaseLook, PREC_BaseRight, PREC_CamOffset = nil, nil, nil
         end
     end
 
@@ -1325,7 +1367,7 @@ return function(C, R, UI)
             Title = "Corpse Movement Controls",
             Default = false,
             Callback = function(v)
-                CORPSE_Enable = v and true or false
+                CORPSE_Enable = toBool(v)
                 if CORPSE_Enable then
                     createCorpseGui()
                 else
@@ -1363,7 +1405,7 @@ return function(C, R, UI)
             Title = ("Force Streaming (RequestStreamAroundAsync) • %dstuds"):format(STREAM_RADIUS),
             Default = false,
             Callback = function(v)
-                setStreamEnabled(v)
+                setStreamEnabled(toBool(v))
             end
         })
     else
@@ -1385,7 +1427,7 @@ return function(C, R, UI)
             Title = "Sapling Protection",
             Default = false,
             Callback = function(v)
-                SAP_Enable = v and true or false
+                SAP_Enable = toBool(v)
                 bindSaplingWatcher(itemsFolder())
             end
         })
