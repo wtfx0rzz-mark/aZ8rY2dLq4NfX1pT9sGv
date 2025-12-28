@@ -896,9 +896,9 @@ return function(C, R, UI)
     end
 
     local STREAM_Enable = false
-    local STREAM_RADIUS = 500
+    local STREAM_RADIUS = 1000
     local STREAM_TIMEOUT = 2.5
-    local STREAM_INTERVAL = 6.0
+    local STREAM_INTERVAL = 4.0
 
     local streamConn = nil
     local streamAcc = 0
