@@ -1132,18 +1132,40 @@ return function(C, R, UI)
         gui.DisplayOrder = 9999
         gui.Parent = pg
 
-        local frame = Instance.new("Frame")
-        frame.Name = "Pad"
-        frame.Size = UDim2.new(0, 220, 0, 220)
-        frame.Position = UDim2.new(1, -230, 1, -380)
-        frame.BackgroundTransparency = 0.25
-        frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-        frame.BorderSizePixel = 0
-        frame.Parent = gui
+        local win = Instance.new("Frame")
+        win.Name = "MoveWindow"
+        win.Size = UDim2.new(0, 240, 0, 320)
+        win.Position = UDim2.new(1, -260, 1, -430)
+        win.BackgroundTransparency = 0.15
+        win.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+        win.BorderSizePixel = 0
+        win.Active = true
+        win.Draggable = true
+        win.Parent = gui
 
-        local cornerF = Instance.new("UICorner")
-        cornerF.CornerRadius = UDim.new(0, 10)
-        cornerF.Parent = frame
+        local winCorner = Instance.new("UICorner")
+        winCorner.CornerRadius = UDim.new(0, 10)
+        winCorner.Parent = win
+
+        local title = Instance.new("TextLabel")
+        title.Name = "Title"
+        title.Size = UDim2.new(1, -10, 0, 22)
+        title.Position = UDim2.new(0, 5, 0, 4)
+        title.BackgroundTransparency = 1
+        title.TextColor3 = Color3.fromRGB(255, 255, 255)
+        title.TextSize = 14
+        title.Font = Enum.Font.SourceSansBold
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.Text = "Precision Move"
+        title.Parent = win
+
+        local pad = Instance.new("Frame")
+        pad.Name = "Pad"
+        pad.Size = UDim2.new(0, 220, 0, 220)
+        pad.Position = UDim2.new(0, 10, 0, 28)
+        pad.BackgroundTransparency = 1
+        pad.BorderSizePixel = 0
+        pad.Parent = win
 
         local layout = Instance.new("UIGridLayout")
         layout.CellSize = UDim2.new(0, 70, 0, 70)
@@ -1152,7 +1174,7 @@ return function(C, R, UI)
         layout.VerticalAlignment   = Enum.VerticalAlignment.Center
         layout.FillDirection       = Enum.FillDirection.Horizontal
         layout.SortOrder           = Enum.SortOrder.LayoutOrder
-        layout.Parent = frame
+        layout.Parent = pad
 
         local function makeButton(text, order)
             local b = Instance.new("TextButton")
@@ -1166,7 +1188,7 @@ return function(C, R, UI)
             b.Font = Enum.Font.SourceSansBold
             b.Text = text
             b.AutoButtonColor = true
-            b.Parent = frame
+            b.Parent = pad
 
             local corner = Instance.new("UICorner")
             corner.CornerRadius = UDim.new(0, 8)
@@ -1191,21 +1213,16 @@ return function(C, R, UI)
 
         local sliderFrame = Instance.new("Frame")
         sliderFrame.Name = "SpeedSliderFrame"
-        sliderFrame.Size = UDim2.new(0, 220, 0, 40)
-        sliderFrame.Position = UDim2.new(1, -230, 1, -150)
-        sliderFrame.BackgroundTransparency = 0.25
-        sliderFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+        sliderFrame.Size = UDim2.new(0, 220, 0, 58)
+        sliderFrame.Position = UDim2.new(0, 10, 0, 252)
+        sliderFrame.BackgroundTransparency = 1
         sliderFrame.BorderSizePixel = 0
-        sliderFrame.Parent = gui
-
-        local cornerS = Instance.new("UICorner")
-        cornerS.CornerRadius = UDim.new(0, 10)
-        cornerS.Parent = sliderFrame
+        sliderFrame.Parent = win
 
         local label = Instance.new("TextLabel")
         label.Name = "Label"
-        label.Size = UDim2.new(1, -10, 0, 18)
-        label.Position = UDim2.new(0, 5, 0, 2)
+        label.Size = UDim2.new(1, 0, 0, 18)
+        label.Position = UDim2.new(0, 0, 0, 0)
         label.BackgroundTransparency = 1
         label.TextColor3 = Color3.fromRGB(255, 255, 255)
         label.TextSize = 14
@@ -1216,8 +1233,8 @@ return function(C, R, UI)
 
         local bar = Instance.new("Frame")
         bar.Name = "Bar"
-        bar.Size = UDim2.new(0, 140, 0, 6)
-        bar.Position = UDim2.new(0, 5, 1, -16)
+        bar.Size = UDim2.new(0, 180, 0, 6)
+        bar.Position = UDim2.new(0, 0, 0, 28)
         bar.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
         bar.BorderSizePixel = 0
         bar.Parent = sliderFrame
@@ -1242,6 +1259,7 @@ return function(C, R, UI)
 
         local MIN_SPEED = 0.1
         local MAX_SPEED = 25
+        local DEFAULT_ALPHA = 0.22
 
         local dragging = false
         local dragInput = nil
@@ -1249,7 +1267,7 @@ return function(C, R, UI)
         local function getBarWidth()
             local w = bar.AbsoluteSize.X
             if w <= 0 then w = bar.Size.X.Offset end
-            if w <= 0 then w = 140 end
+            if w <= 0 then w = 180 end
             return w
         end
 
@@ -1300,7 +1318,7 @@ return function(C, R, UI)
             if input == dragInput then dragging = false; dragInput = nil end
         end)
 
-        applyAlpha(0.1)
+        applyAlpha(DEFAULT_ALPHA)
 
         moveGui = gui
         ensureMoveHeartbeat()
