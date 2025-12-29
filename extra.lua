@@ -24,58 +24,83 @@ return function(C, R, UI)
 
     local function disconnectSignal(conn)
         if conn then
-            local ok, _ = pcall(function() conn:Disconnect() end)
+            pcall(function() conn:Disconnect() end)
         end
     end
 
-    local function clearRifleSignals(rifle)
-        local a = attrConns[rifle]
+    local function clearItemSignals(item)
+        local a = attrConns[item]
         if a then
             disconnectSignal(a)
-            attrConns[rifle] = nil
+            attrConns[item] = nil
         end
-        local n = nvConns[rifle]
+        local n = nvConns[item]
         if n then
             disconnectSignal(n)
-            nvConns[rifle] = nil
+            nvConns[item] = nil
         end
     end
 
-    local function forceZero(rifle)
-        if not (running and rifle and rifle.Parent) then return end
-        local attr = rifle:GetAttribute("ReloadTime")
-        if attr ~= nil then
-            if attr ~= 0 then
-                rifle:SetAttribute("ReloadTime", 0)
-            end
-        else
-            local nv = rifle:FindFirstChild("ReloadTime")
-            if nv and nv:IsA("NumberValue") and nv.Value ~= 0 then
-                nv.Value = 0
-            end
-        end
-    end
-
-    local function setupRifle(rifle)
-        if not (running and rifle and rifle:IsA("Instance")) then return end
-
-        clearRifleSignals(rifle)
-        forceZero(rifle)
-
-        local ok, sig = pcall(function()
-            return rifle:GetAttributeChangedSignal("ReloadTime")
+    local function hasReloadTimeAttribute(item)
+        if not (item and item:IsA("Instance")) then return false end
+        local ok, v = pcall(function()
+            return item:GetAttribute("ReloadTime")
         end)
-        if ok and sig then
-            attrConns[rifle] = sig:Connect(function()
-                if running then
-                    forceZero(rifle)
-                end
-            end)
+        return ok and v ~= nil
+    end
+
+    local function forceZero(item)
+        if not (running and item and item.Parent) then return end
+
+        local ok, attr = pcall(function()
+            return item:GetAttribute("ReloadTime")
+        end)
+
+        if ok and attr ~= nil then
+            if attr ~= 0 then
+                pcall(function()
+                    item:SetAttribute("ReloadTime", 0)
+                end)
+            end
+            return
         end
 
-        local nv = rifle:FindFirstChild("ReloadTime")
-        if nv and nv:IsA("NumberValue") then
-            nvConns[rifle] = nv.Changed:Connect(function()
+        local nv = item:FindFirstChild("ReloadTime")
+        if nv and nv:IsA("NumberValue") and nv.Value ~= 0 then
+            nv.Value = 0
+        end
+    end
+
+    local function setupItem(item)
+        if not (running and item and item:IsA("Instance")) then return end
+
+        clearItemSignals(item)
+
+        local hasAttr = hasReloadTimeAttribute(item)
+        local nv = item:FindFirstChild("ReloadTime")
+        local hasNv = (nv and nv:IsA("NumberValue")) and true or false
+
+        if not hasAttr and not hasNv then
+            return
+        end
+
+        forceZero(item)
+
+        if hasAttr then
+            local ok, sig = pcall(function()
+                return item:GetAttributeChangedSignal("ReloadTime")
+            end)
+            if ok and sig then
+                attrConns[item] = sig:Connect(function()
+                    if running then
+                        forceZero(item)
+                    end
+                end)
+            end
+        end
+
+        if hasNv then
+            nvConns[item] = nv.Changed:Connect(function()
                 if running and nv.Value ~= 0 then
                     nv.Value = 0
                 end
@@ -87,17 +112,13 @@ return function(C, R, UI)
         if not inv then return end
 
         for _, child in ipairs(inv:GetChildren()) do
-            if child.Name == "Rifle" then
-                setupRifle(child)
-            end
+            setupItem(child)
         end
 
         disconnectSignal(invChildConn)
         invChildConn = inv.ChildAdded:Connect(function(child)
             if not running then return end
-            if child.Name == "Rifle" then
-                setupRifle(child)
-            end
+            setupItem(child)
         end)
     end
 
@@ -115,6 +136,8 @@ return function(C, R, UI)
             if not running then return end
             if child.Name == "Inventory" then
                 hookInventory(child)
+            else
+                setupItem(child)
             end
         end)
     end
@@ -128,18 +151,18 @@ return function(C, R, UI)
         disconnectSignal(lpChildConn)
         lpChildConn = nil
 
-        for rifle, conn in pairs(attrConns) do
+        for item, conn in pairs(attrConns) do
             disconnectSignal(conn)
-            attrConns[rifle] = nil
+            attrConns[item] = nil
         end
-        for rifle, conn in pairs(nvConns) do
+        for item, conn in pairs(nvConns) do
             disconnectSignal(conn)
-            nvConns[rifle] = nil
+            nvConns[item] = nil
         end
     end
 
     ExtraTab:Toggle({
-        Title = "Zero Rifle Reload",
+        Title = "Zero ReloadTime",
         Value = C.State.Toggles.RifleZeroReload,
         Callback = function(on)
             C.State.Toggles.RifleZeroReload = on
