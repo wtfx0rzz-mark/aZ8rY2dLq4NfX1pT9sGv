@@ -80,6 +80,36 @@ return function(C, R, UI)
         local PLACE_USE_NUDGE_DOWN     = false
         local PLACE_NUDGE_DOWN_STUDS   = 16
 
+        -- Attribute tags for debugging "missed items"
+        local ATTR_OWNER = "CG_GatherOwner"
+        local ATTR_STATE = "CG_GatherState" -- "gathering" | "held" | "dropped"
+        local ATTR_T     = "CG_GatherT"
+
+        local function setAttrSafe(inst, key, val)
+            if not (inst and inst:IsA("Instance")) then return end
+            pcall(function()
+                inst:SetAttribute(key, val)
+            end)
+        end
+
+        local function tagState(m, state)
+            if not (m and m:IsA("Instance")) then return end
+            setAttrSafe(m, ATTR_OWNER, lp.UserId)
+            setAttrSafe(m, ATTR_STATE, state)
+            setAttrSafe(m, ATTR_T, os.clock())
+            local mp = nil
+            if m:IsA("BasePart") then
+                mp = m
+            elseif m:IsA("Model") then
+                mp = m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart")
+            end
+            if mp then
+                setAttrSafe(mp, ATTR_OWNER, lp.UserId)
+                setAttrSafe(mp, ATTR_STATE, state)
+                setAttrSafe(mp, ATTR_T, os.clock())
+            end
+        end
+
         local function waitIf(v)
             v = tonumber(v)
             if v and v > 0 then task.wait(v) end
@@ -166,17 +196,33 @@ return function(C, R, UI)
             return nl:find("cultist",1,true) and hasHumanoid(m)
         end
 
-        local function isExcludedModel(m)
-            if not (m and m:IsA("Model")) then return false end
-            local n = (m.Name or ""):lower()
-            if n == "pelt trader" then return true end
-            if n:find("trader",1,true) or n:find("shopkeeper",1,true) then return true end
-            if isWallVariant(m) then return true end
-            if isUnderLogWall(m) then return true end
+        local function isExcludedInstance(x)
+            if not (x and x:IsA("Instance")) then return false end
+            if x:IsA("Model") then
+                local n = (x.Name or ""):lower()
+                if n == "pelt trader" then return true end
+                if n:find("trader",1,true) or n:find("shopkeeper",1,true) then return true end
+                if isWallVariant(x) then return true end
+                if isUnderLogWall(x) then return true end
+                return false
+            end
+            if x:IsA("BasePart") then
+                if isUnderLogWall(x) then return true end
+            end
             return false
         end
 
         local function setNoCollideModel(m, on)
+            if not (m and m:IsA("Instance")) then return end
+            if m:IsA("BasePart") then
+                m.CanCollide = not on
+                m.CanQuery   = not on
+                m.CanTouch   = not on
+                m.Massless   = on and true or false
+                m.AssemblyLinearVelocity  = Vector3.new()
+                m.AssemblyAngularVelocity = Vector3.new()
+                return
+            end
             for _,d in ipairs(m:GetDescendants()) do
                 if d:IsA("BasePart") then
                     d.CanCollide = not on
@@ -190,6 +236,11 @@ return function(C, R, UI)
         end
 
         local function setAnchoredModel(m, on)
+            if not (m and m:IsA("Instance")) then return end
+            if m:IsA("BasePart") then
+                m.Anchored = on
+                return
+            end
             for _,d in ipairs(m:GetDescendants()) do
                 if d:IsA("BasePart") then d.Anchored = on end
             end
@@ -307,20 +358,22 @@ return function(C, R, UI)
             return lastModel
         end
 
-        local function nearestSelectedModelFromPart(part, selectedSet)
+        local function nearestSelectedInstanceFromPart(part, selectedSet)
             if not part or not part:IsA("BasePart") then return nil end
             local itemsFolder = itemsRootOrNil()
             local m = topModelUnderItems(part, itemsFolder) or part:FindFirstAncestorOfClass("Model")
             if m and nameMatches(selectedSet, m) then return m end
+            if nameMatches(selectedSet, part) then return part end
             return nil
         end
 
         local function canGather(m, selectedSet, origin, rad)
-            if not (m and m.Parent and m:IsA("Model")) then return false end
+            if not (m and m.Parent and m:IsA("Instance")) then return false end
+            if not (m:IsA("Model") or m:IsA("BasePart")) then return false end
             local itemsFolder = itemsRootOrNil()
             if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
-            if isExcludedModel(m) or isUnderLogWall(m) then return false end
-            if m.Name == "Log" and isWallVariant(m) then return false end
+            if isExcludedInstance(m) or isUnderLogWall(m) then return false end
+            if m.Name == "Log" and m:IsA("Model") and isWallVariant(m) then return false end
             local mp = mainPart(m)
             if not mp or mp.Anchored then return false end
             if origin and rad then
@@ -341,6 +394,7 @@ return function(C, R, UI)
             gathered[m] = true
             list[#list+1] = m
             if isCultist(m) then cultistCount = cultistCount + 1 end
+            tagState(m, "gathering")
         end
 
         local function removeGather(m)
@@ -424,7 +478,7 @@ return function(C, R, UI)
                         if not nameMatches(selectedSet, d) then break end
                         m = d
                     else
-                        m = nearestSelectedModelFromPart(d, selectedSet)
+                        m = nearestSelectedInstanceFromPart(d, selectedSet)
                         if not m then break end
                     end
                     if gathered[m] then break end
@@ -460,10 +514,11 @@ return function(C, R, UI)
                 captureIfNear_FullScan(origin, rad, selectedSet)
                 return
             end
+
             for _,p in ipairs(parts) do
                 repeat
                     if not p or not p.Parent or not p:IsA("BasePart") then break end
-                    local m = nearestSelectedModelFromPart(p, selectedSet)
+                    local m = nearestSelectedInstanceFromPart(p, selectedSet)
                     if not m then break end
                     if gathered[m] then break end
                     if isCultist(m) and cultistCount >= CULTIST_LIMIT then break end
@@ -478,11 +533,16 @@ return function(C, R, UI)
                     dragStop(m)
                 until true
             end
+
+            -- If we hit the MaxParts cap, we can be silently missing additional parts.
+            if #parts >= (overlapParams.MaxParts or 0) and overlapParams.MaxParts and overlapParams.MaxParts > 0 then
+                captureIfNear_FullScan(origin, rad, selectedSet)
+            end
         end
 
         local function onItemsChildAdded(child)
             if not gatherOn then return end
-            if not child or not child:IsA("Model") then return end
+            if not child or not (child:IsA("Model") or child:IsA("BasePart")) then return end
             local items = itemsRootOrNil()
             if not items or not child:IsDescendantOf(items) then return end
             if not anySelection() then return end
@@ -490,22 +550,33 @@ return function(C, R, UI)
             local origin = root.Position
             local rad = gatherRadius()
             local selectedSet = buildSelectedSet()
-            if gathered[child] then return end
-            if isCultist(child) and cultistCount >= CULTIST_LIMIT then return end
-            if not canGather(child, selectedSet, origin, rad) then return end
-            local mp = mainPart(child); if not mp then return end
-            if not dragStart(child) then return end
+
+            local target = child
+            if child:IsA("BasePart") then
+                local m = nearestSelectedInstanceFromPart(child, selectedSet)
+                if not m then return end
+                target = m
+            end
+
+            if gathered[target] then return end
+            if isCultist(target) and cultistCount >= CULTIST_LIMIT then return end
+            if not canGather(target, selectedSet, origin, rad) then return end
+            local mp = mainPart(target); if not mp then return end
+            if not dragStart(target) then return end
             task.delay(START_YIELD, function()
-                if not gatherOn then dragStop(child); return end
-                if not child or not child.Parent then dragStop(child); return end
-                local mp2 = mainPart(child); if not mp2 then dragStop(child); return end
+                if not gatherOn then dragStop(target); return end
+                if not target or not target.Parent then dragStop(target); return end
+                local mp2 = mainPart(target); if not mp2 then dragStop(target); return end
                 pcall(function() mp2:SetNetworkOwner(lp) end)
-                setNoCollideModel(child, true)
-                setAnchoredModel(child, true)
-                addGather(child)
-                dragStop(child)
+                setNoCollideModel(target, true)
+                setAnchoredModel(target, true)
+                addGather(target)
+                dragStop(target)
             end)
         end
+
+        local lastHeldMark = 0
+        local HELD_MARK_INTERVAL = 0.25
 
         local function hoverFollow()
             if not gatherOn then return end
@@ -513,9 +584,18 @@ return function(C, R, UI)
             local forward = root.CFrame.LookVector
             local above   = root.Position + Vector3.new(0, hoverHeight, 0)
             local baseCF  = CFrame.lookAt(above, above + forward)
-            for _,m in ipairs(list) do
+
+            local now = os.clock()
+            local doMark = (now - lastHeldMark) >= HELD_MARK_INTERVAL
+            if doMark then lastHeldMark = now end
+
+            for i = #list, 1, -1 do
+                local m = list[i]
                 if m and m.Parent then
                     pivotModel(m, baseCF)
+                    if doMark then
+                        tagState(m, "held")
+                    end
                 else
                     removeGather(m)
                 end
@@ -531,6 +611,10 @@ return function(C, R, UI)
             if items then
                 if itemsChildConn then pcall(function() itemsChildConn:Disconnect() end) end
                 itemsChildConn = items.ChildAdded:Connect(onItemsChildAdded)
+                -- also covers newly inserted parts/models deeper than direct children
+                pcall(function()
+                    items.DescendantAdded:Connect(onItemsChildAdded)
+                end)
             end
             if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = true end
         end
@@ -585,10 +669,15 @@ return function(C, R, UI)
             setNoCollideModel(m, false)
 
             if PLACE_USE_NUDGE_DOWN then
-                for _,p in ipairs(m:GetDescendants()) do
-                    if p:IsA("BasePart") then
-                        p.AssemblyLinearVelocity  = Vector3.new(0, -PLACE_NUDGE_DOWN_STUDS, 0)
-                        p.AssemblyAngularVelocity = Vector3.new()
+                if m:IsA("BasePart") then
+                    m.AssemblyLinearVelocity  = Vector3.new(0, -PLACE_NUDGE_DOWN_STUDS, 0)
+                    m.AssemblyAngularVelocity = Vector3.new()
+                else
+                    for _,p in ipairs(m:GetDescendants()) do
+                        if p:IsA("BasePart") then
+                            p.AssemblyLinearVelocity  = Vector3.new(0, -PLACE_NUDGE_DOWN_STUDS, 0)
+                            p.AssemblyAngularVelocity = Vector3.new()
+                        end
                     end
                 end
             end
@@ -597,6 +686,7 @@ return function(C, R, UI)
             pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
 
             dragSafeStop(m)
+            tagState(m, "dropped")
         end
 
         local function placeDown()
