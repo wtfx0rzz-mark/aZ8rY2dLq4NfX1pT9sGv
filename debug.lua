@@ -951,6 +951,7 @@ return function(C, R, UI)
 
     local moveGui     = nil
     local moveConn    = nil
+    local moveUiConns = nil
 
     local origCamType    = nil
     local origCamSubject = nil
@@ -966,6 +967,10 @@ return function(C, R, UI)
 
     local function destroyMoveGui()
         clearMoveFlags()
+        if moveUiConns then
+            for _,c in ipairs(moveUiConns) do pcall(function() c:Disconnect() end) end
+        end
+        moveUiConns = nil
         if moveGui then pcall(function() moveGui:Destroy() end) end
         moveGui = nil
         if moveConn then moveConn:Disconnect(); moveConn = nil end
@@ -1022,9 +1027,12 @@ return function(C, R, UI)
     end
 
     local function bindMoveButton(btn, setter)
-        btn.MouseButton1Down:Connect(function() setter(true) end)
-        btn.MouseButton1Up:Connect(function() setter(false) end)
-        btn.MouseLeave:Connect(function() setter(false) end)
+        local c1 = btn.MouseButton1Down:Connect(function() setter(true) end)
+        local c2 = btn.MouseButton1Up:Connect(function() setter(false) end)
+        local c3 = btn.MouseLeave:Connect(function() setter(false) end)
+        moveUiConns[#moveUiConns+1] = c1
+        moveUiConns[#moveUiConns+1] = c2
+        moveUiConns[#moveUiConns+1] = c3
     end
 
     local function createMoveGui()
@@ -1037,28 +1045,61 @@ return function(C, R, UI)
         gui.ResetOnSpawn = false
         gui.Parent = pg
 
-        local frame = Instance.new("Frame")
-        frame.Name = "Pad"
-        frame.Size = UDim2.new(0, 220, 0, 220)
-        frame.Position = UDim2.new(1, -230, 1, -380)
-        frame.BackgroundTransparency = 1
-        frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-        frame.BorderSizePixel = 0
-        frame.Parent = gui
+        moveUiConns = {}
+
+        local panel = Instance.new("Frame")
+        panel.Name = "Panel"
+        panel.Size = UDim2.new(0, 248, 0, 268)
+        panel.Position = UDim2.new(0, 20, 0.5, -134)
+        panel.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        panel.BackgroundTransparency = 0.12
+        panel.BorderSizePixel = 0
+        panel.Active = true
+        panel.Draggable = true
+        panel.Parent = gui
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 10)
+        corner.Parent = panel
+
+        local pad = Instance.new("UIPadding")
+        pad.PaddingLeft = UDim.new(0, 10)
+        pad.PaddingRight = UDim.new(0, 10)
+        pad.PaddingTop = UDim.new(0, 10)
+        pad.PaddingBottom = UDim.new(0, 10)
+        pad.Parent = panel
+
+        local title = Instance.new("TextLabel")
+        title.Name = "Title"
+        title.Size = UDim2.new(1, 0, 0, 18)
+        title.BackgroundTransparency = 1
+        title.TextColor3 = Color3.fromRGB(255, 255, 255)
+        title.TextSize = 14
+        title.Font = Enum.Font.SourceSansBold
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.Text = "Precision Move"
+        title.Parent = panel
+
+        local grid = Instance.new("Frame")
+        grid.Name = "Grid"
+        grid.Size = UDim2.new(1, 0, 0, 156)
+        grid.Position = UDim2.new(0, 0, 0, 22)
+        grid.BackgroundTransparency = 1
+        grid.Parent = panel
 
         local layout = Instance.new("UIGridLayout")
-        layout.CellSize = UDim2.new(0, 70, 0, 70)
-        layout.CellPadding = UDim2.new(0, 5, 0, 5)
+        layout.CellSize = UDim2.new(0, 72, 0, 72)
+        layout.CellPadding = UDim2.new(0, 6, 0, 6)
         layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
         layout.VerticalAlignment   = Enum.VerticalAlignment.Center
         layout.FillDirection       = Enum.FillDirection.Horizontal
         layout.SortOrder           = Enum.SortOrder.LayoutOrder
-        layout.Parent = frame
+        layout.Parent = grid
 
         local function makeButton(text, order)
             local b = Instance.new("TextButton")
             b.LayoutOrder = order or 0
-            b.Size = UDim2.new(0, 70, 0, 70)
+            b.Size = UDim2.new(0, 72, 0, 72)
             b.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
             b.BorderSizePixel = 0
             b.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1067,11 +1108,11 @@ return function(C, R, UI)
             b.Font = Enum.Font.SourceSansBold
             b.Text = text
             b.AutoButtonColor = true
-            b.Parent = frame
+            b.Parent = grid
 
-            local corner = Instance.new("UICorner")
-            corner.CornerRadius = UDim.new(0, 8)
-            corner.Parent = b
+            local c = Instance.new("UICorner")
+            c.CornerRadius = UDim.new(0, 8)
+            c.Parent = b
 
             return b
         end
@@ -1092,12 +1133,10 @@ return function(C, R, UI)
 
         local sliderFrame = Instance.new("Frame")
         sliderFrame.Name = "SpeedSliderFrame"
-        sliderFrame.Size = UDim2.new(0, 220, 0, 40)
-        sliderFrame.Position = UDim2.new(1, -230, 1, -150)
+        sliderFrame.Size = UDim2.new(1, 0, 0, 60)
+        sliderFrame.Position = UDim2.new(0, 0, 0, 186)
         sliderFrame.BackgroundTransparency = 1
-        sliderFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-        sliderFrame.BorderSizePixel = 0
-        sliderFrame.Parent = gui
+        sliderFrame.Parent = panel
 
         local label = Instance.new("TextLabel")
         label.Name = "Label"
@@ -1113,8 +1152,8 @@ return function(C, R, UI)
 
         local bar = Instance.new("Frame")
         bar.Name = "Bar"
-        bar.Size = UDim2.new(0, 140, 0, 6)
-        bar.Position = UDim2.new(0, 5, 1, -16)
+        bar.Size = UDim2.new(1, -8, 0, 6)
+        bar.Position = UDim2.new(0, 4, 0, 28)
         bar.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
         bar.BorderSizePixel = 0
         bar.Parent = sliderFrame
@@ -1169,7 +1208,7 @@ return function(C, R, UI)
             applyAlpha(rel)
         end
 
-        thumb.InputBegan:Connect(function(input)
+        moveUiConns[#moveUiConns+1] = thumb.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 dragging = true
                 dragInput = input
@@ -1177,11 +1216,11 @@ return function(C, R, UI)
             end
         end)
 
-        thumb.InputEnded:Connect(function(input)
+        moveUiConns[#moveUiConns+1] = thumb.InputEnded:Connect(function(input)
             if input == dragInput then dragging = false; dragInput = nil end
         end)
 
-        bar.InputBegan:Connect(function(input)
+        moveUiConns[#moveUiConns+1] = bar.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 dragging = true
                 dragInput = input
@@ -1189,11 +1228,11 @@ return function(C, R, UI)
             end
         end)
 
-        UIS.InputChanged:Connect(function(input)
+        moveUiConns[#moveUiConns+1] = UIS.InputChanged:Connect(function(input)
             if dragging then setFromX(input.Position.X) end
         end)
 
-        UIS.InputEnded:Connect(function(input)
+        moveUiConns[#moveUiConns+1] = UIS.InputEnded:Connect(function(input)
             if input == dragInput then dragging = false; dragInput = nil end
         end)
 
