@@ -499,9 +499,6 @@ return function(C, R, UI)
             end
         })
 
-        ----------------------------------------------------------------
-        -- Lost Child: fully gated, and disabled if already complete
-        ----------------------------------------------------------------
         local MAX_TO_SAVE = 4
 
         local function isLostChildModel(m)
@@ -727,9 +724,6 @@ return function(C, R, UI)
             lostBtn.Visible = false
         end
 
-        ----------------------------------------------------------------
-        -- Godmode: fire only when health decreases (still FireServer(-math.huge))
-        ----------------------------------------------------------------
         local godOn, godConn, lastHealth = false, nil, nil
         local damageEv = nil
 
@@ -786,9 +780,6 @@ return function(C, R, UI)
         })
         task.defer(enableGod)
 
-        ----------------------------------------------------------------
-        -- Instant interact
-        ----------------------------------------------------------------
         local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.4
         local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
         local EXCLUDE_ANCESTOR_SUBSTR = { "closetdoors", "closet", "door", "landmarks" }
@@ -871,9 +862,6 @@ return function(C, R, UI)
         enableInstantInteract()
         tab:Toggle({ Title = "Instant Interact", Value = true, Callback = function(state) if state then enableInstantInteract() else disableInstantInteract() end end })
 
-        ----------------------------------------------------------------
-        -- Auto stun (unchanged behavior)
-        ----------------------------------------------------------------
         local FLASHLIGHT_PREF = { "Strong Flashlight", "Old Flashlight" }
         local MONSTER_NAMES   = { "Deer", "Ram", "Owl" }
         local STUN_RADIUS     = 24
@@ -986,9 +974,6 @@ return function(C, R, UI)
         })
         task.defer(enableAutoStun)
 
-        ----------------------------------------------------------------
-        -- Disable Shadows
-        ----------------------------------------------------------------
         local noShadowsOn, lightConn = false, nil
         local origGlobalShadows = nil
         local lightOrig = setmetatable({}, {__mode = "k"})
@@ -1016,9 +1001,6 @@ return function(C, R, UI)
         end
         tab:Toggle({ Title = "Disable Shadows", Value = false, Callback = function(state) if state then enableNoShadows() else disableNoShadows() end end })
 
-        ----------------------------------------------------------------
-        -- Hide Big Trees
-        ----------------------------------------------------------------
         local function isBigTreeName(n)
             if not n then return false end
             if n == "TreeBig1" or n == "TreeBig2" or n == "TreeBig3" then return true end
@@ -1055,9 +1037,6 @@ return function(C, R, UI)
         end
         tab:Toggle({ Title = "Hide Big Trees (Local)", Value = false, Callback = function(state) if state then enableHideBigTrees() else disableHideBigTrees() end end })
 
-        ----------------------------------------------------------------
-        -- Auto Collect Coins (GetPartBoundsInRadius) + no always-on camera tracking
-        ----------------------------------------------------------------
         local COIN_RADIUS   = 20
         local COIN_INTERVAL = 0.12
         local COIN_TTL      = 1.0
@@ -1229,9 +1208,6 @@ return function(C, R, UI)
         })
         if coinOn then enableCoin() end
 
-        ----------------------------------------------------------------
-        -- No streaming pause
-        ----------------------------------------------------------------
         local noPauseOn, prevPauseMode
         local function enableNoStreamingPause()
             if noPauseOn then return end
@@ -1243,9 +1219,6 @@ return function(C, R, UI)
         end
         enableNoStreamingPause()
 
-        ----------------------------------------------------------------
-        -- Saplings (unchanged)
-        ----------------------------------------------------------------
         local function itemsFolder() return WS:FindFirstChild("Items") end
         local function collectSaplingsSnapshot()
             local items = itemsFolder(); if not items then return {} end
@@ -1366,39 +1339,6 @@ return function(C, R, UI)
             end
         end
 
-        local autoReplantOn   = false
-        local autoReplantConn = nil
-
-        local function mainPart2(m)
-            if not m then return nil end
-            if m:IsA("BasePart") then return m end
-            if m:IsA("Model") then
-                if m.PrimaryPart then return m.PrimaryPart end
-                return m:FindFirstChildWhichIsA("BasePart")
-            end
-            return nil
-        end
-
-        local function groundBelow3(pos)
-            local params = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            params.FilterDescendantsInstances = { lp.Character, WS:FindFirstChild("Items") }
-            local start = pos + Vector3.new(0, 5, 0)
-            local hit = WS:Raycast(start, Vector3.new(0, -1000, 0), params)
-            if hit then return hit.Position end
-            hit = WS:Raycast(pos + Vector3.new(0, 200, 0), Vector3.new(0, -1000, 0), params)
-            return (hit and hit.Position) or pos
-        end
-
-        local function autoReplantCalcPos(m)
-            local mp = mainPart2(m) or mainPart(m)
-            if not mp then return nil end
-            local center = mp.Position
-            local ground = groundBelow3(center) or center
-            local y = math.min(ground.Y, center.Y - (mp.Size.Y * 0.5)) - 0.15
-            return Vector3.new(center.X, y, center.Z)
-        end
-
         local function plantModelAtExactPosition(m, pos)
             local plantRF = getRemote("RequestPlantItem")
             if not (plantRF and m and m.Parent and pos) then return end
@@ -1438,41 +1378,6 @@ return function(C, R, UI)
             if stopDrag then
                 pcall(function() stopDrag:FireServer(m) end)
                 pcall(function() stopDrag:FireServer(Instance.new("Model")) end)
-            end
-        end
-
-        local function autoReplantPlantModel(m)
-            local pos = autoReplantCalcPos(m)
-            if not pos then return end
-            plantModelAtExactPosition(m, pos)
-        end
-
-        local function handleNewSapling(child)
-            if not (autoReplantOn and child and child:IsA("Model") and child.Name == "Sapling") then
-                return
-            end
-            task.spawn(function()
-                task.wait(0.1)
-                if child and child.Parent then
-                    autoReplantPlantModel(child)
-                end
-            end)
-        end
-
-        local function enableAutoReplant()
-            if autoReplantOn then return end
-            autoReplantOn = true
-            local items = itemsFolder()
-            if items and not autoReplantConn then
-                autoReplantConn = items.ChildAdded:Connect(handleNewSapling)
-            end
-        end
-
-        local function disableAutoReplant()
-            autoReplantOn = false
-            if autoReplantConn then
-                autoReplantConn:Disconnect()
-                autoReplantConn = nil
             end
         end
 
@@ -1516,19 +1421,6 @@ return function(C, R, UI)
         tab:Section({ Title = "Saplings" })
         tab:Button({ Title = "Drop Saplings", Callback = function() actionDropSaplings() end })
         tab:Button({ Title = "Plant All Saplings", Callback = function() actionPlantAllSaplings() end })
-
-        tab:Toggle({
-            Title = "Auto Replant Saplings",
-            Value = false,
-            Callback = function(state)
-                if state then
-                    enableAutoReplant()
-                else
-                    disableAutoReplant()
-                end
-            end
-        })
-
         tab:Button({
             Title = "Auto Plant Saplings (Circles Here)",
             Callback = function()
@@ -1560,12 +1452,6 @@ return function(C, R, UI)
             if loadDefenseOnDefault then enableLoadDefenseSafe() end
             pcall(function() WS.StreamingPauseMode = Enum.StreamingPauseMode.Disabled end)
             if coinOn and not coinConn then enableCoin() end
-            if autoReplantOn and not autoReplantConn then
-                local items = itemsFolder()
-                if items then
-                    autoReplantConn = items.ChildAdded:Connect(handleNewSapling)
-                end
-            end
             if godOn then
                 task.defer(function()
                     bindGodToHumanoid()
