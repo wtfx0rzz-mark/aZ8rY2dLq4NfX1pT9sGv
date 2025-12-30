@@ -5,304 +5,11 @@ return function(C, R, UI)
     local Run     = C.Services.Run or game:GetService("RunService")
     local lp      = Players.LocalPlayer
 
-    local function ensureBringLoggerGui()
-        local pg = lp:FindFirstChild("PlayerGui") or lp:WaitForChild("PlayerGui", 5)
-        if not pg then return nil end
-
-        local existing = pg:FindFirstChild("BringLoggerGui")
-        if existing and existing:IsA("ScreenGui") then
-            local frame = existing:FindFirstChild("ConsoleFrame", true)
-            local text  = existing:FindFirstChild("ConsoleText", true)
-            local area  = existing:FindFirstChild("ConsoleArea", true)
-            if frame and text and area then
-                local function append(msg)
-                    msg = tostring(msg)
-                    text.Text = (text.Text == "" and msg) or (text.Text .. "\n" .. msg)
-                    Run.Heartbeat:Wait()
-                    pcall(function() area.CanvasPosition = Vector2.new(0, text.TextBounds.Y + 9999) end)
-                end
-                return append
-            end
-        end
-
-        local UIS = game:GetService("UserInputService")
-
-        local screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "BringLoggerGui"
-        screenGui.Parent = pg
-        screenGui.ResetOnSpawn = false
-
-        local frame = Instance.new("Frame")
-        frame.Name = "ConsoleFrame"
-        frame.Parent = screenGui
-        frame.Size = UDim2.new(0, 360, 0, 220)
-        frame.Position = UDim2.new(0.5, -180, 0.6, -110)
-        frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-        frame.BorderSizePixel = 0
-        frame.Active = true
-        frame.Draggable = true
-
-        local titleBar = Instance.new("Frame")
-        titleBar.Name = "TitleBar"
-        titleBar.Parent = frame
-        titleBar.Size = UDim2.new(1, 0, 0, 26)
-        titleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-        titleBar.BorderSizePixel = 0
-
-        local titleLabel = Instance.new("TextLabel")
-        titleLabel.Name = "TitleLabel"
-        titleLabel.Parent = titleBar
-        titleLabel.Size = UDim2.new(1, -120, 1, 0)
-        titleLabel.Position = UDim2.new(0, 8, 0, 0)
-        titleLabel.BackgroundTransparency = 1
-        titleLabel.Text = "Bring Logger"
-        titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-        titleLabel.TextSize = 14
-        titleLabel.Font = Enum.Font.SourceSansBold
-        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-        titleLabel.TextYAlignment = Enum.TextYAlignment.Center
-
-        local minimizeButton = Instance.new("TextButton")
-        minimizeButton.Name = "MinimizeButton"
-        minimizeButton.Parent = titleBar
-        minimizeButton.Size = UDim2.new(0, 26, 0, 26)
-        minimizeButton.Position = UDim2.new(1, -78, 0, 0)
-        minimizeButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-        minimizeButton.Text = "-"
-        minimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-        minimizeButton.TextSize = 14
-        minimizeButton.Font = Enum.Font.SourceSansBold
-
-        local copyButtonTop = Instance.new("TextButton")
-        copyButtonTop.Name = "CopyTopButton"
-        copyButtonTop.Parent = titleBar
-        copyButtonTop.Size = UDim2.new(0, 52, 0, 26)
-        copyButtonTop.Position = UDim2.new(1, -52-26, 0, 0)
-        copyButtonTop.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
-        copyButtonTop.Text = "Copy"
-        copyButtonTop.TextColor3 = Color3.fromRGB(255, 255, 255)
-        copyButtonTop.TextSize = 14
-        copyButtonTop.Font = Enum.Font.SourceSansBold
-
-        local closeButton = Instance.new("TextButton")
-        closeButton.Name = "CloseButton"
-        closeButton.Parent = titleBar
-        closeButton.Size = UDim2.new(0, 26, 0, 26)
-        closeButton.Position = UDim2.new(1, -26, 0, 0)
-        closeButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-        closeButton.Text = "X"
-        closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-        closeButton.TextSize = 14
-        closeButton.Font = Enum.Font.SourceSansBold
-
-        local consoleArea = Instance.new("ScrollingFrame")
-        consoleArea.Name = "ConsoleArea"
-        consoleArea.Parent = frame
-        consoleArea.Size = UDim2.new(1, 0, 1, -26-26)
-        consoleArea.Position = UDim2.new(0, 0, 0, 26)
-        consoleArea.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-        consoleArea.BorderSizePixel = 0
-        consoleArea.ScrollBarThickness = 6
-        consoleArea.CanvasSize = UDim2.new(0, 0, 0, 0)
-
-        local consoleText = Instance.new("TextLabel")
-        consoleText.Name = "ConsoleText"
-        consoleText.Parent = consoleArea
-        consoleText.Size = UDim2.new(1, -10, 1, 0)
-        consoleText.Position = UDim2.new(0, 6, 0, 4)
-        consoleText.BackgroundTransparency = 1
-        consoleText.Text = ""
-        consoleText.TextColor3 = Color3.fromRGB(200, 200, 200)
-        consoleText.TextSize = 12
-        consoleText.Font = Enum.Font.Code
-        consoleText.TextXAlignment = Enum.TextXAlignment.Left
-        consoleText.TextYAlignment = Enum.TextYAlignment.Top
-        consoleText.TextWrapped = true
-
-        local buttonBar = Instance.new("Frame")
-        buttonBar.Name = "ButtonBar"
-        buttonBar.Parent = frame
-        buttonBar.Size = UDim2.new(1, 0, 0, 26)
-        buttonBar.Position = UDim2.new(0, 0, 1, -26)
-        buttonBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-        buttonBar.BorderSizePixel = 0
-
-        local clearButton = Instance.new("TextButton")
-        clearButton.Name = "ClearButton"
-        clearButton.Parent = buttonBar
-        clearButton.Size = UDim2.new(0, 80, 1, 0)
-        clearButton.Position = UDim2.new(0, 0, 0, 0)
-        clearButton.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
-        clearButton.Text = "Clear"
-        clearButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-        clearButton.TextSize = 14
-        clearButton.Font = Enum.Font.SourceSansBold
-
-        local statusLabel = Instance.new("TextLabel")
-        statusLabel.Name = "StatusLabel"
-        statusLabel.Parent = buttonBar
-        statusLabel.Size = UDim2.new(1, -80-24, 1, 0)
-        statusLabel.Position = UDim2.new(0, 84, 0, 0)
-        statusLabel.BackgroundTransparency = 1
-        statusLabel.Text = ""
-        statusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
-        statusLabel.TextSize = 12
-        statusLabel.Font = Enum.Font.SourceSans
-        statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-        statusLabel.TextYAlignment = Enum.TextYAlignment.Center
-
-        local resizeHandle = Instance.new("TextButton")
-        resizeHandle.Name = "ResizeHandle"
-        resizeHandle.Parent = buttonBar
-        resizeHandle.Size = UDim2.new(0, 24, 1, 0)
-        resizeHandle.Position = UDim2.new(1, -24, 0, 0)
-        resizeHandle.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-        resizeHandle.Text = "↘"
-        resizeHandle.TextColor3 = Color3.fromRGB(255, 255, 255)
-        resizeHandle.TextSize = 14
-        resizeHandle.Font = Enum.Font.SourceSansBold
-
-        local isMinimized = false
-        local prevSize = frame.Size
-
-        local function setStatus(s)
-            statusLabel.Text = tostring(s or "")
-            task.delay(1.25, function()
-                if statusLabel and statusLabel.Parent and statusLabel.Text == tostring(s or "") then
-                    statusLabel.Text = ""
-                end
-            end)
-        end
-
-        minimizeButton.MouseButton1Click:Connect(function()
-            if isMinimized then
-                frame.Size = prevSize
-                consoleArea.Visible = true
-                buttonBar.Visible = true
-                minimizeButton.Text = "-"
-                isMinimized = false
-            else
-                prevSize = frame.Size
-                frame.Size = UDim2.new(0, prevSize.X.Offset, 0, 26)
-                consoleArea.Visible = false
-                buttonBar.Visible = false
-                minimizeButton.Text = "+"
-                isMinimized = true
-            end
-        end)
-
-        closeButton.MouseButton1Click:Connect(function()
-            screenGui:Destroy()
-        end)
-
-        local function doCopy()
-            if setclipboard then
-                setclipboard(consoleText.Text)
-                setStatus("copied")
-            else
-                setStatus("no setclipboard")
-            end
-        end
-
-        copyButtonTop.MouseButton1Click:Connect(doCopy)
-
-        clearButton.MouseButton1Click:Connect(function()
-            consoleText.Text = ""
-            setStatus("cleared")
-        end)
-
-        local resizing = false
-        local startMouse
-        local startSize
-
-        local function clampSize(w, h)
-            w = math.clamp(w, 260, 800)
-            h = math.clamp(h, 120, 700)
-            return w, h
-        end
-
-        resizeHandle.MouseButton1Down:Connect(function()
-            if isMinimized then return end
-            resizing = true
-            startMouse = UIS:GetMouseLocation()
-            startSize = frame.AbsoluteSize
-        end)
-
-        UIS.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                resizing = false
-            end
-        end)
-
-        UIS.InputChanged:Connect(function(input)
-            if not resizing then return end
-            if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-            local cur = UIS:GetMouseLocation()
-            local dx = cur.X - startMouse.X
-            local dy = cur.Y - startMouse.Y
-            local w, h = clampSize(startSize.X + dx, startSize.Y + dy)
-            frame.Size = UDim2.new(0, w, 0, h)
-        end)
-
-        local function append(msg)
-            msg = tostring(msg)
-            consoleText.Text = (consoleText.Text == "" and msg) or (consoleText.Text .. "\n" .. msg)
-            Run.Heartbeat:Wait()
-            pcall(function() consoleArea.CanvasPosition = Vector2.new(0, consoleText.TextBounds.Y + 9999) end)
-        end
-
-        return append
-    end
-
-    local _bringAppend = ensureBringLoggerGui()
-
     local function now() return os.clock() end
-    local function luaKB()
-        local ok, v = pcall(function() return collectgarbage("count") end)
-        return ok and v or -1
-    end
-    local function totalMemMB()
-        local ok, v = pcall(function()
-            local Stats = game:GetService("Stats")
-            if Stats and Stats.GetTotalMemoryUsageMb then
-                return Stats:GetTotalMemoryUsageMb()
-            end
-            return nil
-        end)
-        return ok and v or nil
-    end
-
-    local function _emit(line)
-        print(line)
-        if _bringAppend then pcall(_bringAppend, line) end
-        pcall(function()
-            if _G and type(_G.logMessage) == "function" then
-                _G.logMessage(line)
-            end
-        end)
-        pcall(function()
-            if C and type(C.logMessage) == "function" then
-                C.logMessage(line)
-            end
-        end)
-    end
-
-    local function logLine(msg)
-        _emit(("BRING %s"):format(tostring(msg)))
-    end
-    local function logKV(tag, kv)
-        local parts = {}
-        for k,v in pairs(kv or {}) do
-            parts[#parts+1] = ("%s=%s"):format(tostring(k), tostring(v))
-        end
-        table.sort(parts)
-        _emit(("BRING %s %s"):format(tostring(tag), table.concat(parts, " ")))
-    end
 
     local Tabs = UI and UI.Tabs or {}
     local tab  = Tabs.Bring
     if not tab then
-        logLine("ERROR: Bring tab not found in UI")
         error("Bring tab not found in UI")
     end
 
@@ -454,29 +161,16 @@ return function(C, R, UI)
         }
     end
 
-    local function logRemotesOnce()
-        local r = resolveRemotes()
-        logKV("REMOTES", {
-            StartDrag = r.StartDrag and r.StartDrag.Name or "nil",
-            StopDrag  = r.StopDrag  and r.StopDrag.Name  or "nil",
-            BurnItem  = r.BurnItem  and r.BurnItem.Name  or "nil",
-            CookItem  = r.CookItem  and r.CookItem.Name  or "nil",
-            ScrapItem = r.ScrapItem and r.ScrapItem.Name or "nil",
-        })
-    end
-
     local function safeStartDrag(r, model)
         if r and r.StartDrag and model and model.Parent then
-            local ok, err = pcall(function() r.StartDrag:FireServer(model) end)
-            if not ok then logKV("StartDrag_FAIL", { name = model.Name, err = tostring(err) }) end
+            local ok = pcall(function() r.StartDrag:FireServer(model) end)
             return ok
         end
         return false
     end
     local function safeStopDrag(r, model)
         if r and r.StopDrag and model and model.Parent then
-            local ok, err = pcall(function() r.StopDrag:FireServer(model) end)
-            if not ok then logKV("StopDrag_FAIL", { name = model.Name, err = tostring(err) }) end
+            local ok = pcall(function() r.StopDrag:FireServer(model) end)
             return ok
         end
         return false
@@ -580,7 +274,6 @@ return function(C, R, UI)
     end
 
     local function burnFlow(model, campfire)
-        local t0 = now()
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
@@ -588,16 +281,13 @@ return function(C, R, UI)
         pivotOverTarget(model, campfire)
         task.wait(ACTION_HOLD)
         if r.BurnItem then
-            local ok, err = pcall(function() r.BurnItem:FireServer(campfire, Instance.new("Model")) end)
-            if not ok then logKV("BurnItem_FAIL", { err = tostring(err), name = model and model.Name }) end
+            pcall(function() r.BurnItem:FireServer(campfire, Instance.new("Model")) end)
         end
-        local consumed = awaitConsumedOrMoved(model, CONSUME_WAIT)
+        awaitConsumedOrMoved(model, CONSUME_WAIT)
         if started then finallyStopDrag(r, model) end
         refreshPrompts(model)
-        logKV("burnFlow", { name = model and model.Name, started = started, consumed = consumed, ms = math.floor((now()-t0)*1000) })
     end
     local function cookFlow(model, campfire)
-        local t0 = now()
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
@@ -605,14 +295,13 @@ return function(C, R, UI)
         moveModel(model, fireHandoffCF(campfire))
         local okCall = false
         if r.CookItem then
-            local ok, err = pcall(function() r.CookItem:FireServer(campfire, Instance.new("Model")) end)
+            local ok = pcall(function() r.CookItem:FireServer(campfire, Instance.new("Model")) end)
             okCall = ok
-            if not ok then logKV("CookItem_FAIL", { err = tostring(err), name = model and model.Name }) end
         end
         if not okCall then pivotOverTarget(model, campfire) end
         task.wait(ACTION_HOLD)
         local cookedName = RAW_TO_COOKED[model.Name]
-        local consumed = awaitConsumedOrMoved(model, CONSUME_WAIT)
+        awaitConsumedOrMoved(model, CONSUME_WAIT)
         if started then finallyStopDrag(r, model) end
         task.delay(0.15, function()
             if cookedName then
@@ -643,10 +332,8 @@ return function(C, R, UI)
             end
         end)
         refreshPrompts(model)
-        logKV("cookFlow", { name = model and model.Name, started = started, okCall = okCall, consumed = consumed, ms = math.floor((now()-t0)*1000) })
     end
     local function scrapFlow(model, scrapper)
-        local t0 = now()
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
@@ -654,16 +341,14 @@ return function(C, R, UI)
         moveModel(model, scrCenterCF(scrapper) + Vector3.new(0, 1.5, 0))
         local okCall = false
         if r.ScrapItem then
-            local ok, err = pcall(function() r.ScrapItem:FireServer(scrapper, Instance.new("Model")) end)
+            local ok = pcall(function() r.ScrapItem:FireServer(scrapper, Instance.new("Model")) end)
             okCall = ok
-            if not ok then logKV("ScrapItem_FAIL", { err = tostring(err), name = model and model.Name }) end
         end
         if not okCall then pivotOverTarget(model, scrapper) end
         task.wait(ACTION_HOLD)
-        local consumed = awaitConsumedOrMoved(model, CONSUME_WAIT)
+        awaitConsumedOrMoved(model, CONSUME_WAIT)
         if started then finallyStopDrag(r, model) end
         refreshPrompts(model)
-        logKV("scrapFlow", { name = model and model.Name, started = started, okCall = okCall, consumed = consumed, ms = math.floor((now()-t0)*1000) })
     end
 
     local dropCounter = 0
@@ -697,13 +382,11 @@ return function(C, R, UI)
 
     local function dropNearPlayer(model)
         if not (model and model.Parent) then return false end
-        local t0 = now()
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
         local cf = groundCFAroundPlayer(model) or computeForwardDropCF()
         if not cf then
-            logKV("dropNearPlayer_NO_CF", { name = model.Name })
             return false
         end
         local snap = setCollide(model, false)
@@ -732,7 +415,6 @@ return function(C, R, UI)
                 end
             end)
         end)
-        logKV("dropNearPlayer_OK", { name = model.Name, started = started, ms = math.floor((now()-t0)*1000) })
         return true
     end
 
@@ -904,7 +586,6 @@ return function(C, R, UI)
 
     local function startConveyor(model, orbPos, jobId)
         if not (model and model.Parent) then return end
-        local t0 = now()
         pcall(function()
             model:SetAttribute(INFLT_ATTR, now())
             model:SetAttribute(JOB_ATTR, tostring(jobId))
@@ -927,9 +608,7 @@ return function(C, R, UI)
             end
         end
 
-        local loopsUp, loopsAcross = 0, 0
         while model and model.Parent do
-            loopsUp += 1
             local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
             if not pivot then break end
             local pos = pivot.Position
@@ -945,7 +624,6 @@ return function(C, R, UI)
             task.wait(STEP_WAIT)
         end
         while model and model.Parent do
-            loopsAcross += 1
             local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
             if not pivot then break end
             local pos = pivot.Position
@@ -964,14 +642,11 @@ return function(C, R, UI)
         end
 
         dropFromOrbSmooth(model, orbPos, jobId, snapOrig, H)
-        logKV("conveyorOne", { name = model.Name, loopsUp = loopsUp, loopsAcross = loopsAcross, ms = math.floor((now()-t0)*1000) })
     end
 
     local function runConveyorWave(centerPos, orbPos, targets, jobId)
-        local t0 = now()
         local picked = getCandidates(centerPos, ORB_PICK_RADIUS, targets, jobId)
         if #picked == 0 then
-            logKV("wave", { picked = 0, ms = math.floor((now()-t0)*1000) })
             return 0
         end
 
@@ -999,8 +674,6 @@ return function(C, R, UI)
             end
         end
 
-        logKV("wave_begin", { picked = #picked, limitOn = limitOn, maxPerName = maxPerName })
-
         for i = 1, #picked do
             while active >= 10 do Run.Heartbeat:Wait() end
             spawnOne(picked[i])
@@ -1012,23 +685,17 @@ return function(C, R, UI)
             Run.Heartbeat:Wait()
         end
 
-        logKV("wave_end", { moved = #picked, ms = math.floor((now()-t0)*1000) })
         return #picked
     end
 
     local function runConveyorJob(centerPos, orbPos, targets, jobId)
         local t0 = now()
         local emptyPasses = 0
-        local waves = 0
-        local movedTotal = 0
         while true do
             if now() - t0 >= JOB_HARD_TIMEOUT_S then
-                logKV("job_timeout", { jobId = jobId, waves = waves, moved = movedTotal, sec = math.floor(now()-t0) })
                 break
             end
-            waves += 1
             local moved = runConveyorWave(centerPos, orbPos, targets, jobId)
-            movedTotal += moved
             if moved == 0 then
                 emptyPasses += 1
                 if emptyPasses >= 2 then break end
@@ -1038,7 +705,6 @@ return function(C, R, UI)
                 emptyPasses = 0
             end
         end
-        logKV("job_end", { jobId = jobId, waves = waves, moved = movedTotal, sec = math.floor(now()-t0) })
     end
 
     local function burnNearby()
@@ -1047,14 +713,12 @@ return function(C, R, UI)
         local campCF = (mainPart(camp) and mainPart(camp).CFrame or camp:GetPivot())
         requestMoreStreamingAround({ root.Position, campCF.Position })
         local jobId = ("%d-%d"):format(os.time(), math.random(1,1e6))
-        logKV("BurnCook_BEGIN", { jobId = jobId, streaming = WS.StreamingEnabled and "1" or "0" })
         local orb2 = makeOrb(root.CFrame, "orb2")
         local orb1 = makeOrb(campCF + Vector3.new(0, ORB_OFFSET_Y + 10, 0), "orb1")
         local targets = mergedSet(fuelSet, cookSet)
         runConveyorJob(orb2.Position, orb1.Position, targets, jobId)
         if orb1 then orb1:Destroy() end
         if orb2 then orb2:Destroy() end
-        logKV("BurnCook_END", { jobId = jobId })
     end
 
     local function scrapNearby()
@@ -1063,14 +727,12 @@ return function(C, R, UI)
         local scrCF = (mainPart(scr) and mainPart(scr).CFrame or scr:GetPivot())
         requestMoreStreamingAround({ root.Position, scrCF.Position })
         local jobId = ("%d-%d"):format(os.time(), math.random(1,1e6))
-        logKV("Scrap_BEGIN", { jobId = jobId, streaming = WS.StreamingEnabled and "1" or "0" })
         local orb2 = makeOrb(root.CFrame, "orb2")
         local orb1 = makeOrb(scrCF + Vector3.new(0, ORB_OFFSET_Y + 10, 0), "orb1")
         local targets = mergedSet(junkSet, scrapAlso)
         runConveyorJob(orb2.Position, orb1.Position, targets, jobId)
         if orb1 then orb1:Destroy() end
         if orb2 then orb2:Destroy() end
-        logKV("Scrap_END", { jobId = jobId })
     end
 
     local function setFromChoice(choice)
@@ -1089,22 +751,14 @@ return function(C, R, UI)
     local _bringBusy = false
     local function fastBringToGround(selectedSet)
         if not selectedSet or next(selectedSet) == nil then
-            logLine("fastBringToGround: no selection")
             return
         end
         if _bringBusy then
-            logLine("fastBringToGround: busy")
             return
         end
         _bringBusy = true
 
-        local t0 = now()
-        local passDropsTotal = 0
-        local passQueuedTotal = 0
-        local passScannedTotal = 0
-        local passes = 0
-
-        local ok, err = pcall(function()
+        local ok = pcall(function()
             dropCounter = 0
             local itemsFolder = itemsRootOrNil(); if not itemsFolder then return end
             local root = hrp()
@@ -1115,7 +769,6 @@ return function(C, R, UI)
             local function scanQueue(alreadyMoved)
                 local perNameCount, seenModel, queue = {}, {}, {}
                 local desc = itemsFolder:GetDescendants()
-                passScannedTotal += #desc
                 for _,d in ipairs(desc) do
                     local m = nil
                     if d:IsA("Model") then
@@ -1137,29 +790,17 @@ return function(C, R, UI)
                         end
                     end
                 end
-                return queue, #desc
+                return queue
             end
 
             local alreadyMoved = {}
             local maxPasses = 3
             for pass = 1, maxPasses do
-                passes = pass
                 if root then
                     requestMoreStreamingAround({ root.Position })
                 end
 
-                local queue, scannedN = scanQueue(alreadyMoved)
-                passQueuedTotal += #queue
-                logKV("BringPass", {
-                    pass = pass,
-                    scannedDesc = scannedN,
-                    queued = #queue,
-                    limitOn = limitOn,
-                    maxPerName = maxPerName,
-                    luaKB = luaKB(),
-                    totalMemMB = totalMemMB() or "nil",
-                    streaming = WS.StreamingEnabled and "1" or "0"
-                })
+                local queue = scanQueue(alreadyMoved)
 
                 if #queue == 0 then
                     if WS.StreamingEnabled and root then
@@ -1176,7 +817,6 @@ return function(C, R, UI)
                         if dropNearPlayer(m) then dropped += 1 end
                         if i % 25 == 0 then Run.Heartbeat:Wait() end
                     end
-                    passDropsTotal += dropped
                     if WS.StreamingEnabled and dropped > 0 then
                         task.wait(0.10)
                     end
@@ -1185,21 +825,9 @@ return function(C, R, UI)
         end)
 
         _bringBusy = false
-
         if not ok then
-            logKV("fastBringToGround_FAIL", { err = tostring(err), ms = math.floor((now()-t0)*1000) })
             return
         end
-
-        logKV("BringDone", {
-            passes = passes,
-            queuedTotal = passQueuedTotal,
-            droppedTotal = passDropsTotal,
-            scannedDescTotal = passScannedTotal,
-            ms = math.floor((now()-t0)*1000),
-            luaKB = luaKB(),
-            totalMemMB = totalMemMB() or "nil"
-        })
     end
 
     local function multiSelectDropdown(args)
@@ -1212,9 +840,6 @@ return function(C, R, UI)
         })
     end
 
-    logLine("module_init")
-    logRemotesOnce()
-
     tab:Section({ Title = "Actions" })
     tab:Button({ Title = "Burn/Cook Nearby", Callback = burnNearby })
     tab:Button({ Title = "Scrap Nearby",      Callback = scrapNearby })
@@ -1225,7 +850,6 @@ return function(C, R, UI)
         Default = C.State.BringLimitEnabled and true or false,
         Callback = function(on)
             C.State.BringLimitEnabled = on and true or false
-            logKV("LimitToggle", { on = C.State.BringLimitEnabled })
         end
     })
     tab:Slider({
@@ -1239,38 +863,37 @@ return function(C, R, UI)
             nv = tonumber(nv)
             if nv then
                 C.State.BringLimitAmount = math.clamp(nv, 1, 100)
-                logKV("LimitAmount", { v = C.State.BringLimitAmount })
             end
         end
     })
 
     tab:Section({ Title = "Junk → Ground (Multi)" })
     multiSelectDropdown({ title = "Select Junk Items", values = junkItems, setter = function(s) selJunkMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() logLine("Bring Junk click"); fastBringToGround(selJunkMany) end })
+    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selJunkMany) end })
 
     tab:Section({ Title = "Fuel → Ground (Multi)" })
     multiSelectDropdown({ title = "Select Fuel Items", values = fuelItems, setter = function(s) selFuelMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() logLine("Bring Fuel click"); fastBringToGround(selFuelMany) end })
+    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selFuelMany) end })
 
     tab:Section({ Title = "Food → Ground (Multi)" })
     multiSelectDropdown({ title = "Select Food Items", values = foodItems, setter = function(s) selFoodMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() logLine("Bring Food click"); fastBringToGround(selFoodMany) end })
+    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selFoodMany) end })
 
     tab:Section({ Title = "Medical → Ground (Multi)" })
     multiSelectDropdown({ title = "Select Medical Items", values = medicalItems, setter = function(s) selMedicalMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() logLine("Bring Medical click"); fastBringToGround(selMedicalMany) end })
+    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selMedicalMany) end })
 
     tab:Section({ Title = "Weapons/Armor → Ground (Multi)" })
     multiSelectDropdown({ title = "Select Weapons/Armor", values = weaponsArmor, setter = function(s) selWAMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() logLine("Bring W/A click"); fastBringToGround(selWAMany) end })
+    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selWAMany) end })
 
     tab:Section({ Title = "Ammo & Misc → Ground (Multi)" })
     multiSelectDropdown({ title = "Select Ammo/Misc", values = ammoMisc, setter = function(s) selMiscMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() logLine("Bring Misc click"); fastBringToGround(selMiscMany) end })
+    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selMiscMany) end })
 
     tab:Section({ Title = "Pelts → Ground (Multi)" })
     multiSelectDropdown({ title = "Select Pelts", values = pelts, setter = function(s) selPeltMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() logLine("Bring Pelts click"); fastBringToGround(selPeltMany) end })
+    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selPeltMany) end })
 
     do
         local ORB_RADIUS     = 2.2
@@ -1351,7 +974,6 @@ return function(C, R, UI)
                                 rec.t = now()
                                 rec.y0 = pos.Y
                                 kickDown(m, orbY)
-                                logKV("orbKick", { name = m.Name, kicks = rec.kicks })
                             else
                                 watched[m] = nil
                             end
@@ -1363,6 +985,4 @@ return function(C, R, UI)
             end
         end)
     end
-
-    logKV("module_ready", { luaKB = luaKB(), totalMemMB = totalMemMB() or "nil" })
 end
