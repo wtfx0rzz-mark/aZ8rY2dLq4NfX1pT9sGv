@@ -4,22 +4,76 @@ return function(C, R, UI)
     local RS      = C.Services.RS
     local Run     = C.Services.Run or game:GetService("RunService")
     local lp      = Players.LocalPlayer
+    local Stats   = game:GetService("Stats")
 
     local Tabs = UI and UI.Tabs or {}
     local tab  = Tabs.Bring
     assert(tab, "Bring tab not found in UI")
 
     C.State = C.State or {}
-    if C.State.BringLimitEnabled == nil then
-        C.State.BringLimitEnabled = false
-    end
-    if not tonumber(C.State.BringLimitAmount) then
-        C.State.BringLimitAmount = 10
-    end
+    if C.State.BringLimitEnabled == nil then C.State.BringLimitEnabled = false end
+    if not tonumber(C.State.BringLimitAmount) then C.State.BringLimitAmount = 10 end
+    if C.State.BringLogEnabled == nil then C.State.BringLogEnabled = false end
+    if C.State.BringTraceEnabled == nil then C.State.BringTraceEnabled = false end
+    if C.State.BringMetricsHz == nil then C.State.BringMetricsHz = 1 end
 
     local function currentLimit()
         local v = tonumber(C.State.BringLimitAmount) or 10
         return math.clamp(v, 1, 100)
+    end
+
+    local function nowStr()
+        local ok, s = pcall(function() return os.date("%H:%M:%S") end)
+        return ok and s or "??:??:??"
+    end
+
+    local function fmtNum(n)
+        if type(n) ~= "number" then return tostring(n) end
+        return string.format("%.3f", n)
+    end
+
+    local function shallowKV(t, max)
+        if type(t) ~= "table" then return tostring(t) end
+        local out, c = {}, 0
+        for k,v in pairs(t) do
+            c += 1
+            if max and c > max then out[#out+1] = "..." break end
+            out[#out+1] = tostring(k) .. "=" .. tostring(v)
+        end
+        return "{" .. table.concat(out, ",") .. "}"
+    end
+
+    local function LOG(level, msg)
+        if not (C.State.BringLogEnabled or C.State.BringTraceEnabled) then return end
+        print(("[" .. nowStr() .. "] [" .. level .. "] " .. msg))
+    end
+
+    local function INFO(msg) if C.State.BringLogEnabled then LOG("INFO", msg) end end
+    local function STAT(msg) if C.State.BringLogEnabled then LOG("STAT", msg) end end
+    local function TRACE(msg) if C.State.BringTraceEnabled then LOG("TRACE", msg) end end
+    local function ERR(msg) LOG("ERR", msg) end
+
+    local function pcallLog(tag, fn, ...)
+        local t0 = os.clock()
+        local ok, a, b, c, d = pcall(fn, ...)
+        local dt = os.clock() - t0
+        if not ok then
+            ERR(tag .. " failed: " .. tostring(a))
+        elseif C.State.BringTraceEnabled then
+            TRACE(tag .. " ok dt=" .. fmtNum(dt))
+        end
+        return ok, a, b, c, d
+    end
+
+    local function memMb()
+        local ok, mb = pcall(function()
+            if Stats and Stats.GetTotalMemoryUsageMb then
+                return Stats:GetTotalMemoryUsageMb()
+            end
+            return nil
+        end)
+        if ok and type(mb) == "number" then return mb end
+        return nil
     end
 
     local COLLIDE_OFF_SEC       = 0.22
@@ -50,7 +104,7 @@ return function(C, R, UI)
     local weaponsArmor = {
         "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
         "Chainsaw","Crossbow","Katana","Kunai","Laser cannon","Laser sword","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
-        "Sword","Ice Axe", "Thorn Body"
+        "Sword","Ice Axe","Thorn Body"
     }
     local ammoMisc = {
         "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Sapling",
@@ -70,15 +124,18 @@ return function(C, R, UI)
         local ch = Players.LocalPlayer.Character or Players.LocalPlayer.CharacterAdded:Wait()
         return ch and ch:FindFirstChild("HumanoidRootPart")
     end
+
     local function headPart()
         local ch = Players.LocalPlayer.Character
         return ch and ch:FindFirstChild("Head")
     end
+
     local function isWallVariant(m)
         if not (m and m:IsA("Model")) then return false end
         local n = (m.Name or ""):lower()
         return n == "logwall" or n == "log wall" or (n:find("log",1,true) and n:find("wall",1,true))
     end
+
     local function isUnderLogWall(inst)
         local cur = inst
         while cur and cur ~= WS do
@@ -90,10 +147,12 @@ return function(C, R, UI)
         end
         return false
     end
+
     local function hasHumanoid(model)
         if not (model and model:IsA("Model")) then return false end
         return model:FindFirstChildOfClass("Humanoid") ~= nil
     end
+
     local function isExcludedModel(m)
         if not (m and m:IsA("Model")) then return false end
         local n = (m.Name or ""):lower()
@@ -103,6 +162,7 @@ return function(C, R, UI)
         if isUnderLogWall(m) then return true end
         return false
     end
+
     local function mainPart(obj)
         if not obj or not obj.Parent then return nil end
         if obj:IsA("BasePart") then return obj end
@@ -112,6 +172,7 @@ return function(C, R, UI)
         end
         return nil
     end
+
     local function getAllParts(target)
         local t = {}
         if not target then return t end
@@ -124,6 +185,7 @@ return function(C, R, UI)
         end
         return t
     end
+
     local function bboxHeight(m)
         if m:IsA("Model") then
             local s = m:GetExtentsSize()
@@ -133,17 +195,41 @@ return function(C, R, UI)
         return (p and p.Size.Y) or 2
     end
 
+    local metrics = {
+        remoteFires = 0,
+        streamReqs = 0,
+        overlapCalls = 0,
+        overlapParts = 0,
+        candidates = 0,
+        picked = 0,
+        queued = 0,
+        dropped = 0,
+        convJobs = 0,
+        convWaves = 0,
+        convMoved = 0,
+        convActiveMax = 0,
+        convKick = 0,
+        errors = 0,
+        lastAction = "idle"
+    }
+
     local function requestMoreStreamingAround(posList)
-        if not (WS and WS.StreamingEnabled) then return end
+        if not (WS and WS.StreamingEnabled) then
+            TRACE("Streaming disabled or WS missing; skipping RequestStreamAroundAsync")
+            return
+        end
         local seen = {}
         for _,pos in ipairs(posList) do
             if typeof(pos) == "Vector3" then
-                local key = math.floor(pos.X/64).."|"..math.floor(pos.Z/64)
+                local key = math.floor(pos.X/64) .. "|" .. math.floor(pos.Z/64)
                 if not seen[key] then
                     seen[key] = true
-                    pcall(function()
+                    metrics.streamReqs += 1
+                    TRACE("RequestStreamAroundAsync pos=" .. tostring(pos))
+                    local ok = pcall(function()
                         WS:RequestStreamAroundAsync(pos)
                     end)
+                    if not ok then metrics.errors += 1 end
                 end
             end
         end
@@ -152,32 +238,55 @@ return function(C, R, UI)
 
     local function getRemote(...)
         local re = RS:FindFirstChild("RemoteEvents"); if not re then return nil end
-        for _,n in ipairs({...}) do local x=re:FindFirstChild(n); if x then return x end end
+        for _,n in ipairs({...}) do
+            local x = re:FindFirstChild(n)
+            if x then return x end
+        end
         return nil
     end
+
     local function resolveRemotes()
-        return {
+        local r = {
             StartDrag = getRemote("RequestStartDraggingItem","StartDraggingItem"),
             BurnItem  = getRemote("RequestBurnItem","BurnItem","RequestFireAdd"),
             CookItem  = getRemote("RequestCookItem","CookItem"),
             ScrapItem = getRemote("RequestScrapItem","ScrapItem","RequestWorkbenchScrap"),
             StopDrag  = getRemote("StopDraggingItem","RequestStopDraggingItem"),
         }
+        TRACE("resolveRemotes " .. shallowKV({
+            StartDrag = r.StartDrag and r.StartDrag.Name or "nil",
+            BurnItem  = r.BurnItem and r.BurnItem.Name or "nil",
+            CookItem  = r.CookItem and r.CookItem.Name or "nil",
+            ScrapItem = r.ScrapItem and r.ScrapItem.Name or "nil",
+            StopDrag  = r.StopDrag and r.StopDrag.Name or "nil",
+        }, 10))
+        return r
     end
+
     local function safeStartDrag(r, model)
         if r and r.StartDrag and model and model.Parent then
-            pcall(function() r.StartDrag:FireServer(model) end)
+            metrics.remoteFires += 1
+            TRACE("FireServer StartDrag model=" .. (model.Name or "nil"))
+            local ok = pcall(function() r.StartDrag:FireServer(model) end)
+            if not ok then metrics.errors += 1 end
             return true
         end
+        TRACE("safeStartDrag skipped " .. shallowKV({hasR=not not r, hasStart=not not (r and r.StartDrag), hasModel=not not model, hasParent=not not (model and model.Parent)}, 10))
         return false
     end
+
     local function safeStopDrag(r, model)
         if r and r.StopDrag and model and model.Parent then
-            pcall(function() r.StopDrag:FireServer(model) end)
+            metrics.remoteFires += 1
+            TRACE("FireServer StopDrag model=" .. (model.Name or "nil"))
+            local ok = pcall(function() r.StopDrag:FireServer(model) end)
+            if not ok then metrics.errors += 1 end
             return true
         end
+        TRACE("safeStopDrag skipped " .. shallowKV({hasR=not not r, hasStop=not not (r and r.StopDrag), hasModel=not not model, hasParent=not not (model and model.Parent)}, 10))
         return false
     end
+
     local function finallyStopDrag(r, model)
         task.delay(0.05, function() pcall(safeStopDrag, r, model) end)
         task.delay(0.20, function() pcall(safeStopDrag, r, model) end)
@@ -192,15 +301,20 @@ return function(C, R, UI)
             return
         end
         local snap = {}
-        for _,p in ipairs(parts) do snap[p]=p.CanCollide; p.CanCollide=false end
+        for _,p in ipairs(parts) do
+            snap[p] = p.CanCollide
+            p.CanCollide = false
+        end
         return snap
     end
+
     local function zeroAssembly(model)
         for _,p in ipairs(getAllParts(model)) do
             p.AssemblyLinearVelocity  = Vector3.new()
             p.AssemblyAngularVelocity = Vector3.new()
         end
     end
+
     local function computeForwardDropCF()
         local root = hrp(); if not root then return nil end
         local head = headPart()
@@ -209,28 +323,33 @@ return function(C, R, UI)
         local center = basePos + Vector3.new(0, DROP_ABOVE_HEAD_STUDS, 0) + look * FALLBACK_AHEAD
         return CFrame.lookAt(center, center + look)
     end
+
     local function pivotOverTarget(model, target)
-        local mp = mainPart(target); if not mp then return end
+        local mp = mainPart(target); if not mp then
+            TRACE("pivotOverTarget no mainPart target=" .. (target and target.Name or "nil"))
+            return
+        end
         local above = mp.CFrame + Vector3.new(0, FALLBACK_UP, 0)
         local snap = setCollide(model, false)
         zeroAssembly(model)
         if model:IsA("Model") then
             model:PivotTo(above)
         else
-            local p=mainPart(model); if p then p.CFrame=above end
+            local p = mainPart(model); if p then p.CFrame = above end
         end
         for _,p in ipairs(getAllParts(model)) do
             p.AssemblyLinearVelocity = Vector3.new(0,-8,0)
         end
         task.delay(COLLIDE_OFF_SEC, function() setCollide(model, true, snap) end)
     end
+
     local function moveModel(model, cf)
         local snap = setCollide(model, false)
         zeroAssembly(model)
         if model:IsA("Model") then
             model:PivotTo(cf)
         else
-            local p=mainPart(model); if p then p.CFrame=cf end
+            local p = mainPart(model); if p then p.CFrame = cf end
         end
         setCollide(model, true, snap)
     end
@@ -239,13 +358,16 @@ return function(C, R, UI)
         local p = fire:FindFirstChild("Center") or fire:FindFirstChild("InnerTouchZone") or mainPart(fire) or fire.PrimaryPart
         return (p and p.CFrame) or fire:GetPivot()
     end
+
     local function fireHandoffCF(fire) return fireCenterCF(fire) + Vector3.new(0, 1.5, 0) end
+
     local function scrCenterCF(scr)
         local p = mainPart(scr) or scr.PrimaryPart
         return (p and p.CFrame) or scr:GetPivot()
     end
 
     local function refreshPrompts(model)
+        if not (model and model.Parent) then return end
         for _,d in ipairs(model:GetDescendants()) do
             if d:IsA("ProximityPrompt") then
                 local was = d.Enabled
@@ -267,46 +389,86 @@ return function(C, R, UI)
     local function awaitConsumedOrMoved(model, timeout)
         local t0 = os.clock()
         local p0 = model and model.Parent or nil
+        local checks = 0
         while os.clock() - t0 < (timeout or 1) do
-            if not model or not model.Parent then return true end
-            if model.Parent ~= p0 then return true end
-            if model:GetAttribute("Consumed") == true then return true end
+            checks += 1
+            if not model or not model.Parent then
+                TRACE("awaitConsumedOrMoved done: model missing after " .. checks .. " checks")
+                return true
+            end
+            if model.Parent ~= p0 then
+                TRACE("awaitConsumedOrMoved done: parent changed after " .. checks .. " checks")
+                return true
+            end
+            if model:GetAttribute("Consumed") == true then
+                TRACE("awaitConsumedOrMoved done: Consumed attr true after " .. checks .. " checks")
+                return true
+            end
             Run.Heartbeat:Wait()
         end
+        TRACE("awaitConsumedOrMoved timeout after " .. checks .. " checks model=" .. (model and model.Name or "nil"))
         return false
     end
 
     local function burnFlow(model, campfire)
+        metrics.lastAction = "burnFlow"
+        INFO("burnFlow begin model=" .. (model and model.Name or "nil"))
+        local t0 = os.clock()
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
         task.wait(DRAG_SETTLE)
         pivotOverTarget(model, campfire)
         task.wait(ACTION_HOLD)
-        if r.BurnItem then pcall(function() r.BurnItem:FireServer(campfire, Instance.new("Model")) end) end
+        if r.BurnItem then
+            metrics.remoteFires += 1
+            TRACE("FireServer BurnItem campfire=" .. (campfire and campfire.Name or "nil"))
+            local ok = pcall(function() r.BurnItem:FireServer(campfire, Instance.new("Model")) end)
+            if not ok then metrics.errors += 1 end
+        else
+            TRACE("burnFlow no BurnItem remote")
+        end
         local _ = awaitConsumedOrMoved(model, CONSUME_WAIT)
         if started then finallyStopDrag(r, model) end
         refreshPrompts(model)
+        INFO("burnFlow end dt=" .. fmtNum(os.clock() - t0))
     end
+
     local function cookFlow(model, campfire)
+        metrics.lastAction = "cookFlow"
+        INFO("cookFlow begin model=" .. (model and model.Name or "nil"))
+        local t0 = os.clock()
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
         task.wait(DRAG_SETTLE)
         moveModel(model, fireHandoffCF(campfire))
         local ok = false
-        if r.CookItem then ok = pcall(function() r.CookItem:FireServer(campfire, Instance.new("Model")) end) end
-        if not ok then pivotOverTarget(model, campfire) end
+        if r.CookItem then
+            metrics.remoteFires += 1
+            TRACE("FireServer CookItem campfire=" .. (campfire and campfire.Name or "nil"))
+            ok = pcall(function() r.CookItem:FireServer(campfire, Instance.new("Model")) end)
+            if not ok then metrics.errors += 1 end
+        else
+            TRACE("cookFlow no CookItem remote")
+        end
+        if not ok then
+            TRACE("cookFlow fallback pivotOverTarget")
+            pivotOverTarget(model, campfire)
+        end
         task.wait(ACTION_HOLD)
         local cookedName = RAW_TO_COOKED[model.Name]
         local _ = awaitConsumedOrMoved(model, CONSUME_WAIT)
         if started then finallyStopDrag(r, model) end
         task.delay(0.15, function()
             if cookedName then
+                local tScan0 = os.clock()
                 local cooked = (function()
                     local center = fireCenterCF(campfire).Position
                     local best, bestD
-                    for _,m in ipairs(WS:GetDescendants()) do
+                    local desc = WS:GetDescendants()
+                    TRACE("cookFlow scan descendants=" .. tostring(#desc) .. " cookedName=" .. tostring(cookedName))
+                    for _,m in ipairs(desc) do
                         if m:IsA("Model") and m.Name == cookedName and not isExcludedModel(m) and not isUnderLogWall(m) then
                             local mp = mainPart(m)
                             if mp then
@@ -317,33 +479,55 @@ return function(C, R, UI)
                     end
                     return best
                 end)()
+                TRACE("cookFlow cookedScan dt=" .. fmtNum(os.clock() - tScan0) .. " found=" .. tostring(cooked and cooked:GetFullName() or "nil"))
                 if cooked then
                     local center = fireCenterCF(campfire).Position
                     local mp = mainPart(cooked)
                     if mp then
-                        local dir = (mp.Position - center).Unit
+                        local dir = (mp.Position - center)
+                        if dir.Magnitude > 0.001 then dir = dir.Unit else dir = Vector3.zAxis end
                         local snap = setCollide(cooked, false)
-                        if cooked:IsA("Model") then cooked:PivotTo(mp.CFrame + CFrame.new(dir*1.5).Position) end
+                        if cooked:IsA("Model") then
+                            cooked:PivotTo(mp.CFrame + CFrame.new(dir*1.5).Position)
+                        end
                         setCollide(cooked, true, snap)
                     end
                 end
+            else
+                TRACE("cookFlow no cookedName mapping for " .. tostring(model and model.Name or "nil"))
             end
         end)
         refreshPrompts(model)
+        INFO("cookFlow end dt=" .. fmtNum(os.clock() - t0))
     end
+
     local function scrapFlow(model, scrapper)
+        metrics.lastAction = "scrapFlow"
+        INFO("scrapFlow begin model=" .. (model and model.Name or "nil"))
+        local t0 = os.clock()
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
         task.wait(DRAG_SETTLE)
         moveModel(model, scrCenterCF(scrapper) + Vector3.new(0, 1.5, 0))
         local ok = false
-        if r.ScrapItem then ok = pcall(function() r.ScrapItem:FireServer(scrapper, Instance.new("Model")) end) end
-        if not ok then pivotOverTarget(model, scrapper) end
+        if r.ScrapItem then
+            metrics.remoteFires += 1
+            TRACE("FireServer ScrapItem scrapper=" .. (scrapper and scrapper.Name or "nil"))
+            ok = pcall(function() r.ScrapItem:FireServer(scrapper, Instance.new("Model")) end)
+            if not ok then metrics.errors += 1 end
+        else
+            TRACE("scrapFlow no ScrapItem remote")
+        end
+        if not ok then
+            TRACE("scrapFlow fallback pivotOverTarget")
+            pivotOverTarget(model, scrapper)
+        end
         task.wait(ACTION_HOLD)
         local _ = awaitConsumedOrMoved(model, CONSUME_WAIT)
         if started then finallyStopDrag(r, model) end
         refreshPrompts(model)
+        INFO("scrapFlow end dt=" .. fmtNum(os.clock() - t0))
     end
 
     local dropCounter = 0
@@ -377,6 +561,9 @@ return function(C, R, UI)
 
     local function dropNearPlayer(model)
         if not (model and model.Parent) then return end
+        metrics.lastAction = "dropNearPlayer"
+        metrics.dropped += 1
+        TRACE("dropNearPlayer model=" .. (model.Name or "nil") .. " idx=" .. tostring(dropCounter+1))
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
@@ -394,8 +581,9 @@ return function(C, R, UI)
             p.Anchored = false
             p.AssemblyLinearVelocity  = Vector3.new()
             p.AssemblyAngularVelocity = Vector3.new()
-            pcall(function() p:SetNetworkOwner(nil) end)
-            pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
+            local ok1 = pcall(function() p:SetNetworkOwner(nil) end)
+            local ok2 = pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
+            if (not ok1) or (not ok2) then metrics.errors += 1 end
         end
         refreshPrompts(model)
         task.delay(0.5, function()
@@ -411,15 +599,30 @@ return function(C, R, UI)
 
     local function makeOrb(cf, name)
         local part = Instance.new("Part")
-        part.Name = name; part.Shape = Enum.PartType.Ball; part.Size = Vector3.new(1.5,1.5,1.5)
-        part.Material = Enum.Material.Neon; part.Color = Color3.fromRGB(255,200,50)
-        part.Anchored = true; part.CanCollide = false; part.CanTouch = false; part.CanQuery = false
-        part.CFrame = cf; part.Parent = WS
-        local light = Instance.new("PointLight"); light.Range = 16; light.Brightness = 3; light.Parent = part
+        part.Name = name
+        part.Shape = Enum.PartType.Ball
+        part.Size = Vector3.new(1.5,1.5,1.5)
+        part.Material = Enum.Material.Neon
+        part.Color = Color3.fromRGB(255,200,50)
+        part.Anchored = true
+        part.CanCollide = false
+        part.CanTouch = false
+        part.CanQuery = false
+        part.CFrame = cf
+        part.Parent = WS
+        local light = Instance.new("PointLight")
+        light.Range = 16
+        light.Brightness = 3
+        light.Parent = part
+        TRACE("makeOrb name=" .. tostring(name) .. " pos=" .. tostring(cf.Position))
         return part
     end
+
     local function mergedSet(a, b)
-        local t = {}; for k,v in pairs(a) do if v then t[k]=true end end; for k,v in pairs(b) do if v then t[k]=true end end; return t
+        local t = {}
+        for k,v in pairs(a) do if v then t[k]=true end end
+        for k,v in pairs(b) do if v then t[k]=true end end
+        return t
     end
 
     local DRAG_SPEED    = 18
@@ -435,52 +638,10 @@ return function(C, R, UI)
             local p = mainPart(model); if p then p.CFrame = cf end
         end
     end
-    local function moveVerticalToY(model, targetY, lookDir, keepNoCollide)
-        if not (model and model.Parent) then return end
-        local snap = keepNoCollide and nil or setCollide(model, false)
-        zeroAssembly(model)
-        while model and model.Parent do
-            local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
-            if not pivot then break end
-            local pos = pivot.Position
-            local dy = targetY - pos.Y
-            if math.abs(dy) <= 0.4 then break end
-            local stepY = math.sign(dy) * math.min(DRAG_SPEED * VERTICAL_MULT * STEP_WAIT, math.abs(dy))
-            local newPos = Vector3.new(pos.X, pos.Y + stepY, pos.Z)
-            setPivot(model, CFrame.new(newPos, newPos + (lookDir or Vector3.zAxis)))
-            for _,p in ipairs(getAllParts(model)) do
-                p.AssemblyLinearVelocity  = Vector3.new()
-                p.AssemblyAngularVelocity = Vector3.new()
-            end
-            task.wait(STEP_WAIT)
-        end
-        if not keepNoCollide then setCollide(model, true, snap) end
-    end
-    local function moveHorizontalToXZ(model, destXZ, yFixed, keepNoCollide)
-        if not (model and model.Parent) then return end
-        local snap = keepNoCollide and nil or setCollide(model, false)
-        zeroAssembly(model)
-        while model and model.Parent do
-            local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
-            if not pivot then break end
-            local pos = pivot.Position
-            local delta = Vector3.new(destXZ.X - pos.X, 0, destXZ.Z - pos.Z)
-            local dist = delta.Magnitude
-            if dist <= 1.0 then break end
-            local step = math.min(DRAG_SPEED * STEP_WAIT, dist)
-            local dir = delta.Unit
-            local newPos = Vector3.new(pos.X, yFixed or pos.Y, pos.Z) + dir * step
-            setPivot(model, CFrame.new(newPos, newPos + dir))
-            for _,p in ipairs(getAllParts(model)) do
-                p.AssemblyLinearVelocity  = Vector3.new()
-                p.AssemblyAngularVelocity = Vector3.new()
-            end
-            task.wait(STEP_WAIT)
-        end
-        if not keepNoCollide then setCollide(model, true, snap) end
-    end
+
     local function dropFromOrbSmooth(model, orbPos, jobId, origSnap, H)
         if not (model and model.Parent) then return end
+        metrics.lastAction = "dropFromOrbSmooth"
         zeroAssembly(model)
         local above = orbPos + Vector3.new(0, math.max(0.5, H * 0.25), 0)
         setPivot(model, CFrame.new(above))
@@ -488,8 +649,9 @@ return function(C, R, UI)
             p.Anchored = false
             p.AssemblyLinearVelocity  = Vector3.new()
             p.AssemblyAngularVelocity = Vector3.new()
-            pcall(function() p:SetNetworkOwner(nil) end)
-            pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
+            local ok1 = pcall(function() p:SetNetworkOwner(nil) end)
+            local ok2 = pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
+            if (not ok1) or (not ok2) then metrics.errors += 1 end
         end
         setCollide(model, true, origSnap)
         pcall(function()
@@ -507,7 +669,9 @@ return function(C, R, UI)
         end)
     end
 
-    local function itemsRootOrNil() return WS:FindFirstChild("Items") end
+    local function itemsRootOrNil()
+        return WS:FindFirstChild("Items")
+    end
 
     local function isInsideTree(m)
         local cur = m and m.Parent
@@ -532,7 +696,6 @@ return function(C, R, UI)
             if isInsideTree(m) then return false end
             return true
         end
-
         if selectedSet["Berry"] and nm == "Berry" then
             if itemsFolder and m.Parent ~= itemsFolder then return false end
             if isInsideTree(m) then return false end
@@ -587,23 +750,26 @@ return function(C, R, UI)
         if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
         if isExcludedModel(m) or isUnderLogWall(m) then return false end
         if m.Name == "Log" and isWallVariant(m) then return false end
+
         local tIn = m:GetAttribute(INFLT_ATTR)
         local jIn = m:GetAttribute(JOB_ATTR)
         if tIn and jIn and tostring(jIn) ~= tostring(jobId) and os.clock() - tIn < STUCK_TTL then
             return false
         end
-        if not nameMatches(selectedSet, m) then
-            return false
-        end
+
+        if not nameMatches(selectedSet, m) then return false end
         local mp = mainPart(m); if not mp then return false end
         return (mp.Position - center).Magnitude <= radius
     end
 
     local function getCandidates(center, radius, selectedSet, jobId)
+        local t0 = os.clock()
         local params = OverlapParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
         params.FilterDescendantsInstances = { lp.Character }
+        metrics.overlapCalls += 1
         local parts = WS:GetPartBoundsInRadius(center, radius, params) or {}
+        metrics.overlapParts += #parts
         local uniq, out = {}, {}
         for _,part in ipairs(parts) do
             local pick = nil
@@ -615,11 +781,14 @@ return function(C, R, UI)
                 out[#out+1] = pick
             end
         end
+        metrics.candidates += #out
+        TRACE("getCandidates center=" .. tostring(center) .. " r=" .. tostring(radius) .. " parts=" .. tostring(#parts) .. " models=" .. tostring(#out) .. " dt=" .. fmtNum(os.clock()-t0))
         return out
     end
 
     local function startConveyor(model, orbPos, jobId)
         if not (model and model.Parent) then return end
+        metrics.lastAction = "startConveyor"
         pcall(function()
             model:SetAttribute(INFLT_ATTR, os.clock())
             model:SetAttribute(JOB_ATTR, tostring(jobId))
@@ -635,12 +804,12 @@ return function(C, R, UI)
         zeroAssembly(model)
 
         local function setPivotLocal(model0, cf)
-            if model0:IsA("Model") then
-                model0:PivotTo(cf)
-            else
+            if model0:IsA("Model") then model0:PivotTo(cf) else
                 local p = mainPart(model0); if p then p.CFrame = cf end
             end
         end
+
+        local stepsV, stepsH = 0, 0
         while model and model.Parent do
             local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
             if not pivot then break end
@@ -654,8 +823,10 @@ return function(C, R, UI)
                 p.AssemblyLinearVelocity  = Vector3.new()
                 p.AssemblyAngularVelocity = Vector3.new()
             end
+            stepsV += 1
             task.wait(STEP_WAIT)
         end
+
         while model and model.Parent do
             local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
             if not pivot then break end
@@ -671,15 +842,23 @@ return function(C, R, UI)
                 p.AssemblyLinearVelocity  = Vector3.new()
                 p.AssemblyAngularVelocity = Vector3.new()
             end
+            stepsH += 1
             task.wait(STEP_WAIT)
         end
 
+        TRACE("startConveyor done model=" .. (model.Name or "nil") .. " stepsV=" .. tostring(stepsV) .. " stepsH=" .. tostring(stepsH))
         dropFromOrbSmooth(model, orbPos, jobId, snapOrig, H)
     end
 
     local function runConveyorWave(centerPos, orbPos, targets, jobId)
+        metrics.lastAction = "runConveyorWave"
+        metrics.convWaves += 1
+        local t0 = os.clock()
         local picked = getCandidates(centerPos, ORB_PICK_RADIUS, targets, jobId)
-        if #picked == 0 then return 0 end
+        if #picked == 0 then
+            TRACE("runConveyorWave none dt=" .. fmtNum(os.clock()-t0))
+            return 0
+        end
 
         local limitOn = C.State.BringLimitEnabled and true or false
         local maxPerName = currentLimit()
@@ -698,32 +877,45 @@ return function(C, R, UI)
         local function spawnOne(m)
             if m and m.Parent then
                 active += 1
+                if active > metrics.convActiveMax then metrics.convActiveMax = active end
                 task.spawn(function()
                     startConveyor(m, orbPos, jobId)
                     active -= 1
                 end)
             end
         end
+
         for i = 1, #picked do
             while active >= 10 do Run.Heartbeat:Wait() end
             spawnOne(picked[i])
             task.wait(0.5)
         end
+
         local deadline = os.clock() + math.max(5, 0.5 * #picked + 5)
         while active > 0 and os.clock() < deadline do
             Run.Heartbeat:Wait()
         end
+
+        metrics.convMoved += #picked
+        TRACE("runConveyorWave moved=" .. tostring(#picked) .. " dt=" .. fmtNum(os.clock()-t0))
         return #picked
     end
 
     local function runConveyorJob(centerPos, orbPos, targets, jobId)
+        metrics.lastAction = "runConveyorJob"
+        metrics.convJobs += 1
+        INFO("runConveyorJob begin jobId=" .. tostring(jobId) .. " center=" .. tostring(centerPos) .. " orb=" .. tostring(orbPos))
         local t0 = os.clock()
         local emptyPasses = 0
         while true do
-            if os.clock() - t0 >= JOB_HARD_TIMEOUT_S then break end
+            if os.clock() - t0 >= JOB_HARD_TIMEOUT_S then
+                TRACE("runConveyorJob hard-timeout jobId=" .. tostring(jobId))
+                break
+            end
             local moved = runConveyorWave(centerPos, orbPos, targets, jobId)
             if moved == 0 then
                 emptyPasses += 1
+                TRACE("runConveyorJob emptyPass=" .. tostring(emptyPasses))
                 if emptyPasses >= 2 then break end
                 requestMoreStreamingAround({ centerPos, orbPos })
                 task.wait(0.2)
@@ -731,11 +923,16 @@ return function(C, R, UI)
                 emptyPasses = 0
             end
         end
+        INFO("runConveyorJob end jobId=" .. tostring(jobId) .. " dt=" .. fmtNum(os.clock()-t0))
     end
 
     local function burnNearby()
-        local camp = CAMPFIRE_PATH; if not camp then return end
-        local root = hrp(); if not root then return end
+        metrics.lastAction = "burnNearby"
+        INFO("Burn/Cook Nearby clicked")
+        local camp = CAMPFIRE_PATH
+        if not camp then INFO("burnNearby no campfire path") return end
+        local root = hrp()
+        if not root then INFO("burnNearby no HRP") return end
         local campCF = (mainPart(camp) and mainPart(camp).CFrame or camp:GetPivot())
         requestMoreStreamingAround({ root.Position, campCF.Position })
         local jobId = ("%d-%d"):format(os.time(), math.random(1,1e6))
@@ -746,9 +943,14 @@ return function(C, R, UI)
         if orb1 then orb1:Destroy() end
         if orb2 then orb2:Destroy() end
     end
+
     local function scrapNearby()
-        local scr = SCRAPPER_PATH; if not scr then return end
-        local root = hrp(); if not root then return end
+        metrics.lastAction = "scrapNearby"
+        INFO("Scrap Nearby clicked")
+        local scr = SCRAPPER_PATH
+        if not scr then INFO("scrapNearby no scrapper path") return end
+        local root = hrp()
+        if not root then INFO("scrapNearby no HRP") return end
         local scrCF = (mainPart(scr) and mainPart(scr).CFrame or scr:GetPivot())
         requestMoreStreamingAround({ root.Position, scrCF.Position })
         local jobId = ("%d-%d"):format(os.time(), math.random(1,1e6))
@@ -763,35 +965,38 @@ return function(C, R, UI)
     local function setFromChoice(choice)
         local s = {}
         if type(choice) == "table" then
-            for _,v in ipairs(choice) do if v and v ~= "" then s[v]=true end end
+            for _,v in ipairs(choice) do if v and v ~= "" then s[v] = true end end
         elseif choice and choice ~= "" then
             s[choice] = true
         end
         return s
     end
 
-    local selJunkMany, selFuelMany, selFoodMany, selMedicalMany, selWAMany, selMiscMany, selPeltMany =
-        {},{},{},{},{},{},{}
+    local selJunkMany, selFuelMany, selFoodMany, selMedicalMany, selWAMany, selMiscMany, selPeltMany = {},{},{},{},{},{},{}
 
     local _bringBusy = false
     local function fastBringToGround(selectedSet)
-        if not selectedSet or next(selectedSet) == nil then return end
-        if _bringBusy then return end
+        if not selectedSet or next(selectedSet) == nil then INFO("fastBringToGround no selection") return end
+        if _bringBusy then INFO("fastBringToGround busy") return end
         _bringBusy = true
+        metrics.lastAction = "fastBringToGround"
+        local tAll = os.clock()
         local ok = pcall(function()
             dropCounter = 0
             local perNameCount, seenModel, queue = {}, {}, {}
-            local itemsFolder = itemsRootOrNil(); if not itemsFolder then return end
+            local itemsFolder = itemsRootOrNil()
+            if not itemsFolder then INFO("fastBringToGround: Items missing") return end
 
             local root = hrp()
-            if root then
-                requestMoreStreamingAround({ root.Position })
-            end
+            if root then requestMoreStreamingAround({ root.Position }) end
 
             local limitOn = C.State.BringLimitEnabled and true or false
             local maxPerName = currentLimit()
 
-            for _,d in ipairs(itemsFolder:GetDescendants()) do
+            local t0 = os.clock()
+            local desc = itemsFolder:GetDescendants()
+            TRACE("fastBringToGround scan descendants=" .. tostring(#desc) .. " limitOn=" .. tostring(limitOn) .. " maxPerName=" .. tostring(maxPerName))
+            for _,d in ipairs(desc) do
                 local m = nil
                 if d:IsA("Model") then
                     if nameMatches(selectedSet, d) then m = d end
@@ -812,14 +1017,24 @@ return function(C, R, UI)
                     end
                 end
             end
+            metrics.queued += #queue
+            TRACE("fastBringToGround scan done queue=" .. tostring(#queue) .. " dt=" .. fmtNum(os.clock()-t0))
 
-            for i=1,#queue do
+            local dropped = 0
+            for i = 1, #queue do
                 dropNearPlayer(queue[i])
+                dropped += 1
                 if i % 25 == 0 then Run.Heartbeat:Wait() end
             end
+            TRACE("fastBringToGround dropped=" .. tostring(dropped))
         end)
         _bringBusy = false
-        if not ok then return end
+        if not ok then
+            metrics.errors += 1
+            ERR("fastBringToGround crashed inside pcall")
+            return
+        end
+        INFO("fastBringToGround end dt=" .. fmtNum(os.clock()-tAll))
     end
 
     local function multiSelectDropdown(args)
@@ -828,9 +1043,60 @@ return function(C, R, UI)
             Values = args.values,
             Multi = true,
             AllowNone = true,
-            Callback = function(choice) args.setter(setFromChoice(choice)) end
+            Callback = function(choice)
+                local set = setFromChoice(choice)
+                TRACE("Dropdown " .. tostring(args.title) .. " choice=" .. (type(choice) == "table" and ("count=" .. tostring(#choice)) or tostring(choice)))
+                args.setter(set)
+            end
         })
     end
+
+    tab:Section({ Title = "Debug Logging" })
+    tab:Toggle({
+        Title = "Logging",
+        Default = C.State.BringLogEnabled and true or false,
+        Callback = function(on)
+            C.State.BringLogEnabled = on and true or false
+            INFO("Logging " .. (C.State.BringLogEnabled and "ENABLED" or "DISABLED"))
+        end
+    })
+    tab:Toggle({
+        Title = "Trace (very verbose)",
+        Default = C.State.BringTraceEnabled and true or false,
+        Callback = function(on)
+            C.State.BringTraceEnabled = on and true or false
+            INFO("Trace " .. (C.State.BringTraceEnabled and "ENABLED" or "DISABLED"))
+        end
+    })
+    tab:Slider({
+        Title = "Metrics Hz",
+        Value = { Min = 1, Max = 10, Default = tonumber(C.State.BringMetricsHz) or 1 },
+        Callback = function(v)
+            local nv = v
+            if type(v) == "table" then nv = v.Value or v.Current or v.CurrentValue or v.Default or v.min or v.max end
+            nv = tonumber(nv)
+            if nv then
+                C.State.BringMetricsHz = math.clamp(nv, 1, 10)
+                INFO("Metrics Hz set to " .. tostring(C.State.BringMetricsHz))
+            end
+        end
+    })
+    tab:Button({
+        Title = "Dump Counters",
+        Callback = function()
+            INFO("Counters " .. shallowKV(metrics, 50))
+        end
+    })
+    tab:Button({
+        Title = "Reset Counters",
+        Callback = function()
+            for k,_ in pairs(metrics) do
+                if type(metrics[k]) == "number" then metrics[k] = 0 end
+            end
+            metrics.lastAction = "idle"
+            INFO("Counters reset")
+        end
+    })
 
     tab:Section({ Title = "Actions" })
     tab:Button({ Title = "Burn/Cook Nearby", Callback = burnNearby })
@@ -842,6 +1108,7 @@ return function(C, R, UI)
         Default = C.State.BringLimitEnabled and true or false,
         Callback = function(on)
             C.State.BringLimitEnabled = on and true or false
+            INFO("BringLimitEnabled=" .. tostring(C.State.BringLimitEnabled))
         end
     })
     tab:Slider({
@@ -849,12 +1116,11 @@ return function(C, R, UI)
         Value = { Min = 1, Max = 100, Default = currentLimit() },
         Callback = function(v)
             local nv = v
-            if type(v) == "table" then
-                nv = v.Value or v.Current or v.CurrentValue or v.Default or v.min or v.max
-            end
+            if type(v) == "table" then nv = v.Value or v.Current or v.CurrentValue or v.Default or v.min or v.max end
             nv = tonumber(nv)
             if nv then
                 C.State.BringLimitAmount = math.clamp(nv, 1, 100)
+                INFO("BringLimitAmount=" .. tostring(C.State.BringLimitAmount))
             end
         end
     })
@@ -902,12 +1168,14 @@ return function(C, R, UI)
             local c = (mainPart(camp) and mainPart(camp).CFrame or camp:GetPivot()).Position
             return Vector3.new(c.X, c.Y + ORB_OFFSET_Y + 10, c.Z)
         end
+
         local function scrapOrbPos()
             local scr = SCRAPPER_PATH
             if not scr then return nil end
             local c = (mainPart(scr) and mainPart(scr).CFrame or scr:GetPivot()).Position
             return Vector3.new(c.X, c.Y + ORB_OFFSET_Y + 10, c.Z)
         end
+
         local function liveOrb1Pos()
             local o = WS:FindFirstChild("orb1")
             return o and o:IsA("BasePart") and o.Position or nil
@@ -915,8 +1183,10 @@ return function(C, R, UI)
 
         local function kickDown(m, orbY)
             local mp = mainPart(m); if not mp then return end
+            metrics.convKick += 1
+            TRACE("ORB kickDown model=" .. (m.Name or "nil") .. " orbY=" .. tostring(orbY))
             pcall(function() mp.Anchored = false end)
-            pcall(function() mp.AssemblyLinearVelocity  = Vector3.new(0, ORB_KICK_VY, 0) end)
+            pcall(function() mp.AssemblyLinearVelocity = Vector3.new(0, ORB_KICK_VY, 0) end)
             pcall(function() mp.AssemblyAngularVelocity = Vector3.new() end)
             pcall(function() mp:SetNetworkOwner(nil) end)
             pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
@@ -937,7 +1207,7 @@ return function(C, R, UI)
             local positions = {}
             local pLive = liveOrb1Pos(); if pLive then positions[#positions+1] = pLive end
             local pCamp = campOrbPos();  if pCamp then positions[#positions+1] = pCamp end
-            local pScr  = scrapOrbPos(); if pScr  then positions[#positions+1] = pScr  end
+            local pScr  = scrapOrbPos(); if pScr  then positions[#positions+1] = pScr end
             if #positions == 0 then return end
 
             local items = WS:FindFirstChild("Items"); if not items then return end
@@ -977,4 +1247,49 @@ return function(C, R, UI)
             end
         end)
     end
+
+    task.spawn(function()
+        local acc = 0
+        while true do
+            local dt = Run.Heartbeat:Wait()
+            acc += dt
+            local hz = tonumber(C.State.BringMetricsHz) or 1
+            local period = 1 / math.clamp(hz, 1, 10)
+            if acc >= period then
+                acc = 0
+                if C.State.BringLogEnabled then
+                    local luaKB = collectgarbage("count")
+                    local items = itemsRootOrNil()
+                    local itemsDesc = 0
+                    if items then
+                        local ok, d = pcall(function() return items:GetDescendants() end)
+                        if ok and d then itemsDesc = #d end
+                    end
+                    local mb = memMb()
+                    STAT(("METRICS luaKB=%d itemsDesc=%d last=%s remoteFires=%d streamReqs=%d overlapCalls=%d overlapParts=%d cand=%d moved=%d queued=%d dropped=%d convJobs=%d convWaves=%d convMoved=%d convActiveMax=%d convKick=%d errors=%d totalMemMB=%s")
+                        :format(
+                            math.floor(luaKB + 0.5),
+                            tonumber(itemsDesc) or 0,
+                            tostring(metrics.lastAction),
+                            metrics.remoteFires,
+                            metrics.streamReqs,
+                            metrics.overlapCalls,
+                            metrics.overlapParts,
+                            metrics.candidates,
+                            metrics.picked,
+                            metrics.queued,
+                            metrics.dropped,
+                            metrics.convJobs,
+                            metrics.convWaves,
+                            metrics.convMoved,
+                            metrics.convActiveMax,
+                            metrics.convKick,
+                            metrics.errors,
+                            mb and fmtNum(mb) or "n/a"
+                        )
+                    )
+                end
+            end
+        end
+    end)
 end
