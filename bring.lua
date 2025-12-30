@@ -5,17 +5,256 @@ return function(C, R, UI)
     local Run     = C.Services.Run or game:GetService("RunService")
     local lp      = Players.LocalPlayer
 
-    local Tabs = UI and UI.Tabs or {}
-    local tab  = Tabs.Bring
-    assert(tab, "Bring tab not found in UI")
+    local function ensureBringLoggerGui()
+        local pg = lp:FindFirstChild("PlayerGui") or lp:WaitForChild("PlayerGui", 5)
+        if not pg then return nil end
 
-    C.State = C.State or {}
-    if C.State.BringLimitEnabled == nil then
-        C.State.BringLimitEnabled = false
+        local existing = pg:FindFirstChild("BringLoggerGui")
+        if existing and existing:IsA("ScreenGui") then
+            local frame = existing:FindFirstChild("ConsoleFrame", true)
+            local text  = existing:FindFirstChild("ConsoleText", true)
+            local area  = existing:FindFirstChild("ConsoleArea", true)
+            if frame and text and area then
+                local function append(msg)
+                    msg = tostring(msg)
+                    text.Text = (text.Text == "" and msg) or (text.Text .. "\n" .. msg)
+                    Run.Heartbeat:Wait()
+                    pcall(function() area.CanvasPosition = Vector2.new(0, text.TextBounds.Y + 9999) end)
+                end
+                return append
+            end
+        end
+
+        local UIS = game:GetService("UserInputService")
+
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "BringLoggerGui"
+        screenGui.Parent = pg
+        screenGui.ResetOnSpawn = false
+
+        local frame = Instance.new("Frame")
+        frame.Name = "ConsoleFrame"
+        frame.Parent = screenGui
+        frame.Size = UDim2.new(0, 360, 0, 220)
+        frame.Position = UDim2.new(0.5, -180, 0.6, -110)
+        frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        frame.BorderSizePixel = 0
+        frame.Active = true
+        frame.Draggable = true
+
+        local titleBar = Instance.new("Frame")
+        titleBar.Name = "TitleBar"
+        titleBar.Parent = frame
+        titleBar.Size = UDim2.new(1, 0, 0, 26)
+        titleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        titleBar.BorderSizePixel = 0
+
+        local titleLabel = Instance.new("TextLabel")
+        titleLabel.Name = "TitleLabel"
+        titleLabel.Parent = titleBar
+        titleLabel.Size = UDim2.new(1, -120, 1, 0)
+        titleLabel.Position = UDim2.new(0, 8, 0, 0)
+        titleLabel.BackgroundTransparency = 1
+        titleLabel.Text = "Bring Logger"
+        titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        titleLabel.TextSize = 14
+        titleLabel.Font = Enum.Font.SourceSansBold
+        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        titleLabel.TextYAlignment = Enum.TextYAlignment.Center
+
+        local minimizeButton = Instance.new("TextButton")
+        minimizeButton.Name = "MinimizeButton"
+        minimizeButton.Parent = titleBar
+        minimizeButton.Size = UDim2.new(0, 26, 0, 26)
+        minimizeButton.Position = UDim2.new(1, -78, 0, 0)
+        minimizeButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        minimizeButton.Text = "-"
+        minimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        minimizeButton.TextSize = 14
+        minimizeButton.Font = Enum.Font.SourceSansBold
+
+        local copyButtonTop = Instance.new("TextButton")
+        copyButtonTop.Name = "CopyTopButton"
+        copyButtonTop.Parent = titleBar
+        copyButtonTop.Size = UDim2.new(0, 52, 0, 26)
+        copyButtonTop.Position = UDim2.new(1, -52-26, 0, 0)
+        copyButtonTop.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
+        copyButtonTop.Text = "Copy"
+        copyButtonTop.TextColor3 = Color3.fromRGB(255, 255, 255)
+        copyButtonTop.TextSize = 14
+        copyButtonTop.Font = Enum.Font.SourceSansBold
+
+        local closeButton = Instance.new("TextButton")
+        closeButton.Name = "CloseButton"
+        closeButton.Parent = titleBar
+        closeButton.Size = UDim2.new(0, 26, 0, 26)
+        closeButton.Position = UDim2.new(1, -26, 0, 0)
+        closeButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        closeButton.Text = "X"
+        closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        closeButton.TextSize = 14
+        closeButton.Font = Enum.Font.SourceSansBold
+
+        local consoleArea = Instance.new("ScrollingFrame")
+        consoleArea.Name = "ConsoleArea"
+        consoleArea.Parent = frame
+        consoleArea.Size = UDim2.new(1, 0, 1, -26-26)
+        consoleArea.Position = UDim2.new(0, 0, 0, 26)
+        consoleArea.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        consoleArea.BorderSizePixel = 0
+        consoleArea.ScrollBarThickness = 6
+        consoleArea.CanvasSize = UDim2.new(0, 0, 0, 0)
+
+        local consoleText = Instance.new("TextLabel")
+        consoleText.Name = "ConsoleText"
+        consoleText.Parent = consoleArea
+        consoleText.Size = UDim2.new(1, -10, 1, 0)
+        consoleText.Position = UDim2.new(0, 6, 0, 4)
+        consoleText.BackgroundTransparency = 1
+        consoleText.Text = ""
+        consoleText.TextColor3 = Color3.fromRGB(200, 200, 200)
+        consoleText.TextSize = 12
+        consoleText.Font = Enum.Font.Code
+        consoleText.TextXAlignment = Enum.TextXAlignment.Left
+        consoleText.TextYAlignment = Enum.TextYAlignment.Top
+        consoleText.TextWrapped = true
+
+        local buttonBar = Instance.new("Frame")
+        buttonBar.Name = "ButtonBar"
+        buttonBar.Parent = frame
+        buttonBar.Size = UDim2.new(1, 0, 0, 26)
+        buttonBar.Position = UDim2.new(0, 0, 1, -26)
+        buttonBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        buttonBar.BorderSizePixel = 0
+
+        local clearButton = Instance.new("TextButton")
+        clearButton.Name = "ClearButton"
+        clearButton.Parent = buttonBar
+        clearButton.Size = UDim2.new(0, 80, 1, 0)
+        clearButton.Position = UDim2.new(0, 0, 0, 0)
+        clearButton.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
+        clearButton.Text = "Clear"
+        clearButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        clearButton.TextSize = 14
+        clearButton.Font = Enum.Font.SourceSansBold
+
+        local statusLabel = Instance.new("TextLabel")
+        statusLabel.Name = "StatusLabel"
+        statusLabel.Parent = buttonBar
+        statusLabel.Size = UDim2.new(1, -80-24, 1, 0)
+        statusLabel.Position = UDim2.new(0, 84, 0, 0)
+        statusLabel.BackgroundTransparency = 1
+        statusLabel.Text = ""
+        statusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+        statusLabel.TextSize = 12
+        statusLabel.Font = Enum.Font.SourceSans
+        statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+        statusLabel.TextYAlignment = Enum.TextYAlignment.Center
+
+        local resizeHandle = Instance.new("TextButton")
+        resizeHandle.Name = "ResizeHandle"
+        resizeHandle.Parent = buttonBar
+        resizeHandle.Size = UDim2.new(0, 24, 1, 0)
+        resizeHandle.Position = UDim2.new(1, -24, 0, 0)
+        resizeHandle.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+        resizeHandle.Text = "↘"
+        resizeHandle.TextColor3 = Color3.fromRGB(255, 255, 255)
+        resizeHandle.TextSize = 14
+        resizeHandle.Font = Enum.Font.SourceSansBold
+
+        local isMinimized = false
+        local prevSize = frame.Size
+
+        local function setStatus(s)
+            statusLabel.Text = tostring(s or "")
+            task.delay(1.25, function()
+                if statusLabel and statusLabel.Parent and statusLabel.Text == tostring(s or "") then
+                    statusLabel.Text = ""
+                end
+            end)
+        end
+
+        minimizeButton.MouseButton1Click:Connect(function()
+            if isMinimized then
+                frame.Size = prevSize
+                consoleArea.Visible = true
+                buttonBar.Visible = true
+                minimizeButton.Text = "-"
+                isMinimized = false
+            else
+                prevSize = frame.Size
+                frame.Size = UDim2.new(0, prevSize.X.Offset, 0, 26)
+                consoleArea.Visible = false
+                buttonBar.Visible = false
+                minimizeButton.Text = "+"
+                isMinimized = true
+            end
+        end)
+
+        closeButton.MouseButton1Click:Connect(function()
+            screenGui:Destroy()
+        end)
+
+        local function doCopy()
+            if setclipboard then
+                setclipboard(consoleText.Text)
+                setStatus("copied")
+            else
+                setStatus("no setclipboard")
+            end
+        end
+
+        copyButtonTop.MouseButton1Click:Connect(doCopy)
+
+        clearButton.MouseButton1Click:Connect(function()
+            consoleText.Text = ""
+            setStatus("cleared")
+        end)
+
+        local resizing = false
+        local startMouse
+        local startSize
+
+        local function clampSize(w, h)
+            w = math.clamp(w, 260, 800)
+            h = math.clamp(h, 120, 700)
+            return w, h
+        end
+
+        resizeHandle.MouseButton1Down:Connect(function()
+            if isMinimized then return end
+            resizing = true
+            startMouse = UIS:GetMouseLocation()
+            startSize = frame.AbsoluteSize
+        end)
+
+        UIS.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                resizing = false
+            end
+        end)
+
+        UIS.InputChanged:Connect(function(input)
+            if not resizing then return end
+            if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+            local cur = UIS:GetMouseLocation()
+            local dx = cur.X - startMouse.X
+            local dy = cur.Y - startMouse.Y
+            local w, h = clampSize(startSize.X + dx, startSize.Y + dy)
+            frame.Size = UDim2.new(0, w, 0, h)
+        end)
+
+        local function append(msg)
+            msg = tostring(msg)
+            consoleText.Text = (consoleText.Text == "" and msg) or (consoleText.Text .. "\n" .. msg)
+            Run.Heartbeat:Wait()
+            pcall(function() consoleArea.CanvasPosition = Vector2.new(0, consoleText.TextBounds.Y + 9999) end)
+        end
+
+        return append
     end
-    if not tonumber(C.State.BringLimitAmount) then
-        C.State.BringLimitAmount = 10
-    end
+
+    local _bringAppend = ensureBringLoggerGui()
 
     local function now() return os.clock() end
     local function luaKB()
@@ -32,8 +271,10 @@ return function(C, R, UI)
         end)
         return ok and v or nil
     end
+
     local function _emit(line)
         print(line)
+        if _bringAppend then pcall(_bringAppend, line) end
         pcall(function()
             if _G and type(_G.logMessage) == "function" then
                 _G.logMessage(line)
@@ -45,6 +286,7 @@ return function(C, R, UI)
             end
         end)
     end
+
     local function logLine(msg)
         _emit(("BRING %s"):format(tostring(msg)))
     end
@@ -55,6 +297,13 @@ return function(C, R, UI)
         end
         table.sort(parts)
         _emit(("BRING %s %s"):format(tostring(tag), table.concat(parts, " ")))
+    end
+
+    local Tabs = UI and UI.Tabs or {}
+    local tab  = Tabs.Bring
+    if not tab then
+        logLine("ERROR: Bring tab not found in UI")
+        error("Bring tab not found in UI")
     end
 
     local function currentLimit()
@@ -196,15 +445,15 @@ return function(C, R, UI)
         return nil
     end
     local function resolveRemotes()
-        local r = {
+        return {
             StartDrag = getRemote("RequestStartDraggingItem","StartDraggingItem"),
             BurnItem  = getRemote("RequestBurnItem","BurnItem","RequestFireAdd"),
             CookItem  = getRemote("RequestCookItem","CookItem"),
             ScrapItem = getRemote("RequestScrapItem","ScrapItem","RequestWorkbenchScrap"),
             StopDrag  = getRemote("StopDraggingItem","RequestStopDraggingItem"),
         }
-        return r
     end
+
     local function logRemotesOnce()
         local r = resolveRemotes()
         logKV("REMOTES", {
@@ -219,9 +468,7 @@ return function(C, R, UI)
     local function safeStartDrag(r, model)
         if r and r.StartDrag and model and model.Parent then
             local ok, err = pcall(function() r.StartDrag:FireServer(model) end)
-            if not ok then
-                logKV("StartDrag_FAIL", { name = model.Name, err = tostring(err) })
-            end
+            if not ok then logKV("StartDrag_FAIL", { name = model.Name, err = tostring(err) }) end
             return ok
         end
         return false
@@ -229,9 +476,7 @@ return function(C, R, UI)
     local function safeStopDrag(r, model)
         if r and r.StopDrag and model and model.Parent then
             local ok, err = pcall(function() r.StopDrag:FireServer(model) end)
-            if not ok then
-                logKV("StopDrag_FAIL", { name = model.Name, err = tostring(err) })
-            end
+            if not ok then logKV("StopDrag_FAIL", { name = model.Name, err = tostring(err) }) end
             return ok
         end
         return false
@@ -517,6 +762,7 @@ return function(C, R, UI)
             local p = mainPart(model); if p then p.CFrame = cf end
         end
     end
+
     local function dropFromOrbSmooth(model, orbPos, jobId, origSnap, H)
         if not (model and model.Parent) then return end
         zeroAssembly(model)
@@ -718,12 +964,7 @@ return function(C, R, UI)
         end
 
         dropFromOrbSmooth(model, orbPos, jobId, snapOrig, H)
-        logKV("conveyorOne", {
-            name = model.Name,
-            loopsUp = loopsUp,
-            loopsAcross = loopsAcross,
-            ms = math.floor((now()-t0)*1000)
-        })
+        logKV("conveyorOne", { name = model.Name, loopsUp = loopsUp, loopsAcross = loopsAcross, ms = math.floor((now()-t0)*1000) })
     end
 
     local function runConveyorWave(centerPos, orbPos, targets, jobId)
@@ -815,6 +1056,7 @@ return function(C, R, UI)
         if orb2 then orb2:Destroy() end
         logKV("BurnCook_END", { jobId = jobId })
     end
+
     local function scrapNearby()
         local scr = SCRAPPER_PATH; if not scr then return end
         local root = hrp(); if not root then return end
@@ -845,7 +1087,6 @@ return function(C, R, UI)
         {},{},{},{},{},{},{}
 
     local _bringBusy = false
-
     local function fastBringToGround(selectedSet)
         if not selectedSet or next(selectedSet) == nil then
             logLine("fastBringToGround: no selection")
@@ -1123,5 +1364,5 @@ return function(C, R, UI)
         end)
     end
 
-    logLine("module_ready")
+    logKV("module_ready", { luaKB = luaKB(), totalMemMB = totalMemMB() or "nil" })
 end
