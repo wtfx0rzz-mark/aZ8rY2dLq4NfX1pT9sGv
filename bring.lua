@@ -46,7 +46,7 @@ return function(C, R, UI)
     local weaponsArmor = {
         "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
         "Chainsaw","Crossbow","Katana","Kunai","Laser cannon","Laser sword","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
-        "Sword","Ice Axe", "Thorn Body"
+        "Sword","Ice Axe","Thorn Body"
     }
     local ammoMisc = {
         "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Sapling",
@@ -353,9 +353,7 @@ return function(C, R, UI)
         if not (model and model.Parent) then return false end
         Run.Heartbeat:Wait()
         local cf = groundCFAroundPlayer(model) or computeForwardDropCF()
-        if not cf then
-            return false
-        end
+        if not cf then return false end
         local snap = setCollide(model, false)
         zeroAssembly(model)
         if model:IsA("Model") then
@@ -520,9 +518,7 @@ return function(C, R, UI)
         if tIn and jIn and tostring(jIn) ~= tostring(jobId) and now() - tIn < STUCK_TTL then
             return false
         end
-        if not nameMatches(selectedSet, m) then
-            return false
-        end
+        if not nameMatches(selectedSet, m) then return false end
         local mp = mainPart(m); if not mp then return false end
         return (mp.Position - center).Magnitude <= radius
     end
@@ -530,7 +526,12 @@ return function(C, R, UI)
     local function getCandidates(center, radius, selectedSet, jobId)
         local params = OverlapParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = { lp.Character }
+
+        local filter = {}
+        local ch = lp.Character
+        if ch then filter[1] = ch end
+        params.FilterDescendantsInstances = filter
+
         local parts = WS:GetPartBoundsInRadius(center, radius, params) or {}
         local uniq, out = {}, {}
         for _,part in ipairs(parts) do
@@ -554,11 +555,14 @@ return function(C, R, UI)
         end)
         local mp = mainPart(model); if not mp then return end
         local H = bboxHeight(model)
+
         local riserY = orbPos.Y - 1.0 + math.clamp(H * 0.45, 0.8, 3.0)
         local lookDir = (Vector3.new(orbPos.X, mp.Position.Y, orbPos.Z) - mp.Position)
         lookDir = (lookDir.Magnitude > 0.001) and lookDir.Unit or Vector3.zAxis
+
         local snapOrig = setCollide(model, false)
         zeroAssembly(model)
+
         local function setPivotLocal(model0, cf)
             if model0:IsA("Model") then
                 model0:PivotTo(cf)
@@ -566,6 +570,7 @@ return function(C, R, UI)
                 local p = mainPart(model0); if p then p.CFrame = cf end
             end
         end
+
         while model and model.Parent do
             local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
             if not pivot then break end
@@ -598,6 +603,7 @@ return function(C, R, UI)
             end
             task.wait(STEP_WAIT)
         end
+
         dropFromOrbSmooth(model, orbPos, jobId, snapOrig, H)
     end
 
@@ -606,8 +612,10 @@ return function(C, R, UI)
         if #picked == 0 then
             return 0
         end
+
         local limitOn = C.State.BringLimitEnabled and true or false
         local maxPerName = currentLimit()
+
         local cnt, out = {}, {}
         for _,m in ipairs(picked) do
             local nm = m.Name or ""
@@ -617,6 +625,7 @@ return function(C, R, UI)
             end
         end
         picked = out
+
         local active = 0
         local function spawnOne(m)
             if m and m.Parent then
@@ -627,15 +636,18 @@ return function(C, R, UI)
                 end)
             end
         end
+
         for i = 1, #picked do
             while active >= 10 do Run.Heartbeat:Wait() end
             spawnOne(picked[i])
             task.wait(0.5)
         end
+
         local deadline = now() + math.max(5, 0.5 * #picked + 5)
         while active > 0 and now() < deadline do
             Run.Heartbeat:Wait()
         end
+
         return #picked
     end
 
@@ -696,24 +708,22 @@ return function(C, R, UI)
         return s
     end
 
-    local selJunkMany, selFuelMany, selFoodMany, selMedicalMany, selWAMany, selMiscMany, selPeltMany =
-        {},{},{},{},{},{},{}
+    local selJunkMany, selFuelMany, selFoodMany, selMedicalMany, selWAMany, selMiscMany, selPeltMany = {},{},{},{},{},{},{}
 
     local _bringBusy = false
     local function fastBringToGround(selectedSet)
-        if not selectedSet or next(selectedSet) == nil then
-            return
-        end
-        if _bringBusy then
-            return
-        end
+        if not selectedSet or next(selectedSet) == nil then return end
+        if _bringBusy then return end
         _bringBusy = true
+
         local ok = pcall(function()
             dropCounter = 0
             local itemsFolder = itemsRootOrNil(); if not itemsFolder then return end
             local root = hrp()
+
             local limitOn = C.State.BringLimitEnabled and true or false
             local maxPerName = currentLimit()
+
             local function scanQueue(alreadyMoved)
                 local perNameCount, seenModel, queue = {}, {}, {}
                 local desc = itemsFolder:GetDescendants()
@@ -740,13 +750,13 @@ return function(C, R, UI)
                 end
                 return queue
             end
+
             local alreadyMoved = {}
             local maxPasses = 3
             for pass = 1, maxPasses do
-                if root then
-                    requestMoreStreamingAround({ root.Position })
-                end
+                if root then requestMoreStreamingAround({ root.Position }) end
                 local queue = scanQueue(alreadyMoved)
+
                 if #queue == 0 then
                     if WS.StreamingEnabled and root then
                         requestMoreStreamingAround({ root.Position })
@@ -768,10 +778,9 @@ return function(C, R, UI)
                 end
             end
         end)
+
         _bringBusy = false
-        if not ok then
-            return
-        end
+        if not ok then return end
     end
 
     local function multiSelectDropdown(args)
@@ -885,21 +894,25 @@ return function(C, R, UI)
             acc += dt
             if acc < (1 / GUARD_HZ) then return end
             acc = 0
+
             local positions = {}
             local pLive = liveOrb1Pos(); if pLive then positions[#positions+1] = pLive end
             local pCamp = campOrbPos();  if pCamp then positions[#positions+1] = pCamp end
             local pScr  = scrapOrbPos(); if pScr  then positions[#positions+1] = pScr  end
             if #positions == 0 then return end
+
             local items = WS:FindFirstChild("Items"); if not items then return end
             for _,m in ipairs(items:GetChildren()) do
                 if not m:IsA("Model") then continue end
                 local mp = mainPart(m); if not mp then continue end
+
                 local nearest, orbY = nil, nil
                 local pos = mp.Position
                 for _,o in ipairs(positions) do
                     local d = (pos - o).Magnitude
                     if d <= ORB_RADIUS then nearest, orbY = true, o.Y; break end
                 end
+
                 if nearest then
                     local rec = watched[m]
                     if not rec then
