@@ -46,7 +46,7 @@ return function(C, R, UI)
     local weaponsArmor = {
         "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
         "Chainsaw","Crossbow","Katana","Kunai","Laser cannon","Laser sword","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
-        "Sword","Ice Axe","Thorn Body"
+        "Sword","Ice Axe", "Thorn Body"
     }
     local ammoMisc = {
         "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Sapling",
@@ -153,10 +153,31 @@ return function(C, R, UI)
     end
     local function resolveRemotes()
         return {
+            StartDrag = getRemote("RequestStartDraggingItem","StartDraggingItem"),
             BurnItem  = getRemote("RequestBurnItem","BurnItem","RequestFireAdd"),
             CookItem  = getRemote("RequestCookItem","CookItem"),
             ScrapItem = getRemote("RequestScrapItem","ScrapItem","RequestWorkbenchScrap"),
+            StopDrag  = getRemote("StopDraggingItem","RequestStopDraggingItem"),
         }
+    end
+
+    local function safeStartDrag(r, model)
+        if r and r.StartDrag and model and model.Parent then
+            local ok = pcall(function() r.StartDrag:FireServer(model) end)
+            return ok
+        end
+        return false
+    end
+    local function safeStopDrag(r, model)
+        if r and r.StopDrag and model and model.Parent then
+            local ok = pcall(function() r.StopDrag:FireServer(model) end)
+            return ok
+        end
+        return false
+    end
+    local function finallyStopDrag(r, model)
+        task.delay(0.05, function() pcall(safeStopDrag, r, model) end)
+        task.delay(0.20, function() pcall(safeStopDrag, r, model) end)
     end
 
     local function setCollide(model, on, snapshot)
@@ -254,6 +275,7 @@ return function(C, R, UI)
 
     local function burnFlow(model, campfire)
         local r = resolveRemotes()
+        local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
         task.wait(DRAG_SETTLE)
         pivotOverTarget(model, campfire)
@@ -262,10 +284,12 @@ return function(C, R, UI)
             pcall(function() r.BurnItem:FireServer(campfire, Instance.new("Model")) end)
         end
         awaitConsumedOrMoved(model, CONSUME_WAIT)
+        if started then finallyStopDrag(r, model) end
         refreshPrompts(model)
     end
     local function cookFlow(model, campfire)
         local r = resolveRemotes()
+        local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
         task.wait(DRAG_SETTLE)
         moveModel(model, fireHandoffCF(campfire))
@@ -278,6 +302,7 @@ return function(C, R, UI)
         task.wait(ACTION_HOLD)
         local cookedName = RAW_TO_COOKED[model.Name]
         awaitConsumedOrMoved(model, CONSUME_WAIT)
+        if started then finallyStopDrag(r, model) end
         task.delay(0.15, function()
             if cookedName then
                 local cooked = (function()
@@ -310,6 +335,7 @@ return function(C, R, UI)
     end
     local function scrapFlow(model, scrapper)
         local r = resolveRemotes()
+        local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
         task.wait(DRAG_SETTLE)
         moveModel(model, scrCenterCF(scrapper) + Vector3.new(0, 1.5, 0))
@@ -321,6 +347,7 @@ return function(C, R, UI)
         if not okCall then pivotOverTarget(model, scrapper) end
         task.wait(ACTION_HOLD)
         awaitConsumedOrMoved(model, CONSUME_WAIT)
+        if started then finallyStopDrag(r, model) end
         refreshPrompts(model)
     end
 
@@ -337,23 +364,31 @@ return function(C, R, UI)
         local root = hrp(); if not root then return nil end
         local head = headPart()
         local mp   = mainPart(model); if not mp then return nil end
+
         local basePos = head and head.Position or (root.Position + Vector3.new(0, 4, 0))
         local look    = root.CFrame.LookVector
+
         local offset  = ringOffset()
         local waveY   = math.sin(dropCounter * AIR_DROP_WAVE_FREQUENCY) * AIR_DROP_WAVE_AMPLITUDE
+
         local pos = basePos
             + look * FALLBACK_AHEAD
             + Vector3.new(0, DROP_ABOVE_HEAD_STUDS, 0)
             + Vector3.new(offset.X, 0, offset.Z)
             + Vector3.new(0, waveY, 0)
+
         return CFrame.lookAt(pos, pos + look)
     end
 
     local function dropNearPlayer(model)
         if not (model and model.Parent) then return false end
+        local r = resolveRemotes()
+        local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
         local cf = groundCFAroundPlayer(model) or computeForwardDropCF()
-        if not cf then return false end
+        if not cf then
+            return false
+        end
         local snap = setCollide(model, false)
         zeroAssembly(model)
         if model:IsA("Model") then
@@ -362,12 +397,11 @@ return function(C, R, UI)
             local p = mainPart(model); if p then p.CFrame = cf end
         end
         setCollide(model, true, snap)
+        if started then finallyStopDrag(r, model) end
         for _,p in ipairs(getAllParts(model)) do
             p.Anchored = false
             p.AssemblyLinearVelocity  = Vector3.new()
             p.AssemblyAngularVelocity = Vector3.new()
-            pcall(function() p:SetNetworkOwner(nil) end)
-            pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
         end
         refreshPrompts(model)
         task.delay(0.5, function()
@@ -418,8 +452,6 @@ return function(C, R, UI)
             p.Anchored = false
             p.AssemblyLinearVelocity  = Vector3.new()
             p.AssemblyAngularVelocity = Vector3.new()
-            pcall(function() p:SetNetworkOwner(nil) end)
-            pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
         end
         setCollide(model, true, origSnap)
         pcall(function()
@@ -453,18 +485,22 @@ return function(C, R, UI)
     local function nameMatches(selectedSet, m)
         local itemsFolder = itemsRootOrNil()
         if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
+
         local nm = m and m.Name or ""
         local l  = nm:lower()
+
         if selectedSet["Apple"] and nm == "Apple" then
             if itemsFolder and m.Parent ~= itemsFolder then return false end
             if isInsideTree(m) then return false end
             return true
         end
+
         if selectedSet["Berry"] and nm == "Berry" then
             if itemsFolder and m.Parent ~= itemsFolder then return false end
             if isInsideTree(m) then return false end
             return true
         end
+
         if selectedSet[nm] then return true end
         if selectedSet["Mossy Coin"] and (nm == "Mossy Coin" or nm:match("^Mossy Coin%d+$")) then return true end
         if selectedSet["Cultist"] and m and m:IsA("Model") and l:find("cultist",1,true) and hasHumanoid(m) then return true end
@@ -518,7 +554,9 @@ return function(C, R, UI)
         if tIn and jIn and tostring(jIn) ~= tostring(jobId) and now() - tIn < STUCK_TTL then
             return false
         end
-        if not nameMatches(selectedSet, m) then return false end
+        if not nameMatches(selectedSet, m) then
+            return false
+        end
         local mp = mainPart(m); if not mp then return false end
         return (mp.Position - center).Magnitude <= radius
     end
@@ -526,12 +564,7 @@ return function(C, R, UI)
     local function getCandidates(center, radius, selectedSet, jobId)
         local params = OverlapParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
-
-        local filter = {}
-        local ch = lp.Character
-        if ch then filter[1] = ch end
-        params.FilterDescendantsInstances = filter
-
+        params.FilterDescendantsInstances = { lp.Character }
         local parts = WS:GetPartBoundsInRadius(center, radius, params) or {}
         local uniq, out = {}, {}
         for _,part in ipairs(parts) do
@@ -708,12 +741,17 @@ return function(C, R, UI)
         return s
     end
 
-    local selJunkMany, selFuelMany, selFoodMany, selMedicalMany, selWAMany, selMiscMany, selPeltMany = {},{},{},{},{},{},{}
+    local selJunkMany, selFuelMany, selFoodMany, selMedicalMany, selWAMany, selMiscMany, selPeltMany =
+        {},{},{},{},{},{},{}
 
     local _bringBusy = false
     local function fastBringToGround(selectedSet)
-        if not selectedSet or next(selectedSet) == nil then return end
-        if _bringBusy then return end
+        if not selectedSet or next(selectedSet) == nil then
+            return
+        end
+        if _bringBusy then
+            return
+        end
         _bringBusy = true
 
         local ok = pcall(function()
@@ -754,7 +792,10 @@ return function(C, R, UI)
             local alreadyMoved = {}
             local maxPasses = 3
             for pass = 1, maxPasses do
-                if root then requestMoreStreamingAround({ root.Position }) end
+                if root then
+                    requestMoreStreamingAround({ root.Position })
+                end
+
                 local queue = scanQueue(alreadyMoved)
 
                 if #queue == 0 then
@@ -780,7 +821,9 @@ return function(C, R, UI)
         end)
 
         _bringBusy = false
-        if not ok then return end
+        if not ok then
+            return
+        end
     end
 
     local function multiSelectDropdown(args)
@@ -879,8 +922,6 @@ return function(C, R, UI)
             pcall(function() mp.Anchored = false end)
             pcall(function() mp.AssemblyLinearVelocity  = Vector3.new(0, ORB_KICK_VY, 0) end)
             pcall(function() mp.AssemblyAngularVelocity = Vector3.new() end)
-            pcall(function() mp:SetNetworkOwner(nil) end)
-            pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
             pcall(function()
                 local p = mp.Position
                 mp.CFrame = CFrame.new(Vector3.new(p.X, orbY + ORB_RESET_UP, p.Z))
