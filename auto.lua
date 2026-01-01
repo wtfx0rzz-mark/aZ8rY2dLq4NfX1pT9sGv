@@ -1251,6 +1251,259 @@ return function(C, R, UI)
             end
         end
 
+        local autoPlantWindowOn = false
+        local autoPlantGui = nil
+        local autoPlantFrame = nil
+        local autoPlantBtn = nil
+        local autoPlantBtnConn = nil
+        local autoPlantRunning = false
+        local autoPlantLoopToken = 0
+
+        local autoPlantCaptured = false
+        local autoPlantCapPosIndex = 2
+        local autoPlantCapArgs = nil
+        local autoPlantCapSapling = nil
+        local autoPlantHooked = false
+        local autoPlantOldNamecall = nil
+
+        local AUTO_PLANT_INTERVAL = 0.001
+        local AUTO_PLANT_RADIUS = 30
+
+        local function autoPlant_setButton(on)
+            if not autoPlantBtn then return end
+            if on then
+                autoPlantBtn.BackgroundColor3 = Color3.fromRGB(50, 140, 60)
+                autoPlantBtn.Text = "Auto Plant: ON"
+            else
+                autoPlantBtn.BackgroundColor3 = Color3.fromRGB(150, 70, 70)
+                autoPlantBtn.Text = "Auto Plant: OFF"
+            end
+        end
+
+        local function autoPlant_characterFootY()
+            local ch = lp.Character
+            if not ch then return nil end
+            local minY = nil
+            for _, d in ipairs(ch:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    local y = d.Position.Y - (d.Size.Y * 0.5)
+                    if minY == nil or y < minY then
+                        minY = y
+                    end
+                end
+            end
+            return minY
+        end
+
+        local function autoPlant_currentPlantPos()
+            local r = hrp()
+            if not r then return nil end
+            local feetY = autoPlant_characterFootY()
+            if not feetY then
+                feetY = r.Position.Y - 3
+            end
+            return Vector3.new(r.Position.X, feetY, r.Position.Z)
+        end
+
+        local function autoPlant_findNearestSapling(radius)
+            local r = hrp()
+            if not r then return nil end
+            local pos = r.Position
+            local items = WS:FindFirstChild("Items")
+            if not items then return nil end
+            local best, bestD = nil, (radius or 25)
+            for _, m in ipairs(items:GetChildren()) do
+                if m:IsA("Model") and m.Name == "Sapling" then
+                    local ok, pv = pcall(function() return m:GetPivot() end)
+                    if ok then
+                        local d = (pv.Position - pos).Magnitude
+                        if d <= bestD then
+                            bestD = d
+                            best = m
+                        end
+                    end
+                end
+            end
+            return best
+        end
+
+        local function autoPlant_installHookOnce()
+            if autoPlantHooked then return end
+            if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" or type(checkcaller) ~= "function" then
+                autoPlantHooked = true
+                return
+            end
+            local remotes = RS:FindFirstChild("RemoteEvents")
+            local rf = remotes and remotes:FindFirstChild("RequestPlantItem")
+            if not rf then
+                autoPlantHooked = true
+                return
+            end
+            autoPlantOldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+                if not checkcaller() and method == "InvokeServer" and self == rf and not autoPlantCaptured then
+                    local args = table.pack(...)
+                    autoPlantCapArgs = args
+                    autoPlantCapPosIndex = 2
+                    if typeof(args[2]) ~= "Vector3" then
+                        for i = 1, args.n do
+                            if typeof(args[i]) == "Vector3" then
+                                autoPlantCapPosIndex = i
+                                break
+                            end
+                        end
+                    end
+                    autoPlantCaptured = true
+                end
+                return autoPlantOldNamecall(self, ...)
+            end)
+            autoPlantHooked = true
+        end
+
+        local function autoPlant_ensureSeedForThisRun()
+            local near = autoPlant_findNearestSapling(AUTO_PLANT_RADIUS)
+            if not near then
+                return false
+            end
+            autoPlantCapSapling = near
+            if not (autoPlantCapArgs and autoPlantCapArgs.n) then
+                autoPlantCapPosIndex = 2
+                autoPlantCapArgs = table.pack(autoPlantCapSapling, Vector3.new(0, 0, 0))
+                autoPlantCaptured = true
+            end
+            return true
+        end
+
+        local function autoPlant_invokePlant(pos)
+            local remotes = RS:FindFirstChild("RemoteEvents")
+            local rf = remotes and remotes:FindFirstChild("RequestPlantItem")
+            if not rf then return false end
+            if not (autoPlantCapSapling and typeof(autoPlantCapSapling) == "Instance") then
+                return false
+            end
+            local args = {}
+            if autoPlantCapArgs and autoPlantCapArgs.n then
+                for i = 1, autoPlantCapArgs.n do args[i] = autoPlantCapArgs[i] end
+            else
+                args[1] = autoPlantCapSapling
+            end
+            args[1] = autoPlantCapSapling
+            args[autoPlantCapPosIndex] = pos
+            local ok, res = pcall(function()
+                return rf:InvokeServer(unpack(args))
+            end)
+            return ok and (res == nil or (type(res) ~= "table") or (res.Success ~= false))
+        end
+
+        local function autoPlant_startLoop()
+            if autoPlantRunning then return end
+            autoPlantRunning = true
+            autoPlantLoopToken += 1
+            local myToken = autoPlantLoopToken
+            autoPlant_setButton(true)
+            autoPlant_installHookOnce()
+            if not autoPlant_ensureSeedForThisRun() then
+                autoPlantRunning = false
+                autoPlant_setButton(false)
+                return
+            end
+            task.spawn(function()
+                while autoPlantRunning and myToken == autoPlantLoopToken do
+                    local pos = autoPlant_currentPlantPos()
+                    if pos then
+                        autoPlant_invokePlant(pos)
+                    end
+                    task.wait(AUTO_PLANT_INTERVAL)
+                end
+            end)
+        end
+
+        local function autoPlant_stopLoop()
+            if not autoPlantRunning then return end
+            autoPlantRunning = false
+            autoPlantLoopToken += 1
+            autoPlant_setButton(false)
+        end
+
+        local function autoPlant_destroyWindow()
+            autoPlant_stopLoop()
+            if autoPlantBtnConn then pcall(function() autoPlantBtnConn:Disconnect() end) end
+            autoPlantBtnConn = nil
+            if autoPlantGui then pcall(function() autoPlantGui:Destroy() end) end
+            autoPlantGui = nil
+            autoPlantFrame = nil
+            autoPlantBtn = nil
+        end
+
+        local function autoPlant_createWindow()
+            autoPlant_destroyWindow()
+            local playerGui2 = lp:FindFirstChildOfClass("PlayerGui") or lp:WaitForChild("PlayerGui")
+            local old = playerGui2:FindFirstChild("AutoPlantGui")
+            if old then pcall(function() old:Destroy() end) end
+
+            autoPlantGui = Instance.new("ScreenGui")
+            autoPlantGui.Name = "AutoPlantGui"
+            autoPlantGui.ResetOnSpawn = false
+            autoPlantGui.Parent = playerGui2
+
+            autoPlantFrame = Instance.new("Frame")
+            autoPlantFrame.Parent = autoPlantGui
+            autoPlantFrame.Size = UDim2.new(0, 240, 0, 60)
+            autoPlantFrame.Position = UDim2.new(1, -252, 0, 12)
+            autoPlantFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+            autoPlantFrame.BorderSizePixel = 0
+            autoPlantFrame.Active = true
+            autoPlantFrame.Draggable = true
+
+            local title = Instance.new("TextLabel")
+            title.Parent = autoPlantFrame
+            title.Size = UDim2.new(1, -12, 0, 18)
+            title.Position = UDim2.new(0, 8, 0, 6)
+            title.BackgroundTransparency = 1
+            title.Text = "Auto Sapling Plant"
+            title.TextColor3 = Color3.fromRGB(255, 255, 255)
+            title.TextSize = 14
+            title.Font = Enum.Font.SourceSansBold
+            title.TextXAlignment = Enum.TextXAlignment.Left
+
+            autoPlantBtn = Instance.new("TextButton")
+            autoPlantBtn.Parent = autoPlantFrame
+            autoPlantBtn.Size = UDim2.new(1, -16, 0, 26)
+            autoPlantBtn.Position = UDim2.new(0, 8, 0, 28)
+            autoPlantBtn.BackgroundColor3 = Color3.fromRGB(150, 70, 70)
+            autoPlantBtn.BorderSizePixel = 0
+            autoPlantBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            autoPlantBtn.TextSize = 13
+            autoPlantBtn.Font = Enum.Font.SourceSansBold
+            autoPlantBtn.Text = "Auto Plant: OFF"
+
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 10)
+            corner.Parent = autoPlantBtn
+
+            autoPlant_setButton(false)
+            autoPlantBtnConn = autoPlantBtn.MouseButton1Click:Connect(function()
+                if autoPlantRunning then
+                    autoPlant_stopLoop()
+                else
+                    autoPlant_startLoop()
+                end
+            end)
+        end
+
+        tab:Toggle({
+            Title = "Auto Plant Window",
+            Value = false,
+            Callback = function(state)
+                autoPlantWindowOn = state
+                if state then
+                    autoPlant_createWindow()
+                else
+                    autoPlant_destroyWindow()
+                end
+            end
+        })
+
         local chestFinderOn = false
         local enableChestFinder, disableChestFinder
         tab:Toggle({
@@ -1656,6 +1909,9 @@ return function(C, R, UI)
                 task.wait(0.15)
                 for _,d in ipairs(WS:GetDescendants()) do trackLostModel(d) end
                 refreshLostBtn()
+            end
+            if autoPlantWindowOn then
+                autoPlant_createWindow()
             end
         end)
     end
