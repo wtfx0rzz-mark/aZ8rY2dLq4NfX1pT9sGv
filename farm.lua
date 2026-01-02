@@ -25,6 +25,7 @@ return function(C, R, UI)
         local RemoteEvents = RS:WaitForChild("RemoteEvents")
         local ToolDamageObject = RemoteEvents:WaitForChild("ToolDamageObject")
         local EquipItemHandle = RemoteEvents:WaitForChild("EquipItemHandle")
+        local RequestPlantItem = RemoteEvents:WaitForChild("RequestPlantItem")
 
         local CHOP_RADIUS = 60
         local TELEPORT_DISTANCE = 30
@@ -751,7 +752,197 @@ return function(C, R, UI)
             circleNextBigHitAt = 0
         end
 
+        local SAPLING_RING_RADIUS = 132.168
+        local SAPLING_RING_POINTS = 340
+        local SAPLING_RING_INTERVAL = 0
+        local SAPLING_FIND_RADIUS = 60
+        local SAPLING_LAYER_Y_OFFSET = 10
+
+        local function hrpForSapling()
+            local ch = lp.Character or lp.CharacterAdded:Wait()
+            return ch:WaitForChild("HumanoidRootPart", 5)
+        end
+
+        local function characterFootY()
+            local ch = lp.Character
+            if not ch then return nil end
+            local minY = nil
+            for _, d in ipairs(ch:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    local y = d.Position.Y - (d.Size.Y * 0.5)
+                    if minY == nil or y < minY then
+                        minY = y
+                    end
+                end
+            end
+            return minY
+        end
+
+        local function findNearestSapling(radius)
+            local r = hrpForSapling()
+            if not r then return nil end
+            local pos = r.Position
+            local items = WS:FindFirstChild("Items")
+            if not items then return nil end
+            local best, bestD = nil, (tonumber(radius) or 25)
+            for _, m in ipairs(items:GetChildren()) do
+                if m:IsA("Model") and m.Name == "Sapling" then
+                    local ok, pv = pcall(function() return m:GetPivot() end)
+                    if ok then
+                        local d = (pv.Position - pos).Magnitude
+                        if d <= bestD then
+                            bestD = d
+                            best = m
+                        end
+                    end
+                end
+            end
+            return best
+        end
+
+        local function groundYAt(x, z, fallbackY)
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            local ex = { lp.Character }
+            local map = WS:FindFirstChild("Map")
+            if map then
+                local fol = map:FindFirstChild("Foliage")
+                if fol then table.insert(ex, fol) end
+            end
+            local items = WS:FindFirstChild("Items")
+            if items then table.insert(ex, items) end
+            local chars = WS:FindFirstChild("Characters")
+            if chars then table.insert(ex, chars) end
+            params.FilterDescendantsInstances = ex
+            local start = Vector3.new(x, (fallbackY or 50) + 250, z)
+            local hit = WS:Raycast(start, Vector3.new(0, -1500, 0), params)
+            if hit then return hit.Position.Y end
+            return fallbackY or 0
+        end
+
+        local function waitInterval(sec)
+            sec = tonumber(sec) or 0
+            if sec <= 0 then
+                RunService.Heartbeat:Wait()
+            else
+                task.wait(sec)
+            end
+        end
+
+        C.Farm._saplingRingCapture = C.Farm._saplingRingCapture or { captured = false, capPosIndex = 2, capArgs = nil, hooked = false }
+        local cap = C.Farm._saplingRingCapture
+
+        if not cap.hooked then
+            pcall(function()
+                local oldNamecall
+                oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+                    local method = getnamecallmethod()
+                    if not checkcaller() and method == "InvokeServer" and self == RequestPlantItem and not cap.captured then
+                        local args = table.pack(...)
+                        cap.capArgs = args
+                        cap.capPosIndex = 2
+                        if typeof(args[2]) ~= "Vector3" then
+                            for i = 1, args.n do
+                                if typeof(args[i]) == "Vector3" then
+                                    cap.capPosIndex = i
+                                    break
+                                end
+                            end
+                        end
+                        cap.captured = true
+                    end
+                    return oldNamecall(self, ...)
+                end)
+                cap.hooked = true
+            end)
+        end
+
+        local function ensureTemplate(seedSapling)
+            if cap.capArgs and cap.capArgs.n then return true end
+            cap.capArgs = table.pack(seedSapling, Vector3.new(0, 0, 0))
+            cap.capPosIndex = 2
+            cap.captured = true
+            return true
+        end
+
+        local function invokePlant(seedSapling, atPos)
+            if not (seedSapling and typeof(seedSapling) == "Instance") then
+                return false
+            end
+            local args = {}
+            if cap.capArgs and cap.capArgs.n then
+                for i = 1, cap.capArgs.n do args[i] = cap.capArgs[i] end
+            else
+                args[1] = seedSapling
+            end
+            args[1] = seedSapling
+            args[cap.capPosIndex] = atPos
+            local ok, res = pcall(function()
+                return RequestPlantItem:InvokeServer(unpack(args))
+            end)
+            return ok and (res == nil or (type(res) ~= "table") or (res.Success ~= false))
+        end
+
+        local saplingRingRunning = false
+        local saplingRingToken = 0
+
+        local function stopSaplingRing()
+            saplingRingRunning = false
+            saplingRingToken += 1
+        end
+
+        local function startSaplingRingPreset()
+            if saplingRingRunning then return end
+            saplingRingRunning = true
+            saplingRingToken += 1
+            local myToken = saplingRingToken
+
+            task.spawn(function()
+                local r = hrpForSapling()
+                if not r then
+                    saplingRingRunning = false
+                    return
+                end
+
+                local center = r.Position
+                local baseFootY = characterFootY()
+                if not baseFootY then baseFootY = center.Y - 3 end
+
+                local seedSapling = findNearestSapling(SAPLING_FIND_RADIUS)
+                if not seedSapling then
+                    warn("[Farm] Sapling ring: no Sapling found within radius " .. tostring(SAPLING_FIND_RADIUS))
+                    saplingRingRunning = false
+                    return
+                end
+
+                ensureTemplate(seedSapling)
+
+                for i = 1, SAPLING_RING_POINTS do
+                    if (not saplingRingRunning) or (myToken ~= saplingRingToken) then break end
+
+                    local theta = (2 * math.pi) * ((i - 1) / SAPLING_RING_POINTS)
+                    local x = center.X + math.cos(theta) * SAPLING_RING_RADIUS
+                    local z = center.Z + math.sin(theta) * SAPLING_RING_RADIUS
+
+                    local gy = groundYAt(x, z, baseFootY)
+                    local pos1 = Vector3.new(x, gy, z)
+                    local pos2 = Vector3.new(x, gy + SAPLING_LAYER_Y_OFFSET, z)
+
+                    invokePlant(seedSapling, pos1)
+                    waitInterval(SAPLING_RING_INTERVAL)
+                    if (not saplingRingRunning) or (myToken ~= saplingRingToken) then break end
+                    invokePlant(seedSapling, pos2)
+                    waitInterval(SAPLING_RING_INTERVAL)
+                end
+
+                if myToken == saplingRingToken then
+                    saplingRingRunning = false
+                end
+            end)
+        end
+
         local function cleanupAll()
+            stopSaplingRing()
             stopCircleFarm()
             stopSmallFarm()
             stopBigFarm()
@@ -815,6 +1006,17 @@ return function(C, R, UI)
                 end
             end
         })
+
+        tab:Section({ Title = "Saplings" })
+
+        if tab.Button then
+            tab:Button({
+                Title = "Plant Sapling Ring (2 layers) r=132.168 pts=340 +Y=10",
+                Callback = function()
+                    startSaplingRingPreset()
+                end
+            })
+        end
     end
 
     local ok, err = pcall(run)
