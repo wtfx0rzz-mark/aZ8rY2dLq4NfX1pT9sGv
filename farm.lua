@@ -60,6 +60,48 @@ return function(C, R, UI)
             return inv:FindFirstChild(name)
         end
 
+        local function findSaplingSeedInstance()
+            local inv = lp:FindFirstChild("Inventory")
+            if inv then
+                local exact = inv:FindFirstChild("Sapling")
+                if exact then return exact end
+                local alt = inv:FindFirstChild("Sapling Seed") or inv:FindFirstChild("SaplingSeed") or inv:FindFirstChild("Sapling Seeds") or inv:FindFirstChild("SaplingSeeds")
+                if alt then return alt end
+                for _, c in ipairs(inv:GetChildren()) do
+                    if typeof(c) == "Instance" and type(c.Name) == "string" then
+                        local ln = string.lower(c.Name)
+                        if ln:find("sapling", 1, true) then
+                            return c
+                        end
+                    end
+                end
+            end
+
+            local bp = lp:FindFirstChild("Backpack")
+            if bp then
+                local exact = bp:FindFirstChild("Sapling")
+                if exact then return exact end
+                for _, c in ipairs(bp:GetChildren()) do
+                    if typeof(c) == "Instance" and type(c.Name) == "string" then
+                        local ln = string.lower(c.Name)
+                        if ln:find("sapling", 1, true) then
+                            return c
+                        end
+                    end
+                end
+            end
+
+            local items = WS:FindFirstChild("Items")
+            if items then
+                for _, m in ipairs(items:GetChildren()) do
+                    if m:IsA("Model") and m.Name == "Sapling" then
+                        return m
+                    end
+                end
+            end
+            return nil
+        end
+
         local function equippedToolName()
             local ch = lp.Character
             if not ch then return nil end
@@ -755,7 +797,6 @@ return function(C, R, UI)
         local SAPLING_RING_RADIUS = 132.168
         local SAPLING_RING_POINTS = 340
         local SAPLING_RING_INTERVAL = 0
-        local SAPLING_FIND_RADIUS = 60
         local SAPLING_LAYER_Y_OFFSET = 10
 
         local SAPLING_HOUSE_N = 10
@@ -783,33 +824,10 @@ return function(C, R, UI)
             return minY
         end
 
-        local function findNearestSapling(radius)
-            local r = hrpForSapling()
-            if not r then return nil end
-            local pos = r.Position
-            local items = WS:FindFirstChild("Items")
-            if not items then return nil end
-            local best, bestD = nil, (tonumber(radius) or 25)
-            for _, m in ipairs(items:GetChildren()) do
-                if m:IsA("Model") and m.Name == "Sapling" then
-                    local ok, pv = pcall(function() return m:GetPivot() end)
-                    if ok then
-                        local d = (pv.Position - pos).Magnitude
-                        if d <= bestD then
-                            bestD = d
-                            best = m
-                        end
-                    end
-                end
-            end
-            return best
-        end
-
         local function findMapGround()
             local map = WS:FindFirstChild("Map")
             if not map then return nil end
-            local g = map:FindFirstChild("Ground")
-            return g
+            return map:FindFirstChild("Ground")
         end
 
         local function groundYAt(x, z, fallbackY)
@@ -852,58 +870,63 @@ return function(C, R, UI)
             end
         end
 
-        C.Farm._saplingRingCapture = C.Farm._saplingRingCapture or { captured = false, capPosIndex = 2, capArgs = nil, hooked = false }
-        local cap = C.Farm._saplingRingCapture
+        C.Farm._plant = C.Farm._plant or { pattern = nil }
 
-        if not cap.hooked then
-            pcall(function()
-                local oldNamecall
-                oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-                    local method = getnamecallmethod()
-                    if not checkcaller() and method == "InvokeServer" and self == RequestPlantItem and not cap.captured then
-                        local args = table.pack(...)
-                        cap.capArgs = args
-                        cap.capPosIndex = 2
-                        if typeof(args[2]) ~= "Vector3" then
-                            for i = 1, args.n do
-                                if typeof(args[i]) == "Vector3" then
-                                    cap.capPosIndex = i
-                                    break
-                                end
-                            end
-                        end
-                        cap.captured = true
-                    end
-                    return oldNamecall(self, ...)
-                end)
-                cap.hooked = true
-            end)
+        local function plantLooksFailed(res)
+            if res == false then return true end
+            if type(res) == "table" then
+                if res.Valid == false then return true end
+                if res.Success == false then return true end
+                if res.OK == false then return true end
+                if res.ok == false then return true end
+            end
+            return false
         end
 
-        local function ensureTemplate(seedSapling)
-            if cap.capArgs and cap.capArgs.n then return true end
-            cap.capArgs = table.pack(seedSapling, Vector3.new(0, 0, 0))
-            cap.capPosIndex = 2
-            cap.captured = true
+        local function tryPlantWithArgs(args)
+            local ok, res = pcall(function()
+                return RequestPlantItem:InvokeServer(unpack(args))
+            end)
+            if not ok then return false end
+            if plantLooksFailed(res) then return false end
             return true
         end
 
         local function invokePlant(seedSapling, atPos)
-            if not (seedSapling and typeof(seedSapling) == "Instance") then
-                return false
+            if not (seedSapling and typeof(seedSapling) == "Instance") then return false end
+            if not (atPos and typeof(atPos) == "Vector3") then return false end
+
+            local cached = C.Farm._plant.pattern
+            if type(cached) == "number" then
+                local a
+                if cached == 1 then a = { seedSapling, atPos }
+                elseif cached == 2 then a = { atPos, seedSapling }
+                elseif cached == 3 then a = { seedSapling, CFrame.new(atPos) }
+                elseif cached == 4 then a = { seedSapling, atPos, true }
+                elseif cached == 5 then a = { seedSapling, atPos, 0 }
+                elseif cached == 6 then a = { seedSapling, atPos, 1 }
+                end
+                if a and tryPlantWithArgs(a) then return true end
+                C.Farm._plant.pattern = nil
             end
-            local args = {}
-            if cap.capArgs and cap.capArgs.n then
-                for i = 1, cap.capArgs.n do args[i] = cap.capArgs[i] end
-            else
-                args[1] = seedSapling
+
+            local patterns = {
+                { id = 1, args = { seedSapling, atPos } },
+                { id = 2, args = { atPos, seedSapling } },
+                { id = 3, args = { seedSapling, CFrame.new(atPos) } },
+                { id = 4, args = { seedSapling, atPos, true } },
+                { id = 5, args = { seedSapling, atPos, 0 } },
+                { id = 6, args = { seedSapling, atPos, 1 } },
+            }
+
+            for _, p in ipairs(patterns) do
+                if tryPlantWithArgs(p.args) then
+                    C.Farm._plant.pattern = p.id
+                    return true
+                end
             end
-            args[1] = seedSapling
-            args[cap.capPosIndex] = atPos
-            local ok, res = pcall(function()
-                return RequestPlantItem:InvokeServer(unpack(args))
-            end)
-            return ok and (res == nil or (type(res) ~= "table") or (res.Success ~= false))
+
+            return false
         end
 
         local saplingRingRunning = false
@@ -931,17 +954,23 @@ return function(C, R, UI)
                 local baseFootY = characterFootY()
                 if not baseFootY then baseFootY = center.Y - 3 end
 
-                local seedSapling = findNearestSapling(SAPLING_FIND_RADIUS)
+                local seedSapling = findSaplingSeedInstance()
                 if not seedSapling then
-                    warn("[Farm] Sapling ring: no Sapling found within radius " .. tostring(SAPLING_FIND_RADIUS))
+                    warn("[Farm] Sapling ring: no sapling seed found (Inventory/Backpack/Items).")
                     saplingRingRunning = false
                     return
                 end
 
-                ensureTemplate(seedSapling)
-
                 for i = 1, SAPLING_RING_POINTS do
                     if (not saplingRingRunning) or (myToken ~= saplingRingToken) then break end
+
+                    if not seedSapling.Parent then
+                        seedSapling = findSaplingSeedInstance()
+                        if not seedSapling then
+                            warn("[Farm] Sapling ring: lost sapling seed instance.")
+                            break
+                        end
+                    end
 
                     local theta = (2 * math.pi) * ((i - 1) / SAPLING_RING_POINTS)
                     local x = center.X + math.cos(theta) * SAPLING_RING_RADIUS
@@ -989,19 +1018,26 @@ return function(C, R, UI)
                 local baseFootY = characterFootY()
                 if not baseFootY then baseFootY = center.Y - 3 end
 
-                local seedSapling = findNearestSapling(SAPLING_FIND_RADIUS)
+                local seedSapling = findSaplingSeedInstance()
                 if not seedSapling then
-                    warn("[Farm] Sapling house: no Sapling found within radius " .. tostring(SAPLING_FIND_RADIUS))
+                    warn("[Farm] Sapling house: no sapling seed found (Inventory/Backpack/Items).")
                     saplingHouseRunning = false
                     return
                 end
-
-                ensureTemplate(seedSapling)
 
                 local half = (SAPLING_HOUSE_N - 1) * 0.5
                 for ix = 0, SAPLING_HOUSE_N - 1 do
                     for iz = 0, SAPLING_HOUSE_N - 1 do
                         if (not saplingHouseRunning) or (myToken ~= saplingHouseToken) then break end
+
+                        if not seedSapling.Parent then
+                            seedSapling = findSaplingSeedInstance()
+                            if not seedSapling then
+                                warn("[Farm] Sapling house: lost sapling seed instance.")
+                                saplingHouseRunning = false
+                                break
+                            end
+                        end
 
                         local isEdge = (ix == 0) or (iz == 0) or (ix == SAPLING_HOUSE_N - 1) or (iz == SAPLING_HOUSE_N - 1)
 
