@@ -800,7 +800,25 @@ return function(C, R, UI)
             return best
         end
 
+        local function findMapGround()
+            local map = WS:FindFirstChild("Map")
+            if not map then return nil end
+            local g = map:FindFirstChild("Ground")
+            return g
+        end
+
         local function groundYAt(x, z, fallbackY)
+            local ground = findMapGround()
+            if ground then
+                local params = RaycastParams.new()
+                params.FilterType = Enum.RaycastFilterType.Include
+                params.FilterDescendantsInstances = { ground }
+                local startY = (fallbackY or 0) + 800
+                local start = Vector3.new(x, startY, z)
+                local hit = WS:Raycast(start, Vector3.new(0, -4000, 0), params)
+                if hit then return hit.Position.Y end
+            end
+
             local params = RaycastParams.new()
             params.FilterType = Enum.RaycastFilterType.Exclude
             local ex = { lp.Character }
