@@ -808,7 +808,8 @@ return function(C, R, UI)
         local function findMapGround()
             local map = WS:FindFirstChild("Map")
             if not map then return nil end
-            return map:FindFirstChild("Ground")
+            local g = map:FindFirstChild("Ground")
+            return g
         end
 
         local function groundYAt(x, z, fallbackY)
@@ -851,26 +852,15 @@ return function(C, R, UI)
             end
         end
 
-        C.Farm._plantCapture = C.Farm._plantCapture or {
-            capArgs = nil,
-            capPosIndex = 2,
-            captured = false,
-            armed = false,
-            hookInstalled = false,
-            oldNamecall = nil
-        }
-        local cap = C.Farm._plantCapture
+        C.Farm._saplingRingCapture = C.Farm._saplingRingCapture or { captured = false, capPosIndex = 2, capArgs = nil, hooked = false }
+        local cap = C.Farm._saplingRingCapture
 
-        local function installPlantHook()
-            if cap.hookInstalled then return true end
-            if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" or type(checkcaller) ~= "function" then
-                return false
-            end
-            local ok = pcall(function()
+        if not cap.hooked then
+            pcall(function()
                 local oldNamecall
                 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                     local method = getnamecallmethod()
-                    if cap.armed and (not checkcaller()) and method == "InvokeServer" and self == RequestPlantItem then
+                    if not checkcaller() and method == "InvokeServer" and self == RequestPlantItem and not cap.captured then
                         local args = table.pack(...)
                         cap.capArgs = args
                         cap.capPosIndex = 2
@@ -883,58 +873,31 @@ return function(C, R, UI)
                             end
                         end
                         cap.captured = true
-                        cap.armed = false
                     end
                     return oldNamecall(self, ...)
                 end)
-                cap.oldNamecall = oldNamecall
+                cap.hooked = true
             end)
-            cap.hookInstalled = ok
-            return ok
         end
 
-        local function capturePlantTemplate(timeoutSec)
+        local function ensureTemplate(seedSapling)
             if cap.capArgs and cap.capArgs.n then return true end
-            if not installPlantHook() then
-                warn("[Farm] Plant capture unavailable (missing hook APIs).")
-                return false
-            end
-            cap.captured = false
-            cap.armed = true
-            local deadline = os.clock() + (tonumber(timeoutSec) or 12)
-            while cap.armed and (not cap.captured) and os.clock() < deadline do
-                RunService.Heartbeat:Wait()
-            end
-            cap.armed = false
-            return (cap.capArgs ~= nil and cap.capArgs.n ~= nil)
-        end
-
-        local function ensurePlantTemplateOrPrompt(seedSapling)
-            if cap.capArgs and cap.capArgs.n then return true end
-            warn("[Farm] Need to capture the game's real Plant signature. Plant ONE sapling manually now (you have ~12s)...")
-            local ok = capturePlantTemplate(12)
-            if not ok then
-                warn("[Farm] Capture timed out. Plant one sapling manually, then press the button again.")
-                return false
-            end
-            if not (cap.capArgs and cap.capArgs.n) then
-                warn("[Farm] Capture failed; press the button again after planting once.")
-                return false
-            end
+            cap.capArgs = table.pack(seedSapling, Vector3.new(0, 0, 0))
+            cap.capPosIndex = 2
+            cap.captured = true
             return true
         end
 
         local function invokePlant(seedSapling, atPos)
-            if not (seedSapling and typeof(seedSapling) == "Instance") then return false end
-            if not (atPos and typeof(atPos) == "Vector3") then return false end
-            if not (cap.capArgs and cap.capArgs.n) then
-                local ok1, res1 = pcall(function()
-                    return RequestPlantItem:InvokeServer(seedSapling, atPos)
-                end)
-                return ok1 and (res1 == nil or (type(res1) ~= "table") or (res1.Success ~= false))
+            if not (seedSapling and typeof(seedSapling) == "Instance") then
+                return false
             end
             local args = {}
-            for i = 1, cap.capArgs.n do args[i] = cap.capArgs[i] end
+            if cap.capArgs and cap.capArgs.n then
+                for i = 1, cap.capArgs.n do args[i] = cap.capArgs[i] end
+            else
+                args[1] = seedSapling
+            end
             args[1] = seedSapling
             args[cap.capPosIndex] = atPos
             local ok, res = pcall(function()
@@ -975,10 +938,7 @@ return function(C, R, UI)
                     return
                 end
 
-                if not ensurePlantTemplateOrPrompt(seedSapling) then
-                    saplingRingRunning = false
-                    return
-                end
+                ensureTemplate(seedSapling)
 
                 for i = 1, SAPLING_RING_POINTS do
                     if (not saplingRingRunning) or (myToken ~= saplingRingToken) then break end
@@ -1036,10 +996,7 @@ return function(C, R, UI)
                     return
                 end
 
-                if not ensurePlantTemplateOrPrompt(seedSapling) then
-                    saplingHouseRunning = false
-                    return
-                end
+                ensureTemplate(seedSapling)
 
                 local half = (SAPLING_HOUSE_N - 1) * 0.5
                 for ix = 0, SAPLING_HOUSE_N - 1 do
