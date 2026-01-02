@@ -798,7 +798,7 @@ return function(C, R, UI)
 
         local autoPlantWindowOn = false
         tab:Toggle({
-            Title = "Auto Plant Saplings Window (Code A)",
+            Title = "Infinite Saplings",
             Value = false,
             Callback = function(state)
                 autoPlantWindowOn = state
