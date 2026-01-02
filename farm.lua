@@ -758,6 +758,11 @@ return function(C, R, UI)
         local SAPLING_FIND_RADIUS = 60
         local SAPLING_LAYER_Y_OFFSET = 10
 
+        local SAPLING_HOUSE_N = 10
+        local SAPLING_HOUSE_ROOF_Y_OFFSET = 12
+        local SAPLING_HOUSE_INTERVAL = 0
+        local SAPLING_HOUSE_SPACING = (2 * SAPLING_RING_RADIUS * math.sin(math.pi / SAPLING_RING_POINTS))
+
         local function hrpForSapling()
             local ch = lp.Character or lp.CharacterAdded:Wait()
             return ch:WaitForChild("HumanoidRootPart", 5)
@@ -959,7 +964,70 @@ return function(C, R, UI)
             end)
         end
 
+        local saplingHouseRunning = false
+        local saplingHouseToken = 0
+
+        local function stopSaplingHouse()
+            saplingHouseRunning = false
+            saplingHouseToken += 1
+        end
+
+        local function startSaplingHousePreset()
+            if saplingHouseRunning then return end
+            saplingHouseRunning = true
+            saplingHouseToken += 1
+            local myToken = saplingHouseToken
+
+            task.spawn(function()
+                local r = hrpForSapling()
+                if not r then
+                    saplingHouseRunning = false
+                    return
+                end
+
+                local center = r.Position
+                local baseFootY = characterFootY()
+                if not baseFootY then baseFootY = center.Y - 3 end
+
+                local seedSapling = findNearestSapling(SAPLING_FIND_RADIUS)
+                if not seedSapling then
+                    warn("[Farm] Sapling house: no Sapling found within radius " .. tostring(SAPLING_FIND_RADIUS))
+                    saplingHouseRunning = false
+                    return
+                end
+
+                ensureTemplate(seedSapling)
+
+                local half = (SAPLING_HOUSE_N - 1) * 0.5
+                for ix = 0, SAPLING_HOUSE_N - 1 do
+                    for iz = 0, SAPLING_HOUSE_N - 1 do
+                        if (not saplingHouseRunning) or (myToken ~= saplingHouseToken) then break end
+
+                        local isEdge = (ix == 0) or (iz == 0) or (ix == SAPLING_HOUSE_N - 1) or (iz == SAPLING_HOUSE_N - 1)
+
+                        local x = center.X + ((ix - half) * SAPLING_HOUSE_SPACING)
+                        local z = center.Z + ((iz - half) * SAPLING_HOUSE_SPACING)
+                        local gy = groundYAt(x, z, baseFootY)
+
+                        if isEdge then
+                            invokePlant(seedSapling, Vector3.new(x, gy, z))
+                        else
+                            invokePlant(seedSapling, Vector3.new(x, gy + SAPLING_HOUSE_ROOF_Y_OFFSET, z))
+                        end
+
+                        waitInterval(SAPLING_HOUSE_INTERVAL)
+                    end
+                    if (not saplingHouseRunning) or (myToken ~= saplingHouseToken) then break end
+                end
+
+                if myToken == saplingHouseToken then
+                    saplingHouseRunning = false
+                end
+            end)
+        end
+
         local function cleanupAll()
+            stopSaplingHouse()
             stopSaplingRing()
             stopCircleFarm()
             stopSmallFarm()
@@ -1032,6 +1100,13 @@ return function(C, R, UI)
                 Title = "Plant Sapling Ring (2 layers) r=132.168 pts=340 +Y=10",
                 Callback = function()
                     startSaplingRingPreset()
+                end
+            })
+
+            tab:Button({
+                Title = "Build Sapling House (10x10 walls + roof) roof +Y=12 (interior air only)",
+                Callback = function()
+                    startSaplingHousePreset()
                 end
             })
         end
