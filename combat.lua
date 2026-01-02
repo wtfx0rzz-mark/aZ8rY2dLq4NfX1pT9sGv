@@ -18,7 +18,7 @@ return function(C, R, UI)
     C.Config = C.Config or {}
 
     local TUNE = C.Config
-    TUNE.CHOP_SWING_DELAY     = TUNE.CHOP_SWING_DELAY     or 0.40
+    TUNE.CHOP_SWING_DELAY     = TUNE.CHOP_SWING_DELAY     or 0.50
     TUNE.TREE_NAME            = TUNE.TREE_NAME            or "Small Tree"
     TUNE.UID_SUFFIX           = TUNE.UID_SUFFIX           or "0000000000"
     TUNE.ChopPrefer           = TUNE.ChopPrefer           or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
