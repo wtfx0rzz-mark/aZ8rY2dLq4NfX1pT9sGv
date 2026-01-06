@@ -1,4 +1,3 @@
--- farm.lua
 return function(C, R, UI)
     local function run()
         C = C or _G.C
@@ -42,12 +41,22 @@ return function(C, R, UI)
 
         C.State = C.State or {}
         if C.State.FarmTeleportWaitSec == nil then C.State.FarmTeleportWaitSec = 1 end
+        if C.State.FarmOrbFlySpeed == nil then C.State.FarmOrbFlySpeed = 3 end
+        if type(C.State.FarmOrbPoints) ~= "table" then C.State.FarmOrbPoints = {} end
 
         local function getSwitchTreeSec()
             local v = tonumber(C.State.FarmTeleportWaitSec)
             if v == nil then v = 1 end
             if v < 0 then v = 0 end
             if v > 10 then v = 10 end
+            return v
+        end
+
+        local function getOrbFlySpeed()
+            local v = tonumber(C.State.FarmOrbFlySpeed)
+            if v == nil then v = 3 end
+            if v < 1 then v = 1 end
+            if v > 20 then v = 20 end
             return v
         end
 
@@ -751,10 +760,264 @@ return function(C, R, UI)
             circleNextBigHitAt = 0
         end
 
+        --=====================================================
+        -- Orb Path (Edge Buttons): Set Orb + Start/Stop
+        --=====================================================
+        local orbEdgeEnabled = false
+        local orbRunning = false
+        local orbDir = 1
+        local orbIdx = 1
+        local orbConn = nil
+        local orbCharConn = nil
+        local orbGui = nil
+        local orbBtnSet = nil
+        local orbBtnStart = nil
+        local orbBG = nil
+        local orbBV = nil
+
+        local function clearInstance(x)
+            if x then pcall(function() x:Destroy() end) end
+        end
+
+        local function disconnectConn(c)
+            if c then pcall(function() c:Disconnect() end) end
+        end
+
+        local function humanoid()
+            local ch = lp.Character
+            return ch and ch:FindFirstChildOfClass("Humanoid")
+        end
+
+        local function hrp()
+            local ch = lp.Character
+            return ch and ch:FindFirstChild("HumanoidRootPart")
+        end
+
+        local function orbPoints()
+            if type(C.State.FarmOrbPoints) ~= "table" then C.State.FarmOrbPoints = {} end
+            return C.State.FarmOrbPoints
+        end
+
+        local function setStartText(txt)
+            if orbBtnStart and orbBtnStart.Parent then
+                orbBtnStart.Text = txt
+            end
+        end
+
+        local function ensureOrbMovers(root)
+            if not root then return end
+            clearInstance(orbBG); orbBG = nil
+            clearInstance(orbBV); orbBV = nil
+
+            orbBG = Instance.new("BodyGyro")
+            orbBG.Name = "FarmOrbBG"
+            orbBG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+            orbBG.P = 1000
+            orbBG.D = 50
+            orbBG.Parent = root
+
+            orbBV = Instance.new("BodyVelocity")
+            orbBV.Name = "FarmOrbBV"
+            orbBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+            orbBV.Velocity = Vector3.zero
+            orbBV.Parent = root
+        end
+
+        local function stopOrbRunner()
+            orbRunning = false
+            disconnectConn(orbConn); orbConn = nil
+
+            local h = humanoid()
+            if h then h.PlatformStand = false end
+
+            if orbBV then orbBV.Velocity = Vector3.zero end
+            clearInstance(orbBV); orbBV = nil
+            clearInstance(orbBG); orbBG = nil
+
+            setStartText("Start")
+        end
+
+        local function nextOrbIndex()
+            local pts = orbPoints()
+            local n = #pts
+            if n < 2 then return 1 end
+
+            if orbDir == 1 then
+                if orbIdx >= n then
+                    orbDir = -1
+                    orbIdx = math.max(1, orbIdx - 1)
+                else
+                    orbIdx += 1
+                end
+            else
+                if orbIdx <= 1 then
+                    orbDir = 1
+                    orbIdx = math.min(n, orbIdx + 1)
+                else
+                    orbIdx -= 1
+                end
+            end
+            return orbIdx
+        end
+
+        local function startOrbRunner()
+            if orbRunning then return end
+            local pts = orbPoints()
+            if #pts < 2 then return end
+
+            local root = hrp()
+            local h = humanoid()
+            if not root or not h then return end
+
+            orbRunning = true
+            orbDir = 1
+            orbIdx = 1
+
+            ensureOrbMovers(root)
+            h.PlatformStand = true
+            setStartText("Stop")
+
+            disconnectConn(orbConn); orbConn = nil
+            orbConn = RunService.Heartbeat:Connect(function(dt)
+                if not orbRunning then return end
+
+                local root2 = hrp()
+                local h2 = humanoid()
+                if not root2 or not h2 then return end
+
+                if (not orbBV) or (not orbBG) or orbBV.Parent ~= root2 or orbBG.Parent ~= root2 then
+                    ensureOrbMovers(root2)
+                end
+
+                local pts2 = orbPoints()
+                local n = #pts2
+                if n < 2 then
+                    stopOrbRunner()
+                    return
+                end
+
+                if orbIdx < 1 then orbIdx = 1 end
+                if orbIdx > n then orbIdx = n end
+
+                local target = pts2[orbIdx]
+                if typeof(target) ~= "Vector3" then
+                    stopOrbRunner()
+                    return
+                end
+
+                local pos = root2.Position
+                local delta = target - pos
+                local dist = delta.Magnitude
+
+                if dist <= 2.5 then
+                    nextOrbIndex()
+                    return
+                end
+
+                local dir = (dist > 0.0001) and (delta / dist) or Vector3.new(0, 0, 0)
+                local spd = getOrbFlySpeed() * 50
+                orbBV.Velocity = dir * spd
+                orbBG.CFrame = CFrame.new(pos, pos + dir)
+            end)
+        end
+
+        local function toggleOrbRunner()
+            if orbRunning then
+                stopOrbRunner()
+            else
+                startOrbRunner()
+            end
+        end
+
+        local function destroyOrbGui()
+            stopOrbRunner()
+            orbBtnSet = nil
+            orbBtnStart = nil
+            clearInstance(orbGui); orbGui = nil
+        end
+
+        local function createOrbGui()
+            destroyOrbGui()
+
+            local pg = lp:FindFirstChildOfClass("PlayerGui")
+            if not pg then return end
+
+            orbGui = Instance.new("ScreenGui")
+            orbGui.Name = "FarmOrbEdgeGui"
+            orbGui.ResetOnSpawn = false
+            orbGui.Parent = pg
+
+            local frame = Instance.new("Frame")
+            frame.Name = "EdgeFrame"
+            frame.Parent = orbGui
+            frame.AnchorPoint = Vector2.new(1, 0.5)
+            frame.Position = UDim2.new(1, -10, 0.5, 0)
+            frame.Size = UDim2.new(0, 140, 0, 86)
+            frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+            frame.BorderSizePixel = 0
+
+            local uic = Instance.new("UICorner")
+            uic.CornerRadius = UDim.new(0, 10)
+            uic.Parent = frame
+
+            local list = Instance.new("UIListLayout")
+            list.Parent = frame
+            list.FillDirection = Enum.FillDirection.Vertical
+            list.HorizontalAlignment = Enum.HorizontalAlignment.Center
+            list.VerticalAlignment = Enum.VerticalAlignment.Center
+            list.Padding = UDim.new(0, 8)
+
+            local function mkBtn(name, text)
+                local b = Instance.new("TextButton")
+                b.Name = name
+                b.Size = UDim2.new(1, -16, 0, 32)
+                b.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+                b.BorderSizePixel = 0
+                b.Text = text
+                b.TextColor3 = Color3.fromRGB(235, 235, 235)
+                b.Font = Enum.Font.SourceSansSemibold
+                b.TextSize = 16
+                b.Parent = frame
+                local c = Instance.new("UICorner")
+                c.CornerRadius = UDim.new(0, 10)
+                c.Parent = b
+                return b
+            end
+
+            orbBtnSet = mkBtn("SetOrb", "Set Orb")
+            orbBtnStart = mkBtn("StartStop", "Start")
+
+            orbBtnSet.MouseButton1Click:Connect(function()
+                local root = hrp()
+                if not root then return end
+                local pts = orbPoints()
+                pts[#pts + 1] = root.Position
+            end)
+
+            orbBtnStart.MouseButton1Click:Connect(function()
+                toggleOrbRunner()
+            end)
+        end
+
+        disconnectConn(orbCharConn); orbCharConn = nil
+        orbCharConn = lp.CharacterAdded:Connect(function()
+            task.defer(function()
+                if orbRunning then
+                    stopOrbRunner()
+                    startOrbRunner()
+                end
+            end)
+        end)
+
+        --=====================================================
+        -- Cleanup
+        --=====================================================
         local function cleanupAll()
             stopCircleFarm()
             stopSmallFarm()
             stopBigFarm()
+            destroyOrbGui()
+            disconnectConn(orbCharConn); orbCharConn = nil
         end
 
         C.Farm._cleanup = cleanupAll
@@ -812,6 +1075,34 @@ return function(C, R, UI)
                     startBigFarm()
                 else
                     stopBigFarm()
+                end
+            end
+        })
+
+        tab:Divider()
+        tab:Section({ Title = "Orb Path" })
+
+        if tab.Slider then
+            tab:Slider({
+                Title = "Orb Fly Speed",
+                Value = { Min = 1, Max = 20, Default = getOrbFlySpeed() },
+                Callback = function(v)
+                    local nv = v
+                    if type(v) == "table" then nv = v.Value or v.Current or v.CurrentValue or v.Default or v.min or v.max end
+                    C.State.FarmOrbFlySpeed = tonumber(nv) or 3
+                end
+            })
+        end
+
+        tab:Toggle({
+            Title = "Orb Path Edge Buttons (Set Orb / Start)",
+            Value = false,
+            Callback = function(state)
+                orbEdgeEnabled = state and true or false
+                if orbEdgeEnabled then
+                    createOrbGui()
+                else
+                    destroyOrbGui()
                 end
             end
         })
