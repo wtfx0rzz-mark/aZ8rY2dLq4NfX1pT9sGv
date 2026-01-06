@@ -100,7 +100,7 @@ return function(C, R, UI)
         local RF_Stop   = getRemote("RequestStopDraggingItem","StopDraggingItem","StopDraggingItemRemote")
 
         local DragActive = {}
-        local DRAG_TTL   = 3.0
+        local DRAG_TTL   = 60.0
 
         local function itemsRootOrNil()
             return WS:FindFirstChild("Items")
@@ -195,9 +195,22 @@ return function(C, R, UI)
             end
         end
 
-        local function dragSafeStop(m)
-            if not (m and RF_Stop) then return end
-            pcall(function() RF_Stop:FireServer(m) end)
+        local function safeStopDrag(m)
+            if not (m and RF_Stop) then return false end
+            local ok = pcall(function() RF_Stop:FireServer(m) end)
+            return ok
+        end
+
+        local function finallyStopDrag(m)
+            task.delay(0.05, function() pcall(safeStopDrag, m) end)
+            task.delay(0.20, function() pcall(safeStopDrag, m) end)
+        end
+
+        local function dragUntrack(m)
+            local rec = DragActive[m]
+            if not rec then return end
+            DragActive[m] = nil
+            for _,c in ipairs(rec.conns) do pcall(function() c:Disconnect() end) end
         end
 
         local function dragTrackRelease(m)
@@ -205,7 +218,7 @@ return function(C, R, UI)
             if not rec then return end
             DragActive[m] = nil
             for _,c in ipairs(rec.conns) do pcall(function() c:Disconnect() end) end
-            dragSafeStop(m)
+            safeStopDrag(m)
         end
 
         local function dragStart(m)
@@ -227,8 +240,9 @@ return function(C, R, UI)
             return true
         end
 
-        local function dragStop(m)
-            dragTrackRelease(m)
+        local function dragKeepAlive(m)
+            local rec = DragActive[m]
+            if rec then rec.t0 = os.clock() end
         end
 
         Run.Heartbeat:Connect(function()
@@ -364,7 +378,7 @@ return function(C, R, UI)
         local function releaseAll()
             for _,m in ipairs(list) do
                 if m and m.Parent then
-                    dragStop(m)
+                    dragTrackRelease(m)
                     setNoCollideModel(m, false)
                     setAnchoredModel(m, false)
                     local mp = mainPart(m)
@@ -437,7 +451,7 @@ return function(C, R, UI)
                     setNoCollideModel(m, true)
                     setAnchoredModel(m, true)
                     addGather(m)
-                    dragStop(m)
+                    dragKeepAlive(m)
                 until true
             end
         end
@@ -475,7 +489,7 @@ return function(C, R, UI)
                     setNoCollideModel(m, true)
                     setAnchoredModel(m, true)
                     addGather(m)
-                    dragStop(m)
+                    dragKeepAlive(m)
                 until true
             end
         end
@@ -496,14 +510,14 @@ return function(C, R, UI)
             local mp = mainPart(child); if not mp then return end
             if not dragStart(child) then return end
             task.delay(START_YIELD, function()
-                if not gatherOn then dragStop(child); return end
-                if not child or not child.Parent then dragStop(child); return end
-                local mp2 = mainPart(child); if not mp2 then dragStop(child); return end
+                if not gatherOn then return end
+                if not child or not child.Parent then return end
+                local mp2 = mainPart(child); if not mp2 then return end
                 pcall(function() mp2:SetNetworkOwner(lp) end)
                 setNoCollideModel(child, true)
                 setAnchoredModel(child, true)
                 addGather(child)
-                dragStop(child)
+                dragKeepAlive(child)
             end)
         end
 
@@ -515,6 +529,7 @@ return function(C, R, UI)
             local baseCF  = CFrame.lookAt(above, above + forward)
             for _,m in ipairs(list) do
                 if m and m.Parent then
+                    dragKeepAlive(m)
                     pivotModel(m, baseCF)
                 else
                     removeGather(m)
@@ -572,6 +587,7 @@ return function(C, R, UI)
             local mp = mainPart(m)
             if not mp then return end
 
+            dragKeepAlive(m)
             pcall(function() mp:SetNetworkOwner(lp) end)
             setNoCollideModel(m, true)
             setAnchoredModel(m, true)
@@ -596,7 +612,8 @@ return function(C, R, UI)
             pcall(function() mp:SetNetworkOwner(nil) end)
             pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
 
-            dragSafeStop(m)
+            finallyStopDrag(m)
+            dragUntrack(m)
         end
 
         local function placeDown()
@@ -622,7 +639,6 @@ return function(C, R, UI)
             for i = 1, #items do
                 local m = items[i]
                 if m and m.Parent then
-                    pcall(function() dragStart(m) end)
                     dropOneItem(m, baseForward, basePos)
                     placed += 1
                     if placed % PLACE_BATCH == 0 then
