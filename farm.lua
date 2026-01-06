@@ -42,23 +42,12 @@ return function(C, R, UI)
         C.State = C.State or {}
         if C.State.FarmTeleportWaitSec == nil then C.State.FarmTeleportWaitSec = 1 end
         if type(C.State.FarmOrbPoints) ~= "table" then C.State.FarmOrbPoints = {} end
-        if C.State.FarmOrbFallbackSpeed == nil then C.State.FarmOrbFallbackSpeed = 3 end
 
         local function getSwitchTreeSec()
             local v = tonumber(C.State.FarmTeleportWaitSec)
             if v == nil then v = 1 end
             if v < 0 then v = 0 end
             if v > 10 then v = 10 end
-            return v
-        end
-
-        local function getOrbSpeedScalar()
-            local v = tonumber(C.State.PlayerFlySpeed)
-            if v == nil then v = tonumber(C.State.FlySpeed) end
-            if v == nil then v = tonumber(C.State.FarmOrbFallbackSpeed) end
-            if v == nil then v = 3 end
-            if v < 0.1 then v = 0.1 end
-            if v > 50 then v = 50 end
             return v
         end
 
@@ -764,38 +753,36 @@ return function(C, R, UI)
 
         --=====================================================
         -- Orb Path (Edge Buttons): Set Orb + Start/Stop
+        -- Speed is fixed to "Fly Speed = 1" from your player module (50 studs/sec).
         --=====================================================
+        local ORB_SPEED = 50
+
         local orbEdgeEnabled = false
         local orbRunning = false
         local orbDir = 1
         local orbIdx = 1
-        local orbConn = nil
-        local orbCharConn = nil
+        local orbRenderBound = false
         local orbGui = nil
         local orbBtnSet = nil
         local orbBtnStart = nil
         local orbCountLabel = nil
+        local prevPlatformStand = nil
         local orbBG = nil
         local orbBV = nil
-        local prevPlatformStand = nil
 
         local overlayRoot = nil
         local overlayFolder = nil
         local orbMarkers = {}
 
         local function clearInstance(x) if x then pcall(function() x:Destroy() end) end end
-        local function disconnectConn(c) if c then pcall(function() c:Disconnect() end) end end
-
         local function humanoid()
             local ch = lp.Character
             return ch and ch:FindFirstChildOfClass("Humanoid")
         end
-
         local function hrp()
             local ch = lp.Character
             return ch and ch:FindFirstChild("HumanoidRootPart")
         end
-
         local function orbPoints()
             if type(C.State.FarmOrbPoints) ~= "table" then C.State.FarmOrbPoints = {} end
             return C.State.FarmOrbPoints
@@ -881,49 +868,31 @@ return function(C, R, UI)
 
         local function ensureOrbMovers(root)
             if not root then return end
-            clearInstance(orbBG); orbBG = nil
-            clearInstance(orbBV); orbBV = nil
 
-            orbBG = Instance.new("BodyGyro")
-            orbBG.Name = "FarmOrbBG"
-            orbBG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-            orbBG.P = 1000
-            orbBG.D = 50
-            orbBG.Parent = root
-
-            orbBV = Instance.new("BodyVelocity")
-            orbBV.Name = "FarmOrbBV"
-            orbBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-            orbBV.Velocity = Vector3.zero
-            orbBV.Parent = root
-        end
-
-        local function stopOrbRunner()
-            orbRunning = false
-            disconnectConn(orbConn); orbConn = nil
-
-            local h = humanoid()
-            if h then
-                if prevPlatformStand ~= nil then
-                    h.PlatformStand = prevPlatformStand
-                else
-                    h.PlatformStand = false
-                end
+            if not orbBG or not orbBG.Parent or orbBG.Parent ~= root then
+                clearInstance(orbBG); orbBG = nil
+                orbBG = Instance.new("BodyGyro")
+                orbBG.Name = "FarmOrbBG"
+                orbBG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+                orbBG.P = 1000
+                orbBG.D = 50
+                orbBG.Parent = root
             end
-            prevPlatformStand = nil
 
-            if orbBV then orbBV.Velocity = Vector3.zero end
-            clearInstance(orbBV); orbBV = nil
-            clearInstance(orbBG); orbBG = nil
-
-            setStartText("Start")
+            if not orbBV or not orbBV.Parent or orbBV.Parent ~= root then
+                clearInstance(orbBV); orbBV = nil
+                orbBV = Instance.new("BodyVelocity")
+                orbBV.Name = "FarmOrbBV"
+                orbBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+                orbBV.Velocity = Vector3.zero
+                orbBV.Parent = root
+            end
         end
 
         local function nextOrbIndex()
             local pts = orbPoints()
             local n = #pts
             if n < 2 then return 1 end
-
             if orbDir == 1 then
                 if orbIdx >= n then
                     orbDir = -1
@@ -940,6 +909,32 @@ return function(C, R, UI)
                 end
             end
             return orbIdx
+        end
+
+        local function unbindOrbRender()
+            if orbRenderBound then
+                orbRenderBound = false
+                pcall(function()
+                    RunService:UnbindFromRenderStep("FarmOrbPath")
+                end)
+            end
+        end
+
+        local function stopOrbRunner()
+            orbRunning = false
+            unbindOrbRender()
+
+            if orbBV then orbBV.Velocity = Vector3.zero end
+            clearInstance(orbBV); orbBV = nil
+            clearInstance(orbBG); orbBG = nil
+
+            local h = humanoid()
+            if h and prevPlatformStand ~= nil then
+                h.PlatformStand = prevPlatformStand
+            end
+            prevPlatformStand = nil
+
+            setStartText("Start")
         end
 
         local function startOrbRunner()
@@ -961,24 +956,21 @@ return function(C, R, UI)
             orbDir = 1
             orbIdx = 1
 
-            ensureOrbMovers(root)
-
             prevPlatformStand = h.PlatformStand
             h.PlatformStand = true
 
             setStartText("Stop")
 
-            disconnectConn(orbConn); orbConn = nil
-            orbConn = RunService.Heartbeat:Connect(function()
+            unbindOrbRender()
+            orbRenderBound = true
+            RunService:BindToRenderStep("FarmOrbPath", Enum.RenderPriority.Last.Value, function()
                 if not orbRunning then return end
 
                 local root2 = hrp()
                 local h2 = humanoid()
                 if not root2 or not h2 then return end
 
-                if (not orbBV) or (not orbBG) or orbBV.Parent ~= root2 or orbBG.Parent ~= root2 then
-                    ensureOrbMovers(root2)
-                end
+                ensureOrbMovers(root2)
 
                 local pts2 = orbPoints()
                 local n = #pts2
@@ -986,7 +978,6 @@ return function(C, R, UI)
                     stopOrbRunner()
                     return
                 end
-
                 if orbIdx < 1 then orbIdx = 1 end
                 if orbIdx > n then orbIdx = n end
 
@@ -1006,8 +997,7 @@ return function(C, R, UI)
                 end
 
                 local dir = (dist > 0.0001) and (delta / dist) or Vector3.zero
-                local spd = getOrbSpeedScalar() * 50
-                orbBV.Velocity = dir * spd
+                orbBV.Velocity = dir * ORB_SPEED
                 orbBG.CFrame = CFrame.new(pos, pos + dir)
             end)
         end
@@ -1021,7 +1011,7 @@ return function(C, R, UI)
         end
 
         local function destroyOrbGui()
-            stopOrbRunner()
+            if orbRunning then stopOrbRunner() end
             orbBtnSet = nil
             orbBtnStart = nil
             orbCountLabel = nil
@@ -1112,17 +1102,19 @@ return function(C, R, UI)
             end
 
             orbBtnSet.Activated:Connect(onSetOrb)
+            orbBtnSet.MouseButton1Click:Connect(onSetOrb)
             orbBtnStart.Activated:Connect(onStartStop)
+            orbBtnStart.MouseButton1Click:Connect(onStartStop)
         end
 
-        disconnectConn(orbCharConn); orbCharConn = nil
+        local orbCharConn = nil
+        if orbCharConn then orbCharConn:Disconnect() orbCharConn = nil end
         orbCharConn = lp.CharacterAdded:Connect(function()
             task.defer(function()
                 if orbRunning then
                     stopOrbRunner()
                     startOrbRunner()
-                end
-                if orbEdgeEnabled then
+                elseif orbEdgeEnabled then
                     rebuildOrbMarkers()
                 end
             end)
@@ -1136,7 +1128,9 @@ return function(C, R, UI)
             stopSmallFarm()
             stopBigFarm()
             destroyOrbGui()
-            disconnectConn(orbCharConn); orbCharConn = nil
+            unbindOrbRender()
+            if orbCharConn then pcall(function() orbCharConn:Disconnect() end) end
+            orbCharConn = nil
         end
 
         C.Farm._cleanup = cleanupAll
@@ -1209,6 +1203,7 @@ return function(C, R, UI)
                 if orbEdgeEnabled then
                     createOrbGui()
                 else
+                    C.State.FarmOrbPoints = {}
                     destroyOrbGui()
                 end
             end
