@@ -58,6 +58,10 @@ return function(C, R, UI)
         local scanInterval = 0.1
 
         local DROP_ABOVE_HEAD_STUDS = 10
+
+        local UNANCHOR_BATCH = 10
+        local UNANCHOR_STEP  = 0.04
+        local NUDGE_DOWN     = 4
         local CULTIST_LIMIT  = math.huge
 
         local PLACE_BATCH    = 10
@@ -110,15 +114,6 @@ return function(C, R, UI)
                 return obj:FindFirstChildWhichIsA("BasePart")
             end
             return nil
-        end
-
-        local function bboxHeight(m)
-            if m and m:IsA("Model") then
-                local s = m:GetExtentsSize()
-                return (s and s.Y) or 2
-            end
-            local p = mainPart(m)
-            return (p and p.Size.Y) or 2
         end
 
         local function hrp()
@@ -602,9 +597,6 @@ return function(C, R, UI)
 
             waitIf(PLACE_PER_ITEM_DELAY_SEC)
 
-            finallyStopDrag(m)
-            dragUntrack(m)
-
             setAnchoredModel(m, false)
             setNoCollideModel(m, false)
 
@@ -619,59 +611,9 @@ return function(C, R, UI)
 
             pcall(function() mp:SetNetworkOwner(nil) end)
             pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
-        end
 
-        local function fixFloatingAroundPlayer(radius)
-            local root = hrp(); if not root then return end
-            local items = itemsRootOrNil(); if not items then return end
-            local origin = root.Position
-
-            local rp = RaycastParams.new()
-            rp.FilterType = Enum.RaycastFilterType.Exclude
-            rp.IgnoreWater = true
-
-            for _,m in ipairs(items:GetChildren()) do
-                repeat
-                    if not (m and m.Parent and m:IsA("Model")) then break end
-                    if hasHumanoid(m) then break end
-                    if isExcludedModel(m) or isUnderLogWall(m) then break end
-                    local mp = mainPart(m); if not mp then break end
-                    if mp.Anchored then break end
-                    if (mp.Position - origin).Magnitude > radius then break end
-
-                    rp.FilterDescendantsInstances = { lp.Character, m }
-                    local castOrigin = mp.Position + Vector3.new(0, 100, 0)
-                    local res = WS:Raycast(castOrigin, Vector3.new(0, -320, 0), rp)
-                    if not res or not res.Position then break end
-
-                    local groundY = res.Position.Y
-                    local gap = mp.Position.Y - groundY
-                    if gap <= 6 then break end
-
-                    local cf0 = m:GetPivot()
-                    local rx, ry, rz = cf0:ToOrientation()
-                    local H = bboxHeight(m)
-                    local newY = groundY + math.max(0.5, H * 0.5) + 0.10
-                    local newPos = Vector3.new(mp.Position.X, newY, mp.Position.Z)
-                    local newCF = CFrame.new(newPos) * CFrame.Angles(rx, ry, rz)
-
-                    pcall(function() mp:SetNetworkOwner(lp) end)
-                    setNoCollideModel(m, true)
-                    setAnchoredModel(m, true)
-                    pivotModel(m, newCF)
-                    task.defer(function()
-                        if m and m.Parent then
-                            setAnchoredModel(m, false)
-                            setNoCollideModel(m, false)
-                            local mp2 = mainPart(m)
-                            if mp2 then
-                                pcall(function() mp2:SetNetworkOwner(nil) end)
-                                pcall(function() if mp2.SetNetworkOwnershipAuto then mp2:SetNetworkOwnershipAuto() end end)
-                            end
-                        end
-                    end)
-                until true
-            end
+            finallyStopDrag(m)
+            dragUntrack(m)
         end
 
         local function placeDown()
@@ -688,6 +630,7 @@ return function(C, R, UI)
             for i = 1, n do items[i] = list[i] end
 
             dropCounter = 0
+
             if PLACE_USE_DELAY then
                 waitIf(PLACE_INITIAL_DELAY_SEC)
             end
@@ -705,12 +648,6 @@ return function(C, R, UI)
             end
 
             clearAll()
-
-            task.delay(5, function()
-                pcall(function()
-                    fixFloatingAroundPlayer(30)
-                end)
-            end)
         end
 
         C.Gather = C.Gather or {}
