@@ -1264,6 +1264,7 @@ return function(C, R, UI)
                 end
             end
         })
+
         do
             local nextChestBtn = stack:FindFirstChild("NextChestEdge") or (function()
                 local b = Instance.new("TextButton")
@@ -1286,33 +1287,41 @@ return function(C, R, UI)
 
             local function mainPart2(m)
                 if not m then return nil end
-                if m:IsA("BasePart") then
-                    return m
-                end
+                if m:IsA("BasePart") then return m end
                 if m:IsA("Model") then
-                    if m.PrimaryPart then
-                        return m.PrimaryPart
-                    end
+                    if m.PrimaryPart then return m.PrimaryPart end
                     return m:FindFirstChildWhichIsA("BasePart")
                 end
                 return nil
             end
 
-            local function groundBelow3(pos)
+            local function chestPos(m)
+                local mp = mainPart2(m)
+                if mp then return mp.Position end
+                local ok, cf = pcall(function() return m:GetPivot() end)
+                return ok and cf.Position or nil
+            end
+
+            local function groundBelow3(pos, excludeExtra)
                 local params = RaycastParams.new()
                 params.FilterType = Enum.RaycastFilterType.Exclude
-                params.FilterDescendantsInstances = { lp.Character, WS:FindFirstChild("Items") }
-                local start = pos + Vector3.new(0, 5, 0)
-                local hit = WS:Raycast(start, Vector3.new(0, -1000, 0), params)
-                if hit then return hit.Position end
-                hit = WS:Raycast(pos + Vector3.new(0, 200, 0), Vector3.new(0, -1000, 0), params)
+                local ex = { lp.Character }
+                local items = WS:FindFirstChild("Items"); if items then table.insert(ex, items) end
+                if excludeExtra then
+                    for i=1,#excludeExtra do ex[#ex+1] = excludeExtra[i] end
+                end
+                params.FilterDescendantsInstances = ex
+                local start = pos + Vector3.new(0, 80, 0)
+                local hit = WS:Raycast(start, Vector3.new(0, -2000, 0), params)
                 return (hit and hit.Position) or pos
             end
 
             local chests = {}
             local diamondModel = nil
-            local DIAMOND_PAIR_DIST   = 9.8
-            local DIAMOND_PAIR_TOL    = 2.0
+
+            local STRONGHOLD_EXCLUDE_RADIUS = 15.0
+            local STRONGHOLD_EXCLUDE_TOL    = 0.75
+
             local EXCLUDE_NAMES = { ["Stronghold Diamond Chest"] = true }
 
             local function isChestName2(n)
@@ -1331,11 +1340,19 @@ return function(C, R, UI)
                 if not m then return false end
                 return m:GetAttribute(UID_OPEN_KEY) == true
             end
-            local function chestPos(m)
-                local mp = mainPart2(m)
-                if mp then return mp.Position end
-                local ok, cf = pcall(function() return m:GetPivot() end)
-                return ok and cf.Position or nil
+
+            local function recomputeStrongholdExclusions()
+                if not diamondModel or not diamondModel.Parent then return end
+                local dpos = chestPos(diamondModel)
+                if not dpos then return end
+                local maxD = STRONGHOLD_EXCLUDE_RADIUS + STRONGHOLD_EXCLUDE_TOL
+                for m,r in pairs(chests) do
+                    if m and m.Parent and r and r.pos then
+                        if (r.pos - dpos).Magnitude <= maxD then
+                            r.excluded = true
+                        end
+                    end
+                end
             end
 
             local function markChest(m)
@@ -1347,6 +1364,7 @@ return function(C, R, UI)
                     or isSnowChestName(m.Name)
                     or isHalloweenChestName(m.Name)
                     or false
+
                 local rec = chests[m]
                 if not rec then
                     chests[m] = { pos = pos, opened = chestOpened2(m), excluded = excluded }
@@ -1364,8 +1382,9 @@ return function(C, R, UI)
                 else
                     rec.pos      = pos
                     rec.opened   = chestOpened2(m)
-                    rec.excluded = excluded
+                    rec.excluded = excluded or rec.excluded
                 end
+
                 if m.Name == "Stronghold Diamond Chest" then
                     diamondModel = m
                 end
@@ -1379,37 +1398,7 @@ return function(C, R, UI)
                 for _,m in ipairs(items:GetChildren()) do
                     markChest(m)
                 end
-            end
-
-            local function applyDiamondNeighborExclusion()
-                if not diamondModel then return end
-                local dpos = chestPos(diamondModel)
-                if not dpos then return end
-                for m,r in pairs(chests) do
-                    if m ~= diamondModel and not r.excluded then
-                        local dist = (r.pos - dpos).Magnitude
-                        if math.abs(dist - DIAMOND_PAIR_DIST) <= DIAMOND_PAIR_TOL then
-                            r.excluded = true
-                        end
-                    end
-                end
-            end
-
-            local function excludeNearestToDiamond()
-                if not diamondModel then return end
-                local dpos = chestPos(diamondModel)
-                if not dpos then return end
-                local bestM, bestD = nil, math.huge
-                for m,r in pairs(chests) do
-                    if m ~= diamondModel and m and m.Parent then
-                        local dist = (r.pos - dpos).Magnitude
-                        if dist < bestD then bestD, bestM = dist, m end
-                    end
-                end
-                if bestM then
-                    local rec = chests[bestM]
-                    if rec then rec.excluded = true end
-                end
+                recomputeStrongholdExclusions()
             end
 
             local function updateChestRecord(m)
@@ -1418,10 +1407,10 @@ return function(C, R, UI)
                 r.pos    = chestPos(m) or r.pos
                 r.opened = chestOpened2(m)
                 if m and m.Parent then
-                    r.excluded = EXCLUDE_NAMES[m.Name]
+                    r.excluded = r.excluded
+                        or EXCLUDE_NAMES[m.Name]
                         or isSnowChestName(m.Name)
                         or isHalloweenChestName(m.Name)
-                        or r.excluded
                         or false
                 end
             end
@@ -1429,73 +1418,134 @@ return function(C, R, UI)
             local function unopenedList()
                 local list = {}
                 for m,r in pairs(chests) do
-                    if m and m.Parent and not r.opened and not r.excluded then
+                    if m and m.Parent and r and r.pos and (not r.opened) and (not r.excluded) then
                         list[#list+1] = { m = m, pos = r.pos }
                     end
                 end
-                table.sort(list, function(a, b)
-                    local rp = hrp()
-                    if not rp then return false end
-                    local da = (a.pos - rp.Position).Magnitude
-                    local db = (b.pos - rp.Position).Magnitude
-                    return da < db
-                end)
+                local root = hrp()
+                local rootPos = root and root.Position or nil
+                if rootPos then
+                    table.sort(list, function(a, b)
+                        local da = (a.pos - rootPos).Magnitude
+                        local db = (b.pos - rootPos).Magnitude
+                        return da < db
+                    end)
+                end
                 return list
             end
 
-            local function hingeBackCenter(m)
-                local pts = {}
-                for _,d in ipairs(m:GetDescendants()) do
-                    if d.Name == "Hinge" then
-                        if d:IsA("BasePart") then
-                            table.insert(pts, d.Position)
-                        elseif d:IsA("Model") then
-                            local mp = mainPart2(d)
-                            if mp then table.insert(pts, mp.Position) end
-                        end
-                    end
+            local function hasLineOfSight(fromPos, toPos, targetModel)
+                local params = RaycastParams.new()
+                params.FilterType = Enum.RaycastFilterType.Exclude
+                local ex = { lp.Character }
+                local items = WS:FindFirstChild("Items"); if items then ex[#ex+1] = items end
+                params.FilterDescendantsInstances = ex
+                params.IgnoreWater = true
+
+                local dir = (toPos - fromPos)
+                local dist = dir.Magnitude
+                if dist < 0.01 then return true end
+
+                local hit = WS:Raycast(fromPos, dir, params)
+                if not hit then return true end
+
+                local inst = hit.Instance
+                if not inst then return true end
+                if targetModel and inst:IsDescendantOf(targetModel) then return true end
+
+                if hit.Distance >= (dist - 0.25) then
+                    return true
                 end
-                if #pts == 0 then return nil end
-                local sum = Vector3.new(0, 0, 0)
-                for _,p in ipairs(pts) do sum += p end
-                return sum / #pts
+
+                return false
             end
 
-            local FRONT_DIST = 4.0
+            local function rotateY(v, yawRad)
+                local cy, sy = math.cos(yawRad), math.sin(yawRad)
+                return Vector3.new(v.X * cy - v.Z * sy, v.Y, v.X * sy + v.Z * cy)
+            end
+
+            local FRONT_DIST = 4.5
+            local STAND_UP   = 2.5
+            local EYE_UP     = 1.5
+            local CHEST_EYE_UP = 1.5
+            local SAMPLE_COUNT = 14
+
+            local function chooseStandCFForChest(chestModel)
+                local mp = mainPart2(chestModel)
+                if not mp then return nil end
+
+                local chestCenter = mp.Position
+                local chestEye = chestCenter + Vector3.new(0, CHEST_EYE_UP, 0)
+
+                local root = hrp()
+                local rootPos = root and root.Position or (chestCenter + Vector3.new(0, 0, -1))
+                local baseDir = (rootPos - chestCenter)
+                if baseDir.Magnitude < 0.01 then baseDir = Vector3.new(0, 0, -1) end
+                baseDir = Vector3.new(baseDir.X, 0, baseDir.Z)
+                if baseDir.Magnitude < 0.01 then baseDir = Vector3.new(0, 0, -1) end
+                baseDir = baseDir.Unit
+
+                local chestGround = groundBelow3(chestCenter + Vector3.new(0, 2, 0), { chestModel })
+                local chestGroundY = chestGround and chestGround.Y or chestCenter.Y
+
+                local best = nil
+                local bestScore = -1e9
+
+                for i=0,(SAMPLE_COUNT-1) do
+                    local t = (i / SAMPLE_COUNT) * (2 * math.pi)
+                    local dir = rotateY(baseDir, t)
+                    local candidateXZ = chestCenter + dir * FRONT_DIST
+
+                    local g = groundBelow3(candidateXZ, { chestModel })
+                    local gY = g and g.Y or candidateXZ.Y
+
+                    local standY = math.max(gY, chestGroundY) + STAND_UP
+                    local standPos = Vector3.new(candidateXZ.X, standY, candidateXZ.Z)
+
+                    local standEye = standPos + Vector3.new(0, EYE_UP, 0)
+
+                    local los = hasLineOfSight(standEye, chestEye, chestModel)
+                    local dist = (standPos - chestCenter).Magnitude
+
+                    local score = 0
+                    if los then score += 1000 else score -= 1000 end
+                    score -= dist * 2
+
+                    local dy = math.abs(standPos.Y - (chestGroundY + STAND_UP))
+                    score -= dy * 3
+
+                    if score > bestScore then
+                        bestScore = score
+                        best = standPos
+                    end
+                end
+
+                if not best then return nil end
+                local lookAt = chestCenter + Vector3.new(0, CHEST_EYE_UP, 0)
+                return CFrame.new(best, lookAt)
+            end
 
             local function teleportNearChest(m)
-                if not m then return false end
+                if not (m and m.Parent) then return false end
                 local rec = chests[m]
                 if rec and rec.excluded then return false end
                 if EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name) then
                     if rec then rec.excluded = true end
                     return false
                 end
-                local mp = mainPart2(m)
-                if not mp then
+
+                recomputeStrongholdExclusions()
+                rec = chests[m]
+                if rec and rec.excluded then return false end
+
+                local standCF = chooseStandCFForChest(m)
+                if not standCF then
                     if rec then rec.excluded = true end
                     return false
                 end
-                local chestCenter = mp.Position
-                local hingePos    = hingeBackCenter(m)
-                local dir
-                if hingePos then
-                    dir = (chestCenter - hingePos)
-                    if dir.Magnitude < 1e-3 then dir = -mp.CFrame.LookVector end
-                    dir = dir.Unit
-                else
-                    local root = hrp()
-                    if root then
-                        local vec = root.Position - chestCenter
-                        if vec.Magnitude > 0.001 then dir = (-vec).Unit else dir = (-mp.CFrame.LookVector).Unit end
-                    else
-                        dir = (-mp.CFrame.LookVector).Unit
-                    end
-                end
-                local desired = chestCenter + dir * FRONT_DIST
-                local ground  = groundBelow3(desired)
-                local standPos = Vector3.new(desired.X, ground.Y + 2.5, desired.Z)
-                teleportSticky(CFrame.new(standPos, chestCenter), true)
+
+                teleportWithDive(standCF)
                 return true
             end
 
@@ -1505,6 +1555,7 @@ return function(C, R, UI)
                 if not hrp() then return end
                 local tried = 0
                 while true do
+                    recomputeStrongholdExclusions()
                     local list = unopenedList()
                     local count = #list
                     if count == 0 or tried >= count then
@@ -1516,6 +1567,7 @@ return function(C, R, UI)
                     local ok     = teleportNearChest(target.m)
                     if ok then
                         task.delay(0.5, function()
+                            recomputeStrongholdExclusions()
                             local l2 = unopenedList()
                             nextChestBtn.Visible = chestFinderOn and (#l2 > 0)
                             if #l2 > 0 then
@@ -1534,6 +1586,7 @@ return function(C, R, UI)
             end)
 
             local function refreshButton()
+                recomputeStrongholdExclusions()
                 local list = unopenedList()
                 nextChestBtn.Visible = chestFinderOn and (#list > 0)
                 if #list > 0 then
@@ -1548,14 +1601,11 @@ return function(C, R, UI)
                 chestFinderOn = true
                 nextChestBtn.Visible = false
                 initialScan()
-                applyDiamondNeighborExclusion()
-                excludeNearestToDiamond()
                 local items = itemsFolder2()
                 if items then
                     childAdd = items.ChildAdded:Connect(function(c)
                         markChest(c)
-                        applyDiamondNeighborExclusion()
-                        excludeNearestToDiamond()
+                        recomputeStrongholdExclusions()
                     end)
                     childRem = items.ChildRemoved:Connect(function(c)
                         chests[c] = nil
