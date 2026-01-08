@@ -1091,7 +1091,7 @@ return function(C, R, UI)
         layout.CellSize = UDim2.new(0, 72, 0, 72)
         layout.CellPadding = UDim2.new(0, 6, 0, 6)
         layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-        layout.VerticalAlignment   = Enum.VerticalAlignment.Center
+        layout.VerticalAlignment   = Enum.HorizontalAlignment.Center
         layout.FillDirection       = Enum.FillDirection.Horizontal
         layout.SortOrder           = Enum.SortOrder.LayoutOrder
         layout.Parent = grid
@@ -1569,24 +1569,13 @@ return function(C, R, UI)
 
     tab:Section({ Title = "Quick Revive" })
 
-    local function rebuildQuickReviveDropdown()
-        if not tab.Dropdown then return end
+    if tab.Dropdown then
         tab:Dropdown({
             Title = "Players",
             Values = makePlayerValues(),
             Multi = true,
             Callback = function(v)
                 setSelectedFromDropdown(v)
-            end
-        })
-    end
-
-    if tab.Dropdown then
-        rebuildQuickReviveDropdown()
-        tab:Button({
-            Title = "Refresh Player List",
-            Callback = function()
-                rebuildQuickReviveDropdown()
             end
         })
     else
