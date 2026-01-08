@@ -272,23 +272,24 @@ return function(C, R, UI)
     if C.State.Toggles.AutoChest == nil then
         C.State.Toggles.AutoChest = false
     end
-    if not tonumber(C.State.ChestPostOpenDelay) then
-        C.State.ChestPostOpenDelay = 0.50
-    end
-    if not tonumber(C.State.ChestNotOpenWait) then
-        C.State.ChestNotOpenWait = 5.00
-    end
-    if not tonumber(C.State.ChestCaptureWindow) then
-        C.State.ChestCaptureWindow = 4.50
-    end
+
+    -- Static chest timing knobs (edit here later if needed)
+    local CHEST_POST_OPEN_DELAY = 0
+    local CHEST_NOT_OPEN_WAIT = 4
+    local CHEST_OPEN_CONFIRM_TIMEOUT = 4
+    local CHEST_CAPTURE_WINDOW = 0.5
+
+    -- Keep state in sync (but logic uses the static variables above)
+    C.State.ChestPostOpenDelay = CHEST_POST_OPEN_DELAY
+    C.State.ChestNotOpenWait = CHEST_NOT_OPEN_WAIT
+    C.State.ChestOpenConfirmTimeout = CHEST_OPEN_CONFIRM_TIMEOUT
+    C.State.ChestCaptureWindow = CHEST_CAPTURE_WINDOW
+
     if not tonumber(C.State.ChestCaptureRadius) then
         C.State.ChestCaptureRadius = 22.00
     end
     if not tonumber(C.State.ChestSpawnRadius) then
         C.State.ChestSpawnRadius = 10.00
-    end
-    if not tonumber(C.State.ChestOpenConfirmTimeout) then
-        C.State.ChestOpenConfirmTimeout = 3.50
     end
 
     local UID_OPEN_KEY = tostring(lp.UserId) .. "Opened"
@@ -747,7 +748,7 @@ return function(C, R, UI)
         if #chests == 0 then return nil end
         applyStrongholdExclusion(chests)
         local best, bestD = nil, math.huge
-        local skipWindow = math.max(tonumber(C.State.ChestNotOpenWait) or 5.0, 1.0)
+        local skipWindow = math.max(CHEST_NOT_OPEN_WAIT, 1.0)
         for i=1,#chests do
             local m = chests[i]
             if m and m.Parent and not chestOpened(m) then
@@ -770,10 +771,10 @@ return function(C, R, UI)
         local opened = false
         local gotAny = false
         local t0 = os.clock()
-        local confirmTimeout = math.max(tonumber(C.State.ChestOpenConfirmTimeout) or 3.5, 0.5)
+        local confirmTimeout = math.max(CHEST_OPEN_CONFIRM_TIMEOUT, 0.5)
         local spawnRadius = math.max(tonumber(C.State.ChestSpawnRadius) or 10.0, 2.0)
         local captureRadius = math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, spawnRadius)
-        local captureWindow = math.max(tonumber(C.State.ChestCaptureWindow) or 4.5, 0.5)
+        local captureWindow = math.max(CHEST_CAPTURE_WINDOW, 0.05)
 
         local function scanNewNear(chestPos, rad, doCapture)
             local cands = getCandidatesNear(chestPos, rad)
@@ -866,11 +867,11 @@ return function(C, R, UI)
 
         if opened then
             pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
-            local postDelay = math.max(tonumber(C.State.ChestPostOpenDelay) or 0.5, 0.0)
+            local postDelay = math.max(CHEST_POST_OPEN_DELAY, 0.0)
             if postDelay > 0 then task.wait(postDelay) end
             return true, gotAny
         else
-            local notOpenWait = math.max(tonumber(C.State.ChestNotOpenWait) or 5.0, 0.0)
+            local notOpenWait = math.max(CHEST_NOT_OPEN_WAIT, 0.0)
             if notOpenWait > 0 then task.wait(notOpenWait) end
             return false
         end
@@ -928,62 +929,6 @@ return function(C, R, UI)
         Title = "Drop Captured Items",
         Callback = function()
             releaseAllCaptured()
-        end
-    })
-
-    ExtraTab:Slider({
-        Title = "Post-open delay (sec)",
-        Min = 0,
-        Max = 3,
-        Default = tonumber(C.State.ChestPostOpenDelay) or 0.5,
-        Value = { Min = 0, Max = 3, Default = tonumber(C.State.ChestPostOpenDelay) or 0.5 },
-        Callback = function(v)
-            local nv = v
-            if type(v) == "table" then nv = v.Value or v.Current or v.CurrentValue or v.Default end
-            nv = tonumber(nv)
-            if nv then C.State.ChestPostOpenDelay = math.clamp(nv, 0, 3) end
-        end
-    })
-
-    ExtraTab:Slider({
-        Title = "Not opening wait (sec)",
-        Min = 0,
-        Max = 15,
-        Default = tonumber(C.State.ChestNotOpenWait) or 5.0,
-        Value = { Min = 0, Max = 15, Default = tonumber(C.State.ChestNotOpenWait) or 5.0 },
-        Callback = function(v)
-            local nv = v
-            if type(v) == "table" then nv = v.Value or v.Current or v.CurrentValue or v.Default end
-            nv = tonumber(nv)
-            if nv then C.State.ChestNotOpenWait = math.clamp(nv, 0, 15) end
-        end
-    })
-
-    ExtraTab:Slider({
-        Title = "Open confirm timeout (sec)",
-        Min = 1,
-        Max = 8,
-        Default = tonumber(C.State.ChestOpenConfirmTimeout) or 3.5,
-        Value = { Min = 1, Max = 8, Default = tonumber(C.State.ChestOpenConfirmTimeout) or 3.5 },
-        Callback = function(v)
-            local nv = v
-            if type(v) == "table" then nv = v.Value or v.Current or v.CurrentValue or v.Default end
-            nv = tonumber(nv)
-            if nv then C.State.ChestOpenConfirmTimeout = math.clamp(nv, 1, 8) end
-        end
-    })
-
-    ExtraTab:Slider({
-        Title = "Capture window (sec)",
-        Min = 1,
-        Max = 10,
-        Default = tonumber(C.State.ChestCaptureWindow) or 4.5,
-        Value = { Min = 1, Max = 10, Default = tonumber(C.State.ChestCaptureWindow) or 4.5 },
-        Callback = function(v)
-            local nv = v
-            if type(v) == "table" then nv = v.Value or v.Current or v.CurrentValue or v.Default end
-            nv = tonumber(nv)
-            if nv then C.State.ChestCaptureWindow = math.clamp(nv, 1, 10) end
         end
     })
 
