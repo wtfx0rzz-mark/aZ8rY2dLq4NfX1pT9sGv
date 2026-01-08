@@ -17,12 +17,8 @@ return function(C, R, UI)
     C.State = C.State or { Toggles = {} }
     C.State.Toggles = C.State.Toggles or {}
 
-    if C.State.Toggles.RifleZeroReload == nil then
-        C.State.Toggles.RifleZeroReload = true
-    end
-    if C.State.Toggles.AutoChest == nil then
-        C.State.Toggles.AutoChest = false
-    end
+    if C.State.Toggles.RifleZeroReload == nil then C.State.Toggles.RifleZeroReload = true end
+    if C.State.Toggles.AutoChest == nil then C.State.Toggles.AutoChest = false end
 
     local rifleRunning = false
     local invChildConn
@@ -31,98 +27,59 @@ return function(C, R, UI)
     local nvConns   = setmetatable({}, { __mode = "k" })
 
     local function disconnectSignal(conn)
-        if conn then
-            pcall(function() conn:Disconnect() end)
-        end
+        if conn then pcall(function() conn:Disconnect() end) end
     end
 
     local function clearItemSignals(item)
         local a = attrConns[item]
-        if a then
-            disconnectSignal(a)
-            attrConns[item] = nil
-        end
+        if a then disconnectSignal(a) attrConns[item] = nil end
         local n = nvConns[item]
-        if n then
-            disconnectSignal(n)
-            nvConns[item] = nil
-        end
+        if n then disconnectSignal(n) nvConns[item] = nil end
     end
 
     local function hasReloadTimeAttribute(item)
         if not (item and item:IsA("Instance")) then return false end
-        local ok, v = pcall(function()
-            return item:GetAttribute("ReloadTime")
-        end)
+        local ok, v = pcall(function() return item:GetAttribute("ReloadTime") end)
         return ok and v ~= nil
     end
 
     local function forceZero(item)
         if not (rifleRunning and item and item.Parent) then return end
-
-        local ok, attr = pcall(function()
-            return item:GetAttribute("ReloadTime")
-        end)
-
+        local ok, attr = pcall(function() return item:GetAttribute("ReloadTime") end)
         if ok and attr ~= nil then
-            if attr ~= 0 then
-                pcall(function()
-                    item:SetAttribute("ReloadTime", 0)
-                end)
-            end
+            if attr ~= 0 then pcall(function() item:SetAttribute("ReloadTime", 0) end) end
             return
         end
-
         local nv = item:FindFirstChild("ReloadTime")
-        if nv and nv:IsA("NumberValue") and nv.Value ~= 0 then
-            nv.Value = 0
-        end
+        if nv and nv:IsA("NumberValue") and nv.Value ~= 0 then nv.Value = 0 end
     end
 
     local function setupItem(item)
         if not (rifleRunning and item and item:IsA("Instance")) then return end
-
         clearItemSignals(item)
-
         local hasAttr = hasReloadTimeAttribute(item)
         local nv = item:FindFirstChild("ReloadTime")
         local hasNv = (nv and nv:IsA("NumberValue")) and true or false
-
-        if not hasAttr and not hasNv then
-            return
-        end
-
+        if not hasAttr and not hasNv then return end
         forceZero(item)
-
         if hasAttr then
-            local ok, sig = pcall(function()
-                return item:GetAttributeChangedSignal("ReloadTime")
-            end)
+            local ok, sig = pcall(function() return item:GetAttributeChangedSignal("ReloadTime") end)
             if ok and sig then
                 attrConns[item] = sig:Connect(function()
-                    if rifleRunning then
-                        forceZero(item)
-                    end
+                    if rifleRunning then forceZero(item) end
                 end)
             end
         end
-
         if hasNv then
             nvConns[item] = nv.Changed:Connect(function()
-                if rifleRunning and nv.Value ~= 0 then
-                    nv.Value = 0
-                end
+                if rifleRunning and nv.Value ~= 0 then nv.Value = 0 end
             end)
         end
     end
 
     local function hookInventory(inv)
         if not inv then return end
-
-        for _, child in ipairs(inv:GetChildren()) do
-            setupItem(child)
-        end
-
+        for _, child in ipairs(inv:GetChildren()) do setupItem(child) end
         disconnectSignal(invChildConn)
         invChildConn = inv.ChildAdded:Connect(function(child)
             if not rifleRunning then return end
@@ -133,40 +90,22 @@ return function(C, R, UI)
     local function startRifleZeroReload()
         if rifleRunning then return end
         rifleRunning = true
-
         local inv = lp:FindFirstChild("Inventory") or lp:WaitForChild("Inventory", 10)
-        if inv then
-            hookInventory(inv)
-        end
-
+        if inv then hookInventory(inv) end
         disconnectSignal(lpChildConn)
         lpChildConn = lp.ChildAdded:Connect(function(child)
             if not rifleRunning then return end
-            if child.Name == "Inventory" then
-                hookInventory(child)
-            else
-                setupItem(child)
-            end
+            if child.Name == "Inventory" then hookInventory(child) else setupItem(child) end
         end)
     end
 
     local function stopRifleZeroReload()
         if not rifleRunning then return end
         rifleRunning = false
-
-        disconnectSignal(invChildConn)
-        invChildConn = nil
-        disconnectSignal(lpChildConn)
-        lpChildConn = nil
-
-        for item, conn in pairs(attrConns) do
-            disconnectSignal(conn)
-            attrConns[item] = nil
-        end
-        for item, conn in pairs(nvConns) do
-            disconnectSignal(conn)
-            nvConns[item] = nil
-        end
+        disconnectSignal(invChildConn) invChildConn = nil
+        disconnectSignal(lpChildConn) lpChildConn = nil
+        for item, conn in pairs(attrConns) do disconnectSignal(conn) attrConns[item] = nil end
+        for item, conn in pairs(nvConns) do disconnectSignal(conn) nvConns[item] = nil end
     end
 
     ExtraTab:Toggle({
@@ -174,17 +113,11 @@ return function(C, R, UI)
         Value = C.State.Toggles.RifleZeroReload,
         Callback = function(on)
             C.State.Toggles.RifleZeroReload = on
-            if on then
-                startRifleZeroReload()
-            else
-                stopRifleZeroReload()
-            end
+            if on then startRifleZeroReload() else stopRifleZeroReload() end
         end
     })
 
-    if C.State.Toggles.RifleZeroReload then
-        startRifleZeroReload()
-    end
+    if C.State.Toggles.RifleZeroReload then startRifleZeroReload() end
 
     local function setupAutoChestFeature()
         local UID_OPEN_KEY = tostring(lp.UserId) .. "Opened"
@@ -194,8 +127,8 @@ return function(C, R, UI)
         local NOT_OPEN_WAIT = 5.00
         local WATCH_TICK = 0.05
 
-        local CAPTURE_RADIUS = 12
-        local SPAWN_RADIUS = 8
+        local CAPTURE_WINDOW = 2.75
+        local SPAWN_RADIUS = 18
 
         local DRAG_TTL = 60.0
         local FRONT_DIST = 4.0
@@ -211,14 +144,15 @@ return function(C, R, UI)
 
         local alive = true
         local conns = {}
-        local function bind(conn)
-            conns[#conns+1] = conn
-            return conn
-        end
+        local function bind(conn) conns[#conns+1] = conn return conn end
 
         local function hrp()
             local ch = lp.Character
             return ch and ch:FindFirstChild("HumanoidRootPart") or nil
+        end
+
+        local function itemsFolder()
+            return Workspace:FindFirstChild("Items")
         end
 
         local function mainPart(obj)
@@ -231,25 +165,54 @@ return function(C, R, UI)
             return nil
         end
 
-        local function itemsFolder()
-            return Workspace:FindFirstChild("Items")
-        end
-
-        local function modelWorldPos(m)
-            if not m or not m.Parent then return nil end
-            local mp = mainPart(m)
+        local function modelWorldPos(obj)
+            if not obj or not obj.Parent then return nil end
+            local mp = mainPart(obj)
             if mp then return mp.Position end
-            local ok, cf = pcall(function() return m:GetPivot() end)
+            local ok, cf = pcall(function() return obj:GetPivot() end)
             return ok and cf.Position or nil
         end
 
-        local function pivotModel(m, cf)
-            if not (m and m.Parent) then return end
-            if m:IsA("Model") then
-                pcall(function() m:PivotTo(cf) end)
-            else
-                local p = mainPart(m)
-                if p then pcall(function() p.CFrame = cf end) end
+        local function pivotAny(obj, cf)
+            if not (obj and obj.Parent) then return end
+            if obj:IsA("Model") then
+                pcall(function() obj:PivotTo(cf) end)
+            elseif obj:IsA("BasePart") then
+                pcall(function() obj.CFrame = cf end)
+            end
+        end
+
+        local function setNoCollideAny(obj, on)
+            if not (obj and obj.Parent) then return end
+            if obj:IsA("Model") then
+                for _,d in ipairs(obj:GetDescendants()) do
+                    if d:IsA("BasePart") then
+                        d.CanCollide = not on
+                        d.CanQuery = not on
+                        d.CanTouch = not on
+                        d.Massless = on and true or false
+                        d.AssemblyLinearVelocity = Vector3.new()
+                        d.AssemblyAngularVelocity = Vector3.new()
+                    end
+                end
+            elseif obj:IsA("BasePart") then
+                obj.CanCollide = not on
+                obj.CanQuery = not on
+                obj.CanTouch = not on
+                obj.Massless = on and true or false
+                obj.AssemblyLinearVelocity = Vector3.new()
+                obj.AssemblyAngularVelocity = Vector3.new()
+            end
+        end
+
+        local function setAnchoredAny(obj, on)
+            if not (obj and obj.Parent) then return end
+            if obj:IsA("Model") then
+                for _,d in ipairs(obj:GetDescendants()) do
+                    if d:IsA("BasePart") then d.Anchored = on end
+                end
+            elseif obj:IsA("BasePart") then
+                obj.Anchored = on
             end
         end
 
@@ -290,104 +253,120 @@ return function(C, R, UI)
         refreshDragRemotes()
 
         local DragActive = {}
-        local function safeStopDrag(m)
-            if not (m and RF_Stop) then return false end
-            return pcall(function() RF_Stop:FireServer(m) end)
+        local function safeStopDragTarget(target)
+            if not (target and RF_Stop) then return false end
+            return pcall(function() RF_Stop:FireServer(target) end)
         end
-        local function finallyStopDrag(m)
-            task.delay(0.05, function() pcall(safeStopDrag, m) end)
-            task.delay(0.20, function() pcall(safeStopDrag, m) end)
+        local function finallyStopDragTarget(target)
+            task.delay(0.05, function() pcall(safeStopDragTarget, target) end)
+            task.delay(0.20, function() pcall(safeStopDragTarget, target) end)
         end
-        local function dragUntrack(m)
-            local rec = DragActive[m]
+
+        local function dragUntrack(key)
+            local rec = DragActive[key]
             if not rec then return end
-            DragActive[m] = nil
+            DragActive[key] = nil
             for _,c in ipairs(rec.conns) do pcall(function() c:Disconnect() end) end
         end
-        local function dragTrackRelease(m)
-            local rec = DragActive[m]
+
+        local function dragTrackRelease(key)
+            local rec = DragActive[key]
             if not rec then return end
-            DragActive[m] = nil
+            DragActive[key] = nil
             for _,c in ipairs(rec.conns) do pcall(function() c:Disconnect() end) end
-            safeStopDrag(m)
+            safeStopDragTarget(rec.remoteTarget)
         end
-        local function dragStart(m)
-            if not (m and m.Parent and RF_Start) then return false end
-            if DragActive[m] then
-                DragActive[m].t0 = os.clock()
+
+        local function tryFireStart(target)
+            if not (target and target.Parent and RF_Start) then return false end
+            return pcall(function() RF_Start:FireServer(target) end)
+        end
+
+        local function dragStartFor(obj)
+            if not (obj and obj.Parent) then return false end
+            refreshDragRemotes()
+            if not RF_Start then return false end
+
+            local key = obj
+            local remoteTarget = obj
+
+            if obj:IsA("Model") then
+                remoteTarget = obj
+            elseif obj:IsA("BasePart") then
+                local am = obj:FindFirstAncestorOfClass("Model")
+                if am and am.Parent and itemsFolder() and am:IsDescendantOf(itemsFolder()) then
+                    if not isChestName(am.Name) then
+                        key = am
+                        obj = am
+                    end
+                end
+                remoteTarget = (obj:IsA("Model") and obj) or obj
+            end
+
+            if DragActive[key] then
+                DragActive[key].t0 = os.clock()
                 return true
             end
-            local ok = pcall(function() RF_Start:FireServer(m) end)
+
+            local ok = tryFireStart(remoteTarget)
+            if not ok and obj:IsA("Model") then
+                local mp = mainPart(obj)
+                if mp then
+                    ok = tryFireStart(mp)
+                    if ok then remoteTarget = mp end
+                end
+            end
             if not ok then return false end
+
             local c = {}
-            c[#c+1] = m.AncestryChanged:Connect(function(_, parent)
-                if not parent then dragTrackRelease(m) end
+            c[#c+1] = key.AncestryChanged:Connect(function(_, parent)
+                if not parent then dragTrackRelease(key) end
             end)
-            c[#c+1] = m:GetPropertyChangedSignal("Parent"):Connect(function()
-                if not m.Parent then dragTrackRelease(m) end
+            c[#c+1] = key:GetPropertyChangedSignal("Parent"):Connect(function()
+                if not key.Parent then dragTrackRelease(key) end
             end)
-            DragActive[m] = { t0 = os.clock(), conns = c }
+            DragActive[key] = { t0 = os.clock(), conns = c, remoteTarget = remoteTarget }
             return true
         end
-        local function dragKeepAlive(m)
-            local rec = DragActive[m]
+
+        local function dragKeepAlive(key)
+            local rec = DragActive[key]
             if rec then rec.t0 = os.clock() end
         end
 
         bind(RunService.Heartbeat:Connect(function()
             local now = os.clock()
-            for m, rec in pairs(DragActive) do
-                if (not m) or (not m.Parent) or (now - rec.t0) > DRAG_TTL then
-                    dragTrackRelease(m)
+            for key, rec in pairs(DragActive) do
+                if (not key) or (not key.Parent) or (now - rec.t0) > DRAG_TTL then
+                    dragTrackRelease(key)
                 end
             end
         end))
-
-        local function setNoCollideModel(m, on)
-            for _,d in ipairs(m:GetDescendants()) do
-                if d:IsA("BasePart") then
-                    d.CanCollide = not on
-                    d.CanQuery = not on
-                    d.CanTouch = not on
-                    d.Massless = on and true or false
-                    d.AssemblyLinearVelocity = Vector3.new()
-                    d.AssemblyAngularVelocity = Vector3.new()
-                end
-            end
-        end
-
-        local function setAnchoredModel(m, on)
-            for _,d in ipairs(m:GetDescendants()) do
-                if d:IsA("BasePart") then d.Anchored = on end
-            end
-        end
 
         local CapturedSet = {}
         local CapturedList = {}
         local hoverConn = nil
 
-        local function hoverFollow()
-            local root = hrp()
-            if not root then return end
-            local forward = root.CFrame.LookVector
-            local basePos = root.Position + Vector3.new(0, 10, 0) + forward * 1.5
-            local baseCF = CFrame.lookAt(basePos, basePos + forward)
-            for i = #CapturedList, 1, -1 do
-                local m = CapturedList[i]
-                if m and m.Parent then
-                    dragKeepAlive(m)
-                    setAnchoredModel(m, true)
-                    pivotModel(m, baseCF)
-                else
-                    CapturedSet[m] = nil
-                    table.remove(CapturedList, i)
-                end
-            end
-        end
-
         local function ensureHoverOn()
             if hoverConn then return end
-            hoverConn = RunService.RenderStepped:Connect(hoverFollow)
+            hoverConn = RunService.RenderStepped:Connect(function()
+                local root = hrp()
+                if not root then return end
+                local forward = root.CFrame.LookVector
+                local basePos = root.Position + Vector3.new(0, 10, 0) + forward * 1.5
+                local baseCF = CFrame.lookAt(basePos, basePos + forward)
+                for i = #CapturedList, 1, -1 do
+                    local obj = CapturedList[i]
+                    if obj and obj.Parent then
+                        dragKeepAlive(obj)
+                        setAnchoredAny(obj, true)
+                        pivotAny(obj, baseCF)
+                    else
+                        CapturedSet[obj] = nil
+                        table.remove(CapturedList, i)
+                    end
+                end
+            end)
         end
 
         local function ensureHoverOff()
@@ -395,42 +374,46 @@ return function(C, R, UI)
             hoverConn = nil
         end
 
-        local function addCaptured(m)
-            if CapturedSet[m] then return end
-            CapturedSet[m] = true
-            CapturedList[#CapturedList+1] = m
+        local function addCaptured(obj)
+            if CapturedSet[obj] then return end
+            CapturedSet[obj] = true
+            CapturedList[#CapturedList+1] = obj
             ensureHoverOn()
         end
 
-        local function captureModel(m)
-            if not (m and m.Parent) then return false end
-            if CapturedSet[m] then return false end
-            if m:IsA("Model") and isChestName(m.Name) then return false end
+        local function isLikelyChestDescendant(inst)
+            local m = inst:FindFirstAncestorOfClass("Model")
+            if m and isChestName(m.Name) then return true end
+            return false
+        end
 
-            local root = hrp()
-            if not root then return false end
-            local pos = modelWorldPos(m)
-            if not pos then return false end
-            if (pos - root.Position).Magnitude > CAPTURE_RADIUS then return false end
-
-            refreshDragRemotes()
-            if not dragStart(m) then return false end
+        local function captureAny(obj)
+            if not (obj and obj.Parent) then return false end
+            if CapturedSet[obj] then return false end
+            if obj:IsA("Model") and isChestName(obj.Name) then return false end
+            if obj:IsA("BasePart") and isLikelyChestDescendant(obj) then return false end
+            if not dragStartFor(obj) then return false end
             task.wait(START_YIELD)
-            setNoCollideModel(m, true)
-            setAnchoredModel(m, true)
-            addCaptured(m)
+            setNoCollideAny(obj, true)
+            setAnchoredAny(obj, true)
+            addCaptured(obj:IsA("BasePart") and (obj:FindFirstAncestorOfClass("Model") or obj) or obj)
             return true
         end
 
         local function releaseAllCaptured()
             ensureHoverOff()
             for i = #CapturedList, 1, -1 do
-                local m = CapturedList[i]
-                if m and m.Parent then
-                    setAnchoredModel(m, false)
-                    setNoCollideModel(m, false)
-                    finallyStopDrag(m)
-                    dragUntrack(m)
+                local obj = CapturedList[i]
+                if obj and obj.Parent then
+                    setAnchoredAny(obj, false)
+                    setNoCollideAny(obj, false)
+                    local rec = DragActive[obj]
+                    if rec then
+                        finallyStopDragTarget(rec.remoteTarget)
+                        dragUntrack(obj)
+                    else
+                        finallyStopDragTarget(obj)
+                    end
                 end
             end
             table.clear(CapturedList)
@@ -510,29 +493,24 @@ return function(C, R, UI)
                 pcall(function() m:SetAttribute(UID_OPEN_KEY, true) end)
                 return false
             end
-
             local mp = mainPart(m)
             if not mp then return false end
-
             local chestCenter = mp.Position
             local chestTopY = mp.Position.Y + (mp.Size.Y * 0.5)
             local root = hrp()
             local hingePos = hingeBackCenter(m)
-
             local dirs = {}
             local function addDir(v)
                 if not v then return end
                 if v.Magnitude < 1e-3 then return end
                 dirs[#dirs+1] = v.Unit
             end
-
             if root then addDir(root.Position - chestCenter) end
             if hingePos then
                 local v = (chestCenter - hingePos)
                 if v.Magnitude < 1e-3 then v = -mp.CFrame.LookVector end
                 addDir(v)
             end
-
             addDir(mp.CFrame.LookVector)
             addDir(-mp.CFrame.LookVector)
             addDir(mp.CFrame.RightVector)
@@ -572,9 +550,7 @@ return function(C, R, UI)
 
         local function triggerPrompt(prompt)
             if not (prompt and prompt.Parent) then return false end
-            if FORCE_LOS_FALSE then
-                pcall(function() prompt.RequiresLineOfSight = false end)
-            end
+            if FORCE_LOS_FALSE then pcall(function() prompt.RequiresLineOfSight = false end) end
             if QUICKFIRE_HOLD_OVERRIDE and type(QUICKFIRE_HOLD_OVERRIDE) == "number" then
                 pcall(function()
                     if prompt.HoldDuration > QUICKFIRE_HOLD_OVERRIDE then
@@ -582,20 +558,14 @@ return function(C, R, UI)
                     end
                 end)
             end
-            local ok = pcall(function()
-                ProximityPromptService:TriggerPrompt(prompt)
-            end)
+            local ok = pcall(function() ProximityPromptService:TriggerPrompt(prompt) end)
             if ok then return true end
-            local ok2 = pcall(function()
-                prompt:InputHoldBegin()
-            end)
+            local ok2 = pcall(function() prompt:InputHoldBegin() end)
             if not ok2 then return false end
             local hold = tonumber(prompt.HoldDuration) or 0
             local waitTime = (hold > 0) and (hold + 0.05) or 0.05
             task.delay(waitTime, function()
-                if prompt and prompt.Parent then
-                    pcall(function() prompt:InputHoldEnd() end)
-                end
+                if prompt and prompt.Parent then pcall(function() prompt:InputHoldEnd() end) end
             end)
             return true
         end
@@ -648,74 +618,97 @@ return function(C, R, UI)
             for i=1,#chests do
                 local m = chests[i]
                 if m and m.Parent and not chestOpened(m) then
-                    if not (EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name)) then
-                        local p = modelWorldPos(m)
-                        if p then
-                            local d = (p - root.Position).Magnitude
-                            if d < bestD then
-                                bestD = d
-                                best = m
-                            end
-                        end
+                    local p = modelWorldPos(m)
+                    if p then
+                        local d = (p - root.Position).Magnitude
+                        if d < bestD then bestD = d best = m end
                     end
                 end
             end
             return best
         end
 
-        local function snapshotNonChestItems(items)
+        local function snapshotBefore(items)
             local set = {}
             if not items then return set end
-            for _,m in ipairs(items:GetChildren()) do
-                if m:IsA("Model") and m.Parent and not isChestName(m.Name) then
-                    set[m] = true
-                end
+            for _,inst in ipairs(items:GetDescendants()) do
+                set[inst] = true
             end
             return set
         end
 
-        local function scanNewDropsNearChest(items, beforeSet, chestPos)
-            if not (items and beforeSet and chestPos) then return 0 end
-            local picked = 0
-            for _,m in ipairs(items:GetChildren()) do
-                if m:IsA("Model") and m.Parent and not isChestName(m.Name) and not beforeSet[m] then
-                    local p = modelWorldPos(m)
-                    if p and (p - chestPos).Magnitude <= SPAWN_RADIUS then
-                        if captureModel(m) then
-                            picked += 1
-                        end
-                    end
-                end
+        local function likelyDropRoot(inst, items)
+            if not (inst and inst.Parent and items) then return nil end
+            if inst:IsA("Model") then
+                if isChestName(inst.Name) then return nil end
+                if inst:IsDescendantOf(items) then return inst end
+                return nil
             end
+            if inst:IsA("BasePart") then
+                local m = inst:FindFirstAncestorOfClass("Model")
+                if m and m.Parent and m:IsDescendantOf(items) and not isChestName(m.Name) then
+                    return m
+                end
+                return inst:IsDescendantOf(items) and inst or nil
+            end
+            return nil
+        end
+
+        local function captureNewDropsWindow(chestModel)
+            local items = itemsFolder()
+            if not (items and chestModel and chestModel.Parent) then return 0 end
+            local chestPos = modelWorldPos(chestModel)
+            if not chestPos then return 0 end
+
+            local before = snapshotBefore(items)
+            local picked = 0
+            local tEnd = os.clock() + CAPTURE_WINDOW
+            local localConns = {}
+
+            local function tryInst(inst)
+                if not (alive and inst and inst.Parent) then return end
+                if before[inst] then return end
+                local rootObj = likelyDropRoot(inst, items)
+                if not rootObj then return end
+                if before[rootObj] then return end
+                if CapturedSet[rootObj] then return end
+                local p = modelWorldPos(rootObj)
+                if not p then return end
+                if (p - chestPos).Magnitude > SPAWN_RADIUS then return end
+                before[rootObj] = true
+                if captureAny(rootObj) then picked += 1 end
+            end
+
+            localConns[#localConns+1] = items.DescendantAdded:Connect(function(inst)
+                task.delay(0.03, function()
+                    if alive then tryInst(inst) end
+                end)
+            end)
+
+            while alive and os.clock() <= tEnd do
+                for _,inst in ipairs(items:GetDescendants()) do
+                    if not before[inst] then tryInst(inst) end
+                end
+                task.wait(0.08)
+            end
+
+            for i=1,#localConns do
+                local c = localConns[i]
+                if c and c.Disconnect then pcall(function() c:Disconnect() end) end
+            end
+
             return picked
         end
 
-        local function confirmChestOpened(chest, prompt, beforeSet, capturedBefore)
-            local items = itemsFolder()
-            local chestPos = modelWorldPos(chest)
+        local function confirmChestOpened(chest)
+            local capturedBefore = #CapturedList
             local tEnd = os.clock() + NOT_OPEN_WAIT
-
             while alive and os.clock() <= tEnd do
-                local nowPrompt = chestPrompt(chest)
-                if not nowPrompt then
-                    return true
-                end
-
-                local pickedNow = 0
-                if items and chestPos then
-                    pickedNow = scanNewDropsNearChest(items, beforeSet, chestPos)
-                end
-
-                if #CapturedList > capturedBefore then
-                    return true
-                end
-                if pickedNow > 0 then
-                    return true
-                end
-
+                if not chest or not chest.Parent then return true end
+                if not chestPrompt(chest) then return true end
+                if #CapturedList > capturedBefore then return true end
                 task.wait(WATCH_TICK)
             end
-
             return false
         end
 
@@ -734,8 +727,7 @@ return function(C, R, UI)
                     local chest = nearestUnopenedChest()
                     if not chest then task.wait(0.35) continue end
 
-                    local okTp = teleportNearChest(chest)
-                    if not okTp then
+                    if not teleportNearChest(chest) then
                         task.wait(0.25)
                         continue
                     end
@@ -748,19 +740,13 @@ return function(C, R, UI)
                         continue
                     end
 
-                    local items = itemsFolder()
-                    local beforeSet = snapshotNonChestItems(items)
-                    local capturedBefore = #CapturedList
-
                     local okTrig = triggerPrompt(p)
 
-                    local opened = false
                     if okTrig then
-                        opened = confirmChestOpened(chest, p, beforeSet, capturedBefore)
-                    else
-                        opened = confirmChestOpened(chest, p, beforeSet, capturedBefore)
+                        captureNewDropsWindow(chest)
                     end
 
+                    local opened = confirmChestOpened(chest)
                     if opened then
                         pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
                         task.wait(AFTER_OPEN_DELAY)
@@ -772,13 +758,14 @@ return function(C, R, UI)
             end)
         end
 
-        local api = {}
-        function api.SetAuto(on)
-            setAuto(on == true)
-        end
-        function api.PlaceCaptured()
+        bind(lp.CharacterAdded:Connect(function()
+            task.wait(0.15)
             releaseAllCaptured()
-        end
+        end))
+
+        local api = {}
+        function api.SetAuto(on) setAuto(on == true) end
+        function api.PlaceCaptured() releaseAllCaptured() end
         function api.Destroy()
             alive = false
             autoOn = false
@@ -789,12 +776,6 @@ return function(C, R, UI)
             end
             conns = {}
         end
-
-        bind(lp.CharacterAdded:Connect(function()
-            task.wait(0.15)
-            releaseAllCaptured()
-        end))
-
         return api
     end
 
