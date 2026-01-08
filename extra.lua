@@ -269,8 +269,11 @@ return function(C, R, UI)
         pcall(function() _G.__AutoChestExtra.Destroy() end)
     end
 
-    if C.State.Toggles.AutoChest == nil then
-        C.State.Toggles.AutoChest = false
+    if C.State.Toggles.ChestTrack == nil then
+        C.State.Toggles.ChestTrack = false
+    end
+    if C.State.Toggles.ChestRun == nil then
+        C.State.Toggles.ChestRun = false
     end
 
     local CHEST_POST_OPEN_DELAY = 0
@@ -408,24 +411,45 @@ return function(C, R, UI)
 
     local HOLD_OFFSET_Y = 10
     local HOLD_FORWARD = 1.5
+    local HOLD_CLUSTER_RADIUS_MIN = 0.75
+    local HOLD_CLUSTER_RADIUS_STEP = 0.08
+    local HOLD_CLUSTER_RADIUS_MAX = 2.35
+    local HOLD_WAVE_AMPLITUDE = 0.25
+    local HOLD_WAVE_FREQUENCY = 1.35
+    local HOLD_GOLDEN_ANGLE = 2.399963229728653
 
     local hoverConn = nil
     local function hoverFollow()
         local root = hrp()
         if not root then return end
         local forward = root.CFrame.LookVector
+        local right = root.CFrame.RightVector
         local basePos = root.Position + Vector3.new(0, HOLD_OFFSET_Y, 0) + forward * HOLD_FORWARD
-        local baseCF = CFrame.lookAt(basePos, basePos + forward)
+
         for i = #CapturedList, 1, -1 do
             local m = CapturedList[i]
             if m and m.Parent then
                 dragKeepAlive(m)
                 setAnchoredAny(m, true)
-                pivotAny(m, baseCF)
+
+                local idx = i
+                local a = idx * HOLD_GOLDEN_ANGLE
+                local r = math.min(HOLD_CLUSTER_RADIUS_MIN + HOLD_CLUSTER_RADIUS_STEP * (idx - 1), HOLD_CLUSTER_RADIUS_MAX)
+                local waveY = math.sin((os.clock() * HOLD_WAVE_FREQUENCY) + idx) * HOLD_WAVE_AMPLITUDE
+                local off = (right * math.cos(a) + forward * math.sin(a)) * r + Vector3.new(0, waveY, 0)
+
+                local pos = basePos + off
+                local cf = CFrame.lookAt(pos, pos + forward)
+                pivotAny(m, cf)
             else
                 CapturedSet[m] = nil
                 table.remove(CapturedList, i)
             end
+        end
+
+        if #CapturedList == 0 then
+            if hoverConn then pcall(function() hoverConn:Disconnect() end) end
+            hoverConn = nil
         end
     end
 
@@ -535,7 +559,6 @@ return function(C, R, UI)
 
     local function findChestPromptPreferred(chestModel)
         if not (chestModel and chestModel.Parent) then return nil end
-
         local main = chestModel:FindFirstChild("Main", true)
         if main and main.Parent then
             local proxAtt = main:FindFirstChild("ProximityAttachment")
@@ -546,24 +569,20 @@ return function(C, R, UI)
                 if maybe and maybe:IsA("ProximityPrompt") then return maybe end
             end
         end
-
         return chestModel:FindFirstChildWhichIsA("ProximityPrompt", true)
     end
 
     local function promptWorldPos(prompt)
         if not (prompt and prompt.Parent) then return nil end
-
         local okA, adornee = pcall(function() return prompt.Adornee end)
         if okA and adornee and adornee:IsA("BasePart") then
             return adornee.Position
         end
-
         local parent = prompt.Parent
         if parent:IsA("Attachment") then
             local ok, wp = pcall(function() return parent.WorldPosition end)
             if ok and wp then return wp end
         end
-
         if parent:IsA("BasePart") then
             return parent.Position
         end
@@ -571,7 +590,6 @@ return function(C, R, UI)
             local mp = mainPart(parent)
             return mp and mp.Position or nil
         end
-
         local mp = mainPart(parent)
         return mp and mp.Position or nil
     end
@@ -726,13 +744,6 @@ return function(C, R, UI)
         for i=1,#dirs do
             local dir = dirs[i]
             local desired = chestCenter + dir * FRONT_DIST
-            if ppos then
-                local towardPrompt = (ppos - chestCenter)
-                if towardPrompt.Magnitude > 1e-3 and dir:Dot(towardPrompt.Unit) > 0.90 then
-                    desired = Vector3.new(ppos.X, chestCenter.Y, ppos.Z) + dir * 2.25
-                end
-            end
-
             local floorPos = floorAtFromChestTop(m, chestTopY, desired)
             local standY = floorPos and (floorPos.Y + STAND_UP) or (chestCenter.Y + STAND_UP)
             local standPos = Vector3.new(desired.X, standY, desired.Z)
@@ -795,36 +806,11 @@ return function(C, R, UI)
         return (os.clock() - t) <= windowSec
     end
 
-    local function nearestUnopenedChest()
-        local root = hrp()
-        if not root then return nil end
-        local chests = collectChestsSnapshot()
-        if #chests == 0 then return nil end
-        applyStrongholdExclusion(chests)
-        local best, bestD = nil, math.huge
-        local skipWindow = math.max(CHEST_NOT_OPEN_WAIT, 1.0)
-        for i=1,#chests do
-            local m = chests[i]
-            if m and m.Parent and not chestOpened(m) then
-                if not recentlyAttempted(m, skipWindow) then
-                    local p = modelWorldPos(m)
-                    if p then
-                        local d = (p - root.Position).Magnitude
-                        if d < bestD then
-                            bestD = d
-                            best = m
-                        end
-                    end
-                end
-            end
-        end
-        return best
-    end
-
     local function confirmAndCaptureDropsForChest(chest, preSet)
         local opened = false
         local gotAny = false
         local t0 = os.clock()
+
         local confirmTimeout = math.max(CHEST_OPEN_CONFIRM_TIMEOUT, 0.5)
         local spawnRadius = math.max(tonumber(C.State.ChestSpawnRadius) or 10.0, 2.0)
         local captureRadius = math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, spawnRadius)
@@ -918,64 +904,220 @@ return function(C, R, UI)
         end
 
         local opened, gotAny = confirmAndCaptureDropsForChest(chest, preSet)
-
         if opened then
             pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
-            local postDelay = math.max(CHEST_POST_OPEN_DELAY, 0.0)
-            if postDelay > 0 then task.wait(postDelay) end
             return true, gotAny
-        else
-            local notOpenWait = math.max(CHEST_NOT_OPEN_WAIT, 0.0)
-            if notOpenWait > 0 then task.wait(notOpenWait) end
-            return false
+        end
+        return false
+    end
+
+    local Tracked = {}
+    local TrackedSet = {}
+    local trackOn = false
+    local runOn = false
+    local trackLoop = nil
+    local runner = nil
+
+    local function clearTracked()
+        table.clear(Tracked)
+        for k,_ in pairs(TrackedSet) do TrackedSet[k] = nil end
+    end
+
+    local function pruneTracked()
+        for i = #Tracked, 1, -1 do
+            local rec = Tracked[i]
+            local m = rec and rec.model or nil
+            if (not m) or (not m.Parent) or chestOpened(m) then
+                if m then TrackedSet[m] = nil end
+                table.remove(Tracked, i)
+            end
         end
     end
 
-    local autoOn = false
-    local runner = nil
+    local function trackOnce()
+        local root = hrp()
+        local items = itemsFolder()
+        if not items then return end
 
-    local function setAuto(state)
-        autoOn = (state == true)
-        if not autoOn then return end
+        local chests = collectChestsSnapshot()
+        if #chests > 0 then
+            applyStrongholdExclusion(chests)
+        end
+
+        for i=1,#chests do
+            local m = chests[i]
+            if m and m.Parent and (not chestOpened(m)) and (not TrackedSet[m]) then
+                local pos = modelWorldPos(m)
+                if pos then
+                    TrackedSet[m] = true
+                    Tracked[#Tracked+1] = { model = m, pos = pos }
+                end
+            end
+        end
+
+        for i=1,#Tracked do
+            local rec = Tracked[i]
+            local m = rec and rec.model or nil
+            if m and m.Parent then
+                local p = modelWorldPos(m)
+                if p then rec.pos = p end
+            end
+        end
+
+        pruneTracked()
+
+        if root then
+            local rpos = root.Position
+            table.sort(Tracked, function(a, b)
+                local ap = a and a.pos
+                local bp = b and b.pos
+                if not ap then return false end
+                if not bp then return true end
+                return (ap - rpos).Magnitude < (bp - rpos).Magnitude
+            end)
+        end
+    end
+
+    local function startTracking()
+        if trackOn then return end
+        trackOn = true
+        clearTracked()
+        trackOnce()
+        if trackLoop then return end
+        trackLoop = task.spawn(function()
+            while alive and trackOn do
+                pcall(trackOnce)
+                task.wait(0.60)
+            end
+            trackLoop = nil
+        end)
+    end
+
+    local function stopTracking()
+        trackOn = false
+        runOn = false
+        clearTracked()
+    end
+
+    local function nextChestFromTracked()
+        local root = hrp()
+        if not root then return nil end
+        pruneTracked()
+        if #Tracked == 0 then return nil end
+
+        local best, bestD = nil, math.huge
+        local skipWindow = math.max(CHEST_NOT_OPEN_WAIT, 1.0)
+        local rpos = root.Position
+
+        for i=1,#Tracked do
+            local rec = Tracked[i]
+            local m = rec and rec.model or nil
+            if m and m.Parent and (not chestOpened(m)) then
+                if not recentlyAttempted(m, skipWindow) then
+                    local p = rec.pos or modelWorldPos(m)
+                    if p then
+                        local d = (p - rpos).Magnitude
+                        if d < bestD then
+                            bestD = d
+                            best = m
+                        end
+                    end
+                end
+            end
+        end
+
+        return best
+    end
+
+    local function removeTrackedChest(chest)
+        if not chest then return end
+        TrackedSet[chest] = nil
+        for i = #Tracked, 1, -1 do
+            local rec = Tracked[i]
+            if rec and rec.model == chest then
+                table.remove(Tracked, i)
+                return
+            end
+        end
+    end
+
+    local function startRun()
+        if runOn then return end
+        if not trackOn then return end
+        runOn = true
+        C.State.Toggles.ChestRun = true
         if runner then return end
+
         runner = task.spawn(function()
-            while alive and autoOn do
+            while alive and trackOn and runOn do
                 local root = hrp()
                 if not root then task.wait(0.25) continue end
-                local chest = nearestUnopenedChest()
-                if not chest then task.wait(0.35) continue end
-                local okTp = teleportNearChest(chest)
-                if not okTp then
-                    attemptedAt[chest] = os.clock()
+
+                if #Tracked == 0 then
+                    task.wait(0.30)
+                    continue
+                end
+
+                local chest = nextChestFromTracked()
+                if not chest then
                     task.wait(0.25)
                     continue
                 end
+
+                attemptedAt[chest] = os.clock()
+
+                local okTp = teleportNearChest(chest)
+                if not okTp then
+                    task.wait(0.20)
+                    continue
+                end
+
                 task.wait(0.10)
+
                 local okOpen = openChestOnce(chest)
-                if not okOpen then
-                    task.wait(0.10)
+                if okOpen then
+                    removeTrackedChest(chest)
+                    if CHEST_POST_OPEN_DELAY > 0 then task.wait(CHEST_POST_OPEN_DELAY) end
+                else
+                    if CHEST_NOT_OPEN_WAIT > 0 then task.wait(CHEST_NOT_OPEN_WAIT) end
                 end
             end
             runner = nil
         end)
     end
 
-    local function stopAuto()
-        autoOn = false
+    local function stopRun()
+        runOn = false
+        C.State.Toggles.ChestRun = false
     end
 
     ExtraTab:Section({ Title = "Chests" })
 
     ExtraTab:Toggle({
-        Title = "Auto Open Chests",
-        Value = C.State.Toggles.AutoChest,
+        Title = "Track Chests",
+        Value = C.State.Toggles.ChestTrack,
         Callback = function(on)
-            C.State.Toggles.AutoChest = on
+            C.State.Toggles.ChestTrack = on
             if on then
-                setAuto(true)
+                startTracking()
             else
-                stopAuto()
+                stopRun()
+                stopTracking()
             end
+        end
+    })
+
+    ExtraTab:Button({
+        Title = "Start Chest Run",
+        Callback = function()
+            startRun()
+        end
+    })
+
+    ExtraTab:Button({
+        Title = "Stop Chest Run",
+        Callback = function()
+            stopRun()
         end
     })
 
@@ -1015,14 +1157,20 @@ return function(C, R, UI)
     })
 
     bind(lp.CharacterAdded:Connect(function()
-        task.wait(0.15)
-        releaseAllCaptured()
+        task.wait(0.25)
+        refreshOverlapFilter()
+        if #CapturedList > 0 then
+            ensureHoverOn()
+        else
+            ensureHoverOff()
+        end
     end))
 
     local api = {}
     function api.Destroy()
         alive = false
-        stopAuto()
+        stopRun()
+        stopTracking()
         releaseAllCaptured()
         for i=1,#conns do
             local c = conns[i]
@@ -1033,7 +1181,10 @@ return function(C, R, UI)
     end
     _G.__AutoChestExtra = api
 
-    if C.State.Toggles.AutoChest then
-        setAuto(true)
+    if C.State.Toggles.ChestTrack then
+        startTracking()
+        if C.State.Toggles.ChestRun then
+            startRun()
+        end
     end
 end
