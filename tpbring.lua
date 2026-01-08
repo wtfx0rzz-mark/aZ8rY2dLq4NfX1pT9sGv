@@ -88,33 +88,32 @@ return function(C, R, UI)
         end
     end
 
-    local DRAG_SPEED              = 420
-    local ORB_HEIGHT              = 10
-    local GROUND_ORB_DROP_HEIGHT  = 6
-    local MAX_CONCURRENT          = 80
-    local START_STAGGER           = 0.005
-    local STEP_WAIT               = 0.016
+    local DRAG_SPEED           = 420
+    local ORB_HEIGHT           = 10
+    local GROUND_ORB_DROP_HEIGHT = 6
+    local MAX_CONCURRENT       = 80
+    local START_STAGGER        = 0.005
+    local STEP_WAIT            = 0.016
 
-    local LAND_MIN                = 0.35
-    local LAND_MAX                = 0.85
-    local ARRIVE_EPS_H            = 1.1
-    local STALL_SEC               = 0.6
+    local ARRIVE_EPS_H         = 1.1
+    local STALL_SEC            = 0.6
 
-    local HOVER_ABOVE_ORB         = 1.2
-    local RELEASE_RATE_HZ         = 18
-    local MAX_RELEASE_PER_TICK    = 2
+    local TRANSPORT_HOVER_Y    = 2.5
+    local PLACE_UP_Y           = 1.6
 
-    local STAGE_TIMEOUT_S         = 1.5
-    local ORB_UNSTICK_RAD         = 2.0
-    local ORB_UNSTICK_HZ          = 10
-    local STUCK_TTL               = 1.0
+    local RELEASE_RATE_HZ      = 18
+    local MAX_RELEASE_PER_TICK = 2
+    local STAGE_TIMEOUT_S      = 1.5
 
-    local MAX_LINED_ITEMS         = 14
-    local DROP_VERTICAL_OFFSET    = 7.0
+    local ORB_UNSTICK_RAD      = 2.0
+    local ORB_UNSTICK_HZ       = 10
+    local STUCK_TTL            = 1.0
 
-    local MAX_DIST_DEFAULT        = 500
-    local MAX_DIST_ORBS_DEFAULT   = 50
-    local maxDistOrbs             = MAX_DIST_ORBS_DEFAULT
+    local MAX_LINED_ITEMS      = 14
+
+    local MAX_DIST_DEFAULT     = 500
+    local MAX_DIST_ORBS_DEFAULT = 50
+    local maxDistOrbs          = MAX_DIST_ORBS_DEFAULT
 
     local INFLT_ATTR = "OrbInFlightAt"
     local JOB_ATTR   = "OrbJob"
@@ -136,7 +135,6 @@ return function(C, R, UI)
     local waveAcc      = 0.0
     local finalized    = {}
     local fruitNudged  = {}
-    local dropStacks   = {}
 
     local junkItems = {
         "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
@@ -366,21 +364,15 @@ return function(C, R, UI)
         task.spawn(function()
             local tmp = { dragging = false, stopped = false }
             tryStartDrag(m, tmp)
-
             for _,p in ipairs(allParts(m)) do
                 pcall(function() p:SetNetworkOwner(lp) end)
                 p.AssemblyLinearVelocity  = Vector3.new()
                 p.AssemblyAngularVelocity = Vector3.new()
             end
-
             local mass = math.max(mp:GetMass(), 1)
             local dir = Vector3.new((math.random() - 0.5) * 2, 0, (math.random() - 0.5) * 2)
             if dir.Magnitude < 0.2 then dir = Vector3.new(1, 0, 0) else dir = dir.Unit end
-
-            pcall(function()
-                mp:ApplyImpulse(dir * (120 * mass) + Vector3.new(0, 80 * mass, 0))
-            end)
-
+            pcall(function() mp:ApplyImpulse(dir * (120 * mass) + Vector3.new(0, 80 * mass, 0)) end)
             pcall(function()
                 mp:ApplyAngularImpulse(Vector3.new(
                     (math.random() - 0.5) * 300,
@@ -388,11 +380,9 @@ return function(C, R, UI)
                     (math.random() - 0.5) * 300
                 ) * mass)
             end)
-
             task.delay(0.18, function()
                 tryStopDrag(m, tmp)
             end)
-
             task.delay(0.9, function()
                 for _,p in ipairs(allParts(m)) do
                     pcall(function() p:SetNetworkOwner(nil) end)
@@ -453,15 +443,12 @@ return function(C, R, UI)
     local function computeOrbGroundBase(index)
         local base = CUSTOM_ORB_BASES[index]
         if not base then return nil end
-
         local origin = base + Vector3.new(0, 80, 0)
         local dir    = Vector3.new(0, -300, 0)
 
         local rp = RaycastParams.new()
         rp.FilterType = Enum.RaycastFilterType.Blacklist
         local ignore = {}
-        local itemsFolder = itemsRootOrNil()
-        if itemsFolder then ignore[#ignore+1] = itemsFolder end
         local ch = lp.Character
         if ch then ignore[#ignore+1] = ch end
         rp.FilterDescendantsInstances = ignore
@@ -527,7 +514,6 @@ return function(C, R, UI)
         if not selectedSet then return {} end
         local itemsFolder = itemsRootOrNil()
         if not itemsFolder then return {} end
-
         local root = hrp()
         if not root then return {} end
         local rootPos = root.Position
@@ -558,7 +544,6 @@ return function(C, R, UI)
         if not selectedSet then return {} end
         local itemsFolder = itemsRootOrNil()
         if not itemsFolder then return {} end
-
         local root = hrp()
         if not root then return {} end
         local origin = root.Position
@@ -626,12 +611,12 @@ return function(C, R, UI)
         return (h % 100000) / 100000
     end
 
-    local function landingOffset(m, jobId)
+    local function placementOffset(m, jobId)
         local key = (typeof(m.GetDebugId)=="function" and m:GetDebugId() or (m.Name or "")) .. tostring(jobId)
-        local r1 = hash01(key .. "a")
-        local r2 = hash01(key .. "b")
+        local r1 = hash01(key .. "pa")
+        local r2 = hash01(key .. "pb")
         local ang = r1 * math.pi * 2
-        local rad = LAND_MIN + (LAND_MAX - LAND_MIN) * r2
+        local rad = 1.6 + (6.0 - 1.6) * r2
         return Vector3.new(math.cos(ang)*rad, 0, math.sin(ang)*rad)
     end
 
@@ -676,35 +661,33 @@ return function(C, R, UI)
         return pos + Vector3.new(0, ORB_HEIGHT + 1, 0)
     end
 
-    local function raycastDropAtXZ(xz, ignoreModel)
-        local itemsFolder = itemsRootOrNil()
+    local function raycastPlaceAtXZ(xz, ignoreModel, fallbackY)
         local ch = lp.Character
-        local origin = Vector3.new(xz.X, (orbPosVec and orbPosVec.Y or 0) + 260, xz.Z)
-        local dir = Vector3.new(0, -800, 0)
+        local origin = Vector3.new(xz.X, 350, xz.Z)
+        local dir = Vector3.new(0, -900, 0)
 
         local rp = RaycastParams.new()
         rp.FilterType = Enum.RaycastFilterType.Blacklist
         local ignore = {}
         if ignoreModel then ignore[#ignore+1] = ignoreModel end
-        if itemsFolder then ignore[#ignore+1] = itemsFolder end
         if ch then ignore[#ignore+1] = ch end
         rp.FilterDescendantsInstances = ignore
         rp.IgnoreWater = true
 
         local res = WS:Raycast(origin, dir, rp)
         if res and res.Position then return res.Position end
-        return Vector3.new(xz.X, (orbPosVec and orbPosVec.Y or 0), xz.Z)
+        return Vector3.new(xz.X, fallbackY or 0, xz.Z)
     end
 
-    local function stageForRelease(m, snap, tgt, destKey, dropXZ)
+    local function stageForRelease(m, snap, placePos, destKey)
         setAnchored(m, true)
         for _,p in ipairs(allParts(m)) do
             p.CanCollide = false
             p.AssemblyLinearVelocity  = Vector3.new()
             p.AssemblyAngularVelocity = Vector3.new()
         end
-        if tgt then
-            setPivot(m, CFrame.new(tgt))
+        if placePos then
+            setPivot(m, CFrame.new(placePos))
         end
         local info = inflight[m]
         if info then
@@ -712,7 +695,7 @@ return function(C, R, UI)
             info.stagedAt = os.clock()
             info.snap = snap
         end
-        releaseQueue[#releaseQueue+1] = { model = m, snap = snap, destKey = destKey or "default", dropXZ = dropXZ }
+        releaseQueue[#releaseQueue+1] = { model = m, snap = snap, destKey = destKey or "default", placePos = placePos }
     end
 
     local function releaseOne(rec)
@@ -726,24 +709,18 @@ return function(C, R, UI)
             tryStopDrag(m, info)
         end
 
-        local xz = rec and rec.dropXZ
-        if not xz then
+        local placePos = rec and rec.placePos
+        if not placePos then
             local mp = mainPart(m)
-            local p = (mp and mp.Position) or (orbPosVec or Vector3.new())
-            xz = Vector3.new(p.X, 0, p.Z)
+            local p = (mp and mp.Position) or Vector3.new()
+            local hit = raycastPlaceAtXZ(Vector3.new(p.X, 0, p.Z), m, p.Y)
+            placePos = hit + Vector3.new(0, PLACE_UP_Y, 0)
         end
 
-        local key = rec and rec.destKey or "default"
-        dropStacks[key] = (dropStacks[key] or 0) + 1
-        local stackN = dropStacks[key]
-
-        local hit = raycastDropAtXZ(xz, m)
-        local placePos = hit + Vector3.new(0, 1.6 + (stackN - 1) * DROP_VERTICAL_OFFSET, 0)
-
         setPivot(m, CFrame.new(placePos))
-        setAnchored(m, false)
         zeroAssembly(m)
         setCollideFromSnapshot(snap)
+        setAnchored(m, false)
 
         for _,p in ipairs(allParts(m)) do
             p.AssemblyAngularVelocity = Vector3.new()
@@ -793,9 +770,13 @@ return function(C, R, UI)
 
         if isFruitModel(m) then fruitPreNudge(m) end
 
-        local off = landingOffset(m, jobId)
+        local off = placementOffset(m, jobId)
+        local xz = Vector3.new(destBaseVec.X + off.X, 0, destBaseVec.Z + off.Z)
+        local hit = raycastPlaceAtXZ(xz, m, destBaseVec.Y)
+        local placePos = hit + Vector3.new(0, PLACE_UP_Y, 0)
+
         local function target()
-            return Vector3.new(destBaseVec.X + off.X, destBaseVec.Y + HOVER_ABOVE_ORB, destBaseVec.Z + off.Z)
+            return Vector3.new(placePos.X, placePos.Y + TRANSPORT_HOVER_Y, placePos.Z)
         end
 
         pcall(function()
@@ -807,7 +788,7 @@ return function(C, R, UI)
         setAnchored(m, true)
         zeroAssembly(m)
 
-        local rec = { snap = snap, conn = nil, lastD = math.huge, lastT = os.clock(), staged = false, dragging = false, stopped = false, counted = true, destKey = destKey or "default", off = off }
+        local rec = { snap = snap, conn = nil, lastD = math.huge, lastT = os.clock(), staged = false, dragging = false, stopped = false, counted = true, destKey = destKey or "default", placePos = placePos }
         inflight[m] = rec
         activeCount = activeCount + 1
 
@@ -839,16 +820,17 @@ return function(C, R, UI)
                     rec.counted = false
                     activeCount = math.max(0, activeCount - 1)
                 end
-                local dropXZ = Vector3.new(tgt.X, 0, tgt.Z)
-                stageForRelease(m, snap, tgt, rec.destKey, dropXZ)
+                stageForRelease(m, snap, rec.placePos, rec.destKey)
                 if rec.conn then rec.conn:Disconnect() end
                 return
             end
 
             if distH >= rec.lastD - 0.02 then
                 if os.clock() - rec.lastT >= STALL_SEC then
-                    off = landingOffset(m, tostring(jobId) .. tostring(os.clock()))
-                    rec.off = off
+                    local nOff = placementOffset(m, tostring(jobId) .. tostring(os.clock()))
+                    local nxz = Vector3.new(destBaseVec.X + nOff.X, 0, destBaseVec.Z + nOff.Z)
+                    local nhit = raycastPlaceAtXZ(nxz, m, destBaseVec.Y)
+                    rec.placePos = nhit + Vector3.new(0, PLACE_UP_Y, 0)
                     rec.lastT = os.clock()
                 end
             else
@@ -874,9 +856,7 @@ return function(C, R, UI)
                     if rec.model == m then queued = true break end
                 end
                 if not queued then
-                    local mp = mainPart(m)
-                    local p = (mp and mp.Position) or (orbPosVec or Vector3.new())
-                    releaseQueue[#releaseQueue+1] = { model = m, snap = info.snap or snapshotCollide(m), destKey = info.destKey or "default", dropXZ = Vector3.new(p.X,0,p.Z) }
+                    releaseQueue[#releaseQueue+1] = { model = m, snap = info.snap or snapshotCollide(m), destKey = info.destKey or "default", placePos = info.placePos }
                 end
             end
         end
@@ -885,24 +865,9 @@ return function(C, R, UI)
     local function teleportModelToGround(m)
         local mp = mainPart(m)
         if not (mp and mp.Parent) then return end
-
-        local origin = mp.Position + Vector3.new(0, 30, 0)
-        local dir    = Vector3.new(0, -300, 0)
-
-        local rp = RaycastParams.new()
-        rp.FilterType = Enum.RaycastFilterType.Blacklist
-        local ignore = { m }
-        local itemsFolder = itemsRootOrNil()
-        if itemsFolder then ignore[#ignore+1] = itemsFolder end
-        local ch = lp.Character
-        if ch then ignore[#ignore+1] = ch end
-        rp.FilterDescendantsInstances = ignore
-        rp.IgnoreWater = true
-
-        local result = WS:Raycast(origin, dir, rp)
-        if result and result.Position then
-            setPivot(m, CFrame.new(result.Position + Vector3.new(0, 1.5, 0)))
-        end
+        local xz = Vector3.new(mp.Position.X, 0, mp.Position.Z)
+        local hit = raycastPlaceAtXZ(xz, m, mp.Position.Y)
+        setPivot(m, CFrame.new(hit + Vector3.new(0, PLACE_UP_Y, 0)))
     end
 
     local function setUnstickEnabled(on)
@@ -1139,7 +1104,6 @@ return function(C, R, UI)
         CURRENT_RUN_ID = tostring(os.clock())
         finalized      = {}
         fruitNudged    = {}
-        dropStacks     = {}
 
         if mode == "fuel" or mode == "scrap" or mode == "all" then
             local pos, color
