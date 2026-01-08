@@ -1,5 +1,3 @@
--- extra.lua
-
 return function(C, R, UI)
     C  = C  or _G.C
     UI = UI or _G.UI
@@ -17,9 +15,6 @@ return function(C, R, UI)
     C.State = C.State or { Toggles = {} }
     C.State.Toggles = C.State.Toggles or {}
 
-    --========================
-    -- Zero ReloadTime Toggle
-    --========================
     if C.State.Toggles.RifleZeroReload == nil then
         C.State.Toggles.RifleZeroReload = true
     end
@@ -186,40 +181,37 @@ return function(C, R, UI)
         startRifleZeroReload()
     end
 
-    --========================
-    -- AutoChest (WindUI)
-    --========================
-    if _G.__ExtraAutoChest and type(_G.__ExtraAutoChest.Destroy) == "function" then
-        pcall(function() _G.__ExtraAutoChest.Destroy() end)
-    end
-
     if C.State.Toggles.AutoChest == nil then
         C.State.Toggles.AutoChest = false
     end
-    if C.State.Toggles.AutoChestCaptureDropsOnly == nil then
-        C.State.Toggles.AutoChestCaptureDropsOnly = true
+
+    if _G.__ExtraAutoChest and type(_G.__ExtraAutoChest.Destroy) == "function" then
+        pcall(function() _G.__ExtraAutoChest.Destroy() end)
     end
 
     local UID_OPEN_KEY = tostring(lp.UserId) .. "Opened"
 
     local AUTO_DELAY = 0.12
     local FAIL_RETRY_DELAY = 0.20
-    local CHEST_COOLDOWN = 0.35
+    local FRONT_DIST = 4.0
+    local STAND_UP = 2.5
+    local CHEST_FLOOR_RAY_DEPTH = 80.0
+    local STRONGHOLD_EXCLUDE_RADIUS = 15.0
+    local QUICKFIRE_HOLD_OVERRIDE = 0.12
+    local FORCE_LOS_FALSE = true
 
     local CAPTURE_WINDOW = 2.75
     local CAPTURE_RADIUS_CHEST = 12
     local START_CAPTURE_YIELD = 0.10
 
+    local AFTER_TRIGGER_MIN_WAIT = 0.30
+    local WAIT_FOR_FIRST_DROP_TIMEOUT = 1.60
+    local AFTER_FIRST_DROP_GRACE = 0.40
+    local POST_CHEST_SETTLE = 0.10
+
     local DRAG_TTL = 60.0
-    local FRONT_DIST = 4.0
-    local STAND_UP = 2.5
-    local CHEST_FLOOR_RAY_DEPTH = 80.0
 
     local EXCLUDE_NAMES = { ["Stronghold Diamond Chest"] = true }
-    local STRONGHOLD_EXCLUDE_RADIUS = 15.0
-
-    local QUICKFIRE_HOLD_OVERRIDE = 0.12
-    local FORCE_LOS_FALSE = true
 
     local alive = true
     local conns = {}
@@ -295,15 +287,9 @@ return function(C, R, UI)
         return ok and v == true
     end
 
-    local function markChestOpened(m, on)
+    local function markChestOpened(m)
         if not m then return end
-        pcall(function()
-            if on then
-                m:SetAttribute(UID_OPEN_KEY, true)
-            else
-                m:SetAttribute(UID_OPEN_KEY, nil)
-            end
-        end)
+        pcall(function() m:SetAttribute(UID_OPEN_KEY, true) end)
     end
 
     local function getRemote(...)
@@ -478,7 +464,7 @@ return function(C, R, UI)
 
     local function captureTarget(t)
         if not isValidCaptureTarget(t) then return false end
-        if CapturedSet[t] then return false end
+        if CapturedSet[t] then return true end
         refreshDragRemotes()
         if not dragStart(t) then return false end
         task.wait(0.06)
@@ -556,12 +542,12 @@ return function(C, R, UI)
     local function teleportNearChest(m)
         if not (m and m.Parent and m:IsA("Model")) then return false end
         if EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name) then
-            markChestOpened(m, true)
+            markChestOpened(m)
             return false
         end
         local mp = mainPart(m)
         if not mp then
-            markChestOpened(m, true)
+            markChestOpened(m)
             return false
         end
 
@@ -676,13 +662,13 @@ return function(C, R, UI)
             end
         end
         if not (diamond and dpos) then return end
-        markChestOpened(diamond, true)
+        markChestOpened(diamond)
         for i=1,#chests do
             local m = chests[i]
             if m and m.Parent and m ~= diamond then
                 local p = chestPos(m)
                 if p and (p - dpos).Magnitude <= STRONGHOLD_EXCLUDE_RADIUS then
-                    markChestOpened(m, true)
+                    markChestOpened(m)
                 end
             end
         end
@@ -722,13 +708,14 @@ return function(C, R, UI)
 
     local function beginCaptureWindowForChest(chestModel)
         local items = itemsFolder()
-        if not items then return end
+        if not items then return nil end
         local cpos = chestPos(chestModel)
-        if not cpos then return end
+        if not cpos then return nil end
+
+        local state = { seen = false, captured = false, firstSeenAt = nil }
 
         local pre = snapshotItems(items)
         local tEnd = os.clock() + CAPTURE_WINDOW
-        local useDiff = (C.State.Toggles.AutoChestCaptureDropsOnly == true)
 
         local function withinChestRadius(t)
             local p = modelWorldPos(t)
@@ -744,11 +731,14 @@ return function(C, R, UI)
             local t = findCaptureTarget(inst)
             if not t or not t.Parent then return end
             if isChestName(t.Name) then return end
-
-            if useDiff and pre[t] then return end
+            if pre[t] then return end
             if not withinChestRadius(t) then return end
 
-            captureTarget(t)
+            if not state.firstSeenAt then state.firstSeenAt = os.clock() end
+            state.seen = true
+            if captureTarget(t) then
+                state.captured = true
+            end
         end
 
         local dc = items.DescendantAdded:Connect(tryCaptureFromInst)
@@ -759,10 +749,12 @@ return function(C, R, UI)
                 for i=1,#kids do
                     local inst = kids[i]
                     local t = findCaptureTarget(inst)
-                    if t and t.Parent then
-                        if not (useDiff and pre[t]) then
-                            if not isChestName(t.Name) and withinChestRadius(t) then
-                                captureTarget(t)
+                    if t and t.Parent and not pre[t] then
+                        if not isChestName(t.Name) and withinChestRadius(t) then
+                            if not state.firstSeenAt then state.firstSeenAt = os.clock() end
+                            state.seen = true
+                            if captureTarget(t) then
+                                state.captured = true
                             end
                         end
                     end
@@ -771,6 +763,8 @@ return function(C, R, UI)
             end
             pcall(function() dc:Disconnect() end)
         end)
+
+        return state
     end
 
     local autoOn = false
@@ -790,7 +784,7 @@ return function(C, R, UI)
 
                 local okTp = teleportNearChest(chest)
                 if not okTp then
-                    markChestOpened(chest, true)
+                    markChestOpened(chest)
                     task.wait(FAIL_RETRY_DELAY)
                     continue
                 end
@@ -799,7 +793,7 @@ return function(C, R, UI)
 
                 local p = chestPrompt(chest)
                 if not p then
-                    markChestOpened(chest, true)
+                    markChestOpened(chest)
                     task.wait(FAIL_RETRY_DELAY)
                     continue
                 end
@@ -807,9 +801,25 @@ return function(C, R, UI)
                 local okTrig = triggerPrompt(p)
                 if okTrig then
                     task.wait(START_CAPTURE_YIELD)
-                    beginCaptureWindowForChest(chest)
-                    task.wait(CHEST_COOLDOWN)
-                    markChestOpened(chest, true)
+                    local state = beginCaptureWindowForChest(chest)
+                    task.wait(AFTER_TRIGGER_MIN_WAIT)
+
+                    local t0 = os.clock()
+                    while alive and autoOn and (os.clock() - t0) < WAIT_FOR_FIRST_DROP_TIMEOUT do
+                        if state and (state.captured or state.seen) then
+                            break
+                        end
+                        task.wait(0.05)
+                    end
+
+                    if state and (state.captured or state.seen) then
+                        local tSeen = state.firstSeenAt or os.clock()
+                        local rem = AFTER_FIRST_DROP_GRACE - (os.clock() - tSeen)
+                        if rem > 0 then task.wait(rem) end
+                    end
+
+                    task.wait(POST_CHEST_SETTLE)
+                    markChestOpened(chest)
                 else
                     task.wait(FAIL_RETRY_DELAY)
                 end
@@ -823,16 +833,6 @@ return function(C, R, UI)
         autoOn = false
     end
 
-    local function resetOpenedMarks()
-        local items = itemsFolder()
-        if not items then return end
-        for _,m in ipairs(items:GetChildren()) do
-            if m and m.Parent and m:IsA("Model") and isChestName(m.Name) then
-                markChestOpened(m, false)
-            end
-        end
-    end
-
     ExtraTab:Toggle({
         Title = "Auto Chest",
         Value = C.State.Toggles.AutoChest,
@@ -842,25 +842,10 @@ return function(C, R, UI)
         end
     })
 
-    ExtraTab:Toggle({
-        Title = "Capture Drops Only (ignore existing nearby)",
-        Value = C.State.Toggles.AutoChestCaptureDropsOnly,
-        Callback = function(on)
-            C.State.Toggles.AutoChestCaptureDropsOnly = on
-        end
-    })
-
     ExtraTab:Button({
         Title = "Place Captured Items",
         Callback = function()
             releaseAllCaptured()
-        end
-    })
-
-    ExtraTab:Button({
-        Title = "Reset Opened Marks (Items)",
-        Callback = function()
-            resetOpenedMarks()
         end
     })
 
