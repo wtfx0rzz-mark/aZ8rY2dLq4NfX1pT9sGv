@@ -277,7 +277,7 @@ return function(C, R, UI)
     end
 
     local CHEST_POST_OPEN_DELAY = 0
-    local CHEST_NOT_OPEN_WAIT = 4
+    local CHEST_NOT_OPEN_WAIT = 2
     local CHEST_OPEN_CONFIRM_TIMEOUT = 4
     local CHEST_CAPTURE_WINDOW = 0.5
 
