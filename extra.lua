@@ -8,7 +8,6 @@ return function(C, R, UI)
     local WS = game:GetService("Workspace")
     local PPS = game:GetService("ProximityPromptService")
     local RunService = game:GetService("RunService")
-    local UIS = game:GetService("UserInputService")
 
     local lp = C.LocalPlayer or Players.LocalPlayer
     local ExtraTab = UI.Tabs.Extra
@@ -167,319 +166,6 @@ return function(C, R, UI)
         startRifleZeroReload()
     end
 
-    --=====================================================
-    -- Tiny chest logger (ring buffer + on-screen GUI window)
-    --=====================================================
-    local function now()
-        return os.clock()
-    end
-
-    C.Extra = C.Extra or {}
-    C.Extra.Chest = C.Extra.Chest or {}
-    C.Extra.Chest.LogBuf = C.Extra.Chest.LogBuf or {}
-    C.Extra.Chest.LogMax = C.Extra.Chest.LogMax or 400
-
-    if C.State.Toggles.ChestLog == nil then
-        C.State.Toggles.ChestLog = false
-    end
-
-    local LOG_ON = (C.State.Toggles.ChestLog == true)
-
-    local function pushLog(line)
-        local buf = C.Extra.Chest.LogBuf
-        buf[#buf+1] = line
-        local maxN = C.Extra.Chest.LogMax
-        if #buf > maxN then
-            table.remove(buf, 1)
-        end
-        local g = C.Extra.Chest.Gui
-        if g and g.SetText then
-            g.SetText(table.concat(buf, "\n"))
-        end
-    end
-
-    local function logf(fmt, ...)
-        if not LOG_ON then return end
-        local ok, msg = pcall(string.format, fmt, ...)
-        if not ok then msg = tostring(fmt) end
-        pushLog(string.format("[%.3f] %s", now(), msg))
-    end
-
-    local function getLogsText()
-        return table.concat(C.Extra.Chest.LogBuf, "\n")
-    end
-
-    local function clearLogs()
-        table.clear(C.Extra.Chest.LogBuf)
-        local g = C.Extra.Chest.Gui
-        if g and g.SetText then
-            g.SetText("")
-        end
-    end
-
-    C.Extra.Chest.GetLogsText = getLogsText
-    C.Extra.Chest.ClearLogs   = clearLogs
-    C.Extra.Chest.Logf        = logf
-
-    local function destroyGui()
-        local g = C.Extra.Chest.Gui
-        if g and g.Destroy then pcall(g.Destroy) end
-        C.Extra.Chest.Gui = nil
-    end
-
-    local function ensureGui()
-        if C.Extra.Chest.Gui and C.Extra.Chest.Gui.Alive then
-            return C.Extra.Chest.Gui
-        end
-
-        local guiObj = { Alive = true }
-
-        local ok = pcall(function()
-            local playerGui = lp:FindFirstChildOfClass("PlayerGui") or lp:WaitForChild("PlayerGui", 10)
-            if not playerGui then return end
-
-            local existing = playerGui:FindFirstChild("ChestLogGui")
-            if existing then pcall(function() existing:Destroy() end) end
-
-            local screenGui = Instance.new("ScreenGui")
-            screenGui.Name = "ChestLogGui"
-            screenGui.ResetOnSpawn = false
-            screenGui.Parent = playerGui
-
-            local frame = Instance.new("Frame")
-            frame.Name = "Window"
-            frame.Parent = screenGui
-            frame.Size = UDim2.new(0, 420, 0, 240)
-            frame.Position = UDim2.new(0.60, -210, 0.35, -120)
-            frame.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
-            frame.BorderSizePixel = 0
-            frame.Active = true
-
-            local stroke = Instance.new("UIStroke")
-            stroke.Thickness = 1
-            stroke.Color = Color3.fromRGB(60, 60, 60)
-            stroke.Parent = frame
-
-            local titleBar = Instance.new("Frame")
-            titleBar.Name = "TitleBar"
-            titleBar.Parent = frame
-            titleBar.Size = UDim2.new(1, 0, 0, 26)
-            titleBar.Position = UDim2.new(0, 0, 0, 0)
-            titleBar.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
-            titleBar.BorderSizePixel = 0
-            titleBar.Active = true
-
-            local title = Instance.new("TextLabel")
-            title.Name = "Title"
-            title.Parent = titleBar
-            title.Size = UDim2.new(1, -180, 1, 0)
-            title.Position = UDim2.new(0, 8, 0, 0)
-            title.BackgroundTransparency = 1
-            title.Text = "Chest Log"
-            title.TextXAlignment = Enum.TextXAlignment.Left
-            title.TextColor3 = Color3.fromRGB(235, 235, 235)
-            title.Font = Enum.Font.Code
-            title.TextSize = 14
-
-            local function mkBtn(name, txt, xOffset)
-                local b = Instance.new("TextButton")
-                b.Name = name
-                b.Parent = titleBar
-                b.Size = UDim2.new(0, 52, 0, 20)
-                b.Position = UDim2.new(1, xOffset, 0, 3)
-                b.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-                b.BorderSizePixel = 0
-                b.Text = txt
-                b.TextColor3 = Color3.fromRGB(235, 235, 235)
-                b.Font = Enum.Font.Code
-                b.TextSize = 12
-                local s = Instance.new("UIStroke")
-                s.Thickness = 1
-                s.Color = Color3.fromRGB(70, 70, 70)
-                s.Parent = b
-                return b
-            end
-
-            local btnMin  = mkBtn("Min",  "Min",  -168)
-            local btnCopy = mkBtn("Copy", "Copy", -112)
-            local btnClr  = mkBtn("Clear","Clear",-56)
-
-            local btnX = Instance.new("TextButton")
-            btnX.Name = "Close"
-            btnX.Parent = titleBar
-            btnX.Size = UDim2.new(0, 24, 0, 20)
-            btnX.Position = UDim2.new(1, -28, 0, 3)
-            btnX.BackgroundColor3 = Color3.fromRGB(120, 45, 45)
-            btnX.BorderSizePixel = 0
-            btnX.Text = "X"
-            btnX.TextColor3 = Color3.fromRGB(255, 255, 255)
-            btnX.Font = Enum.Font.Code
-            btnX.TextSize = 12
-            local sx = Instance.new("UIStroke")
-            sx.Thickness = 1
-            sx.Color = Color3.fromRGB(160, 70, 70)
-            sx.Parent = btnX
-
-            local body = Instance.new("Frame")
-            body.Name = "Body"
-            body.Parent = frame
-            body.Size = UDim2.new(1, -12, 1, -38)
-            body.Position = UDim2.new(0, 6, 0, 32)
-            body.BackgroundColor3 = Color3.fromRGB(26, 26, 26)
-            body.BorderSizePixel = 0
-
-            local bodyStroke = Instance.new("UIStroke")
-            bodyStroke.Thickness = 1
-            bodyStroke.Color = Color3.fromRGB(60, 60, 60)
-            bodyStroke.Parent = body
-
-            local box = Instance.new("TextBox")
-            box.Name = "LogBox"
-            box.Parent = body
-            box.Size = UDim2.new(1, -8, 1, -8)
-            box.Position = UDim2.new(0, 4, 0, 4)
-            box.BackgroundTransparency = 1
-            box.TextColor3 = Color3.fromRGB(220, 220, 220)
-            box.TextXAlignment = Enum.TextXAlignment.Left
-            box.TextYAlignment = Enum.TextYAlignment.Top
-            box.Font = Enum.Font.Code
-            box.TextSize = 12
-            box.ClearTextOnFocus = false
-            box.MultiLine = true
-            box.TextEditable = true
-            box.Text = ""
-
-            local resizeHandle = Instance.new("Frame")
-            resizeHandle.Name = "ResizeHandle"
-            resizeHandle.Parent = frame
-            resizeHandle.Size = UDim2.new(0, 14, 0, 14)
-            resizeHandle.Position = UDim2.new(1, -14, 1, -14)
-            resizeHandle.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
-            resizeHandle.BorderSizePixel = 0
-            resizeHandle.Active = true
-
-            local resizeStroke = Instance.new("UIStroke")
-            resizeStroke.Thickness = 1
-            resizeStroke.Color = Color3.fromRGB(90, 90, 90)
-            resizeStroke.Parent = resizeHandle
-
-            local minimized = false
-            local prevSize = frame.Size
-
-            local dragOn = false
-            local dragStart
-            local dragPos
-
-            titleBar.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                    dragOn = true
-                    dragStart = input.Position
-                    dragPos = frame.Position
-                    input.Changed:Connect(function()
-                        if input.UserInputState == Enum.UserInputState.End then
-                            dragOn = false
-                        end
-                    end)
-                end
-            end)
-
-            UIS.InputChanged:Connect(function(input)
-                if dragOn and input.UserInputType == Enum.UserInputType.MouseMovement then
-                    local delta = input.Position - dragStart
-                    frame.Position = UDim2.new(dragPos.X.Scale, dragPos.X.Offset + delta.X, dragPos.Y.Scale, dragPos.Y.Offset + delta.Y)
-                end
-            end)
-
-            local resizing = false
-            local rsStart
-            local rsSize
-
-            resizeHandle.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                    resizing = true
-                    rsStart = input.Position
-                    rsSize = frame.AbsoluteSize
-                    input.Changed:Connect(function()
-                        if input.UserInputState == Enum.UserInputState.End then
-                            resizing = false
-                        end
-                    end)
-                end
-            end)
-
-            UIS.InputChanged:Connect(function(input)
-                if resizing and input.UserInputType == Enum.UserInputType.MouseMovement then
-                    local delta = input.Position - rsStart
-                    local w = math.max(260, rsSize.X + delta.X)
-                    local h = math.max(120, rsSize.Y + delta.Y)
-                    frame.Size = UDim2.new(0, w, 0, h)
-                end
-            end)
-
-            btnMin.MouseButton1Click:Connect(function()
-                minimized = not minimized
-                if minimized then
-                    prevSize = frame.Size
-                    body.Visible = false
-                    resizeHandle.Visible = false
-                    frame.Size = UDim2.new(0, frame.AbsoluteSize.X, 0, 26)
-                else
-                    body.Visible = true
-                    resizeHandle.Visible = true
-                    frame.Size = prevSize
-                end
-            end)
-
-            btnCopy.MouseButton1Click:Connect(function()
-                local txt = getLogsText()
-                if typeof(setclipboard) == "function" then
-                    pcall(function() setclipboard(txt) end)
-                else
-                    box.Text = txt
-                    pcall(function() box:CaptureFocus() end)
-                end
-            end)
-
-            btnClr.MouseButton1Click:Connect(function()
-                clearLogs()
-            end)
-
-            btnX.MouseButton1Click:Connect(function()
-                pcall(function() screenGui:Destroy() end)
-                guiObj.Alive = false
-            end)
-
-            guiObj.SetText = function(t)
-                if not guiObj.Alive then return end
-                if not screenGui.Parent then return end
-                box.Text = t or ""
-                box.CursorPosition = #box.Text + 1
-            end
-
-            guiObj.Destroy = function()
-                guiObj.Alive = false
-                if screenGui and screenGui.Parent then
-                    pcall(function() screenGui:Destroy() end)
-                end
-            end
-
-            guiObj._ScreenGui = screenGui
-        end)
-
-        if not ok then
-            guiObj.Alive = false
-        end
-
-        C.Extra.Chest.Gui = guiObj
-        guiObj.SetText(getLogsText())
-        return guiObj
-    end
-
-    ensureGui()
-
-    --=====================================================
-    -- Chest logic (unchanged except targeted logf calls)
-    --=====================================================
     local function hrp()
         local ch = lp.Character
         return ch and ch:FindFirstChild("HumanoidRootPart") or nil
@@ -649,7 +335,6 @@ return function(C, R, UI)
         DragActive[m] = nil
         for _,c in ipairs(rec.conns) do pcall(function() c:Disconnect() end) end
         safeStopDrag(m)
-        logf("drag release: %s", (m and m.Name) or "nil")
     end
 
     local function dragStart(m)
@@ -659,10 +344,7 @@ return function(C, R, UI)
             return true
         end
         local ok = pcall(function() RF_Start:FireServer(m) end)
-        if not ok then
-            logf("dragStart failed (FireServer): %s", m.Name)
-            return false
-        end
+        if not ok then return false end
         local c = {}
         c[#c+1] = m.AncestryChanged:Connect(function(_, parent)
             if not parent then dragTrackRelease(m) end
@@ -671,7 +353,6 @@ return function(C, R, UI)
             if not m.Parent then dragTrackRelease(m) end
         end)
         DragActive[m] = { t0 = os.clock(), conns = c }
-        logf("dragStart ok: %s", m.Name)
         return true
     end
 
@@ -681,9 +362,9 @@ return function(C, R, UI)
     end
 
     bind(RunService.Heartbeat:Connect(function()
-        local nowT = os.clock()
+        local now = os.clock()
         for m, rec in pairs(DragActive) do
-            if (not m) or (not m.Parent) or (nowT - rec.t0) > DRAG_TTL then
+            if (not m) or (not m.Parent) or (now - rec.t0) > DRAG_TTL then
                 dragTrackRelease(m)
             end
         end
@@ -764,12 +445,9 @@ return function(C, R, UI)
         CapturedSet[m] = true
         CapturedList[#CapturedList+1] = m
         ensureHoverOn()
-        logf("captured +1 (%d total): %s", #CapturedList, (m and m.Name) or "nil")
     end
 
     local function releaseAllCaptured()
-        local n0 = #CapturedList
-        if n0 > 0 then logf("releaseAllCaptured begin: %d", n0) end
         ensureHoverOff()
         for i = #CapturedList, 1, -1 do
             local m = CapturedList[i]
@@ -784,7 +462,6 @@ return function(C, R, UI)
         end
         table.clear(CapturedList)
         for k,_ in pairs(CapturedSet) do CapturedSet[k] = nil end
-        if n0 > 0 then logf("releaseAllCaptured end: 0") end
     end
 
     local function captureInst(inst)
@@ -792,10 +469,7 @@ return function(C, R, UI)
         if CapturedSet[inst] then return false end
         if isChestInst(inst) then return false end
         refreshDragRemotes()
-        if not dragStart(inst) then
-            logf("captureInst dragStart failed: %s", inst.Name)
-            return false
-        end
+        if not dragStart(inst) then return false end
         task.wait(0.06)
         setNoCollideAny(inst, true)
         setAnchoredAny(inst, true)
@@ -865,44 +539,71 @@ return function(C, R, UI)
         return chestModel:FindFirstChildWhichIsA("ProximityPrompt", true)
     end
 
-    local function triggerPrompt(prompt, chestName)
-        if not (prompt and prompt.Parent) then return false end
-        pcall(function() prompt.RequiresLineOfSight = false end)
-        pcall(function()
-            if prompt.HoldDuration > 0.12 then
-                prompt.HoldDuration = 0.12
-            end
-        end)
+    local function promptWorldPos(prompt)
+        if not (prompt and prompt.Parent) then return nil end
+        local p = prompt.Parent
+        if p:IsA("Attachment") then
+            local ok, wp = pcall(function() return p.WorldPosition end)
+            return ok and wp or nil
+        end
+        if p:IsA("BasePart") then
+            return p.Position
+        end
+        local mp = mainPart(p)
+        if mp then return mp.Position end
+        return nil
+    end
 
-        local ok = pcall(function()
-            PPS:TriggerPrompt(prompt)
-        end)
-        if ok then
-            logf("prompt fired via PPS: chest=%s hold=%.2f maxDist=%.1f",
-                tostring(chestName or "?"),
-                tonumber(prompt.HoldDuration) or -1,
-                tonumber(prompt.MaxActivationDistance) or -1
-            )
+    local function rayParamsForPrompt()
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.IgnoreWater = true
+        params.FilterDescendantsInstances = { lp.Character }
+        return params
+    end
+
+    local function hasLOS_ToPrompt(fromPos, toPos, chestModel)
+        local dir = (toPos - fromPos)
+        if dir.Magnitude < 0.05 then return true end
+        local hit = WS:Raycast(fromPos, dir, rayParamsForPrompt())
+        if not hit then return true end
+        if chestModel and hit.Instance and hit.Instance:IsDescendantOf(chestModel) then
             return true
         end
+        return false
+    end
 
-        local ok2 = pcall(function()
-            prompt:InputHoldBegin()
-        end)
-        if not ok2 then
-            logf("prompt fire failed (PPS + HoldBegin): chest=%s", tostring(chestName or "?"))
+    local function promptUsable(prompt, chestModel)
+        if not (prompt and prompt.Parent) then return false end
+        if prompt.Enabled == false then return false end
+        local root = hrp()
+        if not root then return false end
+        local ppos = promptWorldPos(prompt)
+        if not ppos then return false end
+        local maxD = tonumber(prompt.MaxActivationDistance) or 10
+        if (ppos - root.Position).Magnitude > (maxD + 0.25) then
             return false
         end
+        if prompt.RequiresLineOfSight then
+            local cam = WS.CurrentCamera
+            local from = (cam and cam.CFrame.Position) or (root.Position + Vector3.new(0, 1.5, 0))
+            if not hasLOS_ToPrompt(from, ppos, chestModel) then
+                return false
+            end
+        end
+        return true
+    end
 
+    local function triggerPrompt(prompt)
+        if not (prompt and prompt.Parent) then return false end
+        local ok = pcall(function() prompt:InputHoldBegin() end)
+        if not ok then return false end
         local hold = tonumber(prompt.HoldDuration) or 0
         local waitTime = (hold > 0) and (hold + 0.05) or 0.05
-        task.delay(waitTime, function()
-            if prompt and prompt.Parent then
-                pcall(function() prompt:InputHoldEnd() end)
-            end
-        end)
-
-        logf("prompt fired via HoldBegin/End: chest=%s hold=%.2f", tostring(chestName or "?"), hold)
+        task.wait(waitTime)
+        if prompt and prompt.Parent then
+            pcall(function() prompt:InputHoldEnd() end)
+        end
         return true
     end
 
@@ -941,18 +642,6 @@ return function(C, R, UI)
         return hit and hit.Position or nil
     end
 
-    local function hasLineOfSightToChest(standPos, chestModel, chestCenter)
-        local params = makeChestRayParams({ chestModel })
-        local from = standPos + Vector3.new(0, 1.0, 0)
-        local to   = chestCenter + Vector3.new(0, 0.8, 0)
-        local dir = (to - from)
-        if dir.Magnitude < 0.05 then return true end
-        local hit = WS:Raycast(from, dir, params)
-        if not hit then return true end
-        if hit.Instance and hit.Instance:IsDescendantOf(chestModel) then return true end
-        return false
-    end
-
     local function hingeBackCenter(m)
         local pts = {}
         for _,d in ipairs(m:GetDescendants()) do
@@ -973,56 +662,32 @@ return function(C, R, UI)
 
     local function teleportToCF(cf)
         local root = hrp()
-        if not root then
-            logf("teleportToCF failed: no HRP")
-            return false
-        end
+        if not root then return false end
         local ch = lp.Character
         if ch then pcall(function() ch:PivotTo(cf) end) end
-        local ok = pcall(function() root.CFrame = cf end)
-        if ok then
-            local p = root.Position
-            logf("teleport ok: (%.1f, %.1f, %.1f)", p.X, p.Y, p.Z)
-        else
-            logf("teleport failed: set CFrame error")
-        end
-        return ok
+        return pcall(function() root.CFrame = cf end)
     end
 
-    local function teleportNearChest(m)
-        if not (m and m.Parent and m:IsA("Model")) then
-            logf("teleportNearChest failed: invalid chest")
-            return false
-        end
-        if EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name) then
-            logf("teleportNearChest skipped excluded: %s", m.Name)
-            return false
-        end
-        local mp = mainPart(m)
-        if not mp then
-            logf("teleportNearChest failed: no mainPart: %s", m.Name)
-            return false
-        end
-
-        local chestCenter = mp.Position
-        local chestTopY = mp.Position.Y + (mp.Size.Y * 0.5)
-        local root = hrp()
+    local function buildChestDirs(m, mp, chestCenter)
         local hingePos = hingeBackCenter(m)
-
+        local root = hrp()
         local dirs = {}
+        local seen = {}
         local function addDir(v)
             if not v then return end
             if v.Magnitude < 1e-3 then return end
-            dirs[#dirs+1] = v.Unit
+            local u = v.Unit
+            local key = tostring(math.floor(u.X*100+0.5))..","..tostring(math.floor(u.Y*100+0.5))..","..tostring(math.floor(u.Z*100+0.5))
+            if seen[key] then return end
+            seen[key] = true
+            dirs[#dirs+1] = u
         end
-
         if root then addDir(root.Position - chestCenter) end
         if hingePos then
             local v = (chestCenter - hingePos)
             if v.Magnitude < 1e-3 then v = -mp.CFrame.LookVector end
             addDir(v)
         end
-
         addDir(mp.CFrame.LookVector)
         addDir(-mp.CFrame.LookVector)
         addDir(mp.CFrame.RightVector)
@@ -1031,29 +696,45 @@ return function(C, R, UI)
         addDir((mp.CFrame.LookVector - mp.CFrame.RightVector))
         addDir((-mp.CFrame.LookVector + mp.CFrame.RightVector))
         addDir((-mp.CFrame.LookVector - mp.CFrame.RightVector))
+        return dirs
+    end
 
-        local bestCF = nil
+    local function teleportToChestAngle(m, mp, chestCenter, chestTopY, dir, lookAtPos)
+        local desired = chestCenter + dir * FRONT_DIST
+        local floorPos = floorAtFromChestTop(m, chestTopY, desired)
+        local standY = floorPos and (floorPos.Y + STAND_UP) or (chestCenter.Y + STAND_UP)
+        local standPos = Vector3.new(desired.X, standY, desired.Z)
+        local look = lookAtPos or chestCenter
+        return teleportToCF(CFrame.new(standPos, look))
+    end
+
+    local function teleportNearChest(m)
+        if not (m and m.Parent and m:IsA("Model")) then return false end
+        if EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name) then
+            return false
+        end
+        local mp = mainPart(m)
+        if not mp then return false end
+        local chestCenter = mp.Position
+        local chestTopY = mp.Position.Y + (mp.Size.Y * 0.5)
+        local dirs = buildChestDirs(m, mp, chestCenter)
+        local best = nil
         for i=1,#dirs do
             local dir = dirs[i]
             local desired = chestCenter + dir * FRONT_DIST
             local floorPos = floorAtFromChestTop(m, chestTopY, desired)
             local standY = floorPos and (floorPos.Y + STAND_UP) or (chestCenter.Y + STAND_UP)
             local standPos = Vector3.new(desired.X, standY, desired.Z)
-            if hasLineOfSightToChest(standPos, m, chestCenter) then
-                bestCF = CFrame.new(standPos, chestCenter)
-                break
-            end
+            best = CFrame.new(standPos, chestCenter)
+            break
         end
-
-        if not bestCF then
+        if not best then
             local fallbackPos = chestCenter + (-mp.CFrame.LookVector) * FRONT_DIST
             local floorPos = floorAtFromChestTop(m, chestTopY, fallbackPos) or Vector3.new(fallbackPos.X, chestCenter.Y, fallbackPos.Z)
             local standPos = Vector3.new(fallbackPos.X, floorPos.Y + STAND_UP, fallbackPos.Z)
-            bestCF = CFrame.new(standPos, chestCenter)
+            best = CFrame.new(standPos, chestCenter)
         end
-
-        logf("teleportNearChest: %s", m.Name)
-        return teleportToCF(bestCF)
+        return teleportToCF(best)
     end
 
     local function collectChestsSnapshot()
@@ -1087,7 +768,6 @@ return function(C, R, UI)
                 local p = modelWorldPos(m)
                 if p and (p - dpos).Magnitude <= STRONGHOLD_EXCLUDE_RADIUS then
                     pcall(function() m:SetAttribute(UID_OPEN_KEY, true) end)
-                    logf("stronghold exclude mark opened: %s", m.Name)
                 end
             end
         end
@@ -1135,14 +815,6 @@ return function(C, R, UI)
         local captureRadius = math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, spawnRadius)
         local captureWindow = math.max(tonumber(C.State.ChestCaptureWindow) or 4.5, 0.5)
 
-        logf("capture window start: chest=%s confirm=%.2fs capture=%.2fs spawnR=%.1f capR=%.1f",
-            chest and chest.Name or "?",
-            confirmTimeout,
-            captureWindow,
-            spawnRadius,
-            captureRadius
-        )
-
         local function scanNewNear(chestPos, rad, doCapture)
             local cands = getCandidatesNear(chestPos, rad)
             local newFound = {}
@@ -1162,34 +834,28 @@ return function(C, R, UI)
                     for i=1,#newFound do
                         local inst = newFound[i]
                         if inst and inst.Parent then
-                            local beforeN = #CapturedList
                             captureInst(inst)
                             preSet[itemKey(inst)] = true
-                            if #CapturedList ~= beforeN then
-                                gotAny = true
-                            end
+                            gotAny = true
                         end
                     end
                 end
-                return true, #newFound
+                return true
             end
-            return false, 0
+            return false
         end
 
         while alive and chest and chest.Parent and (os.clock() - t0) <= confirmTimeout do
             local pos = modelWorldPos(chest)
             if pos then
-                local found, n = scanNewNear(pos, spawnRadius, true)
-                if found then
+                if scanNewNear(pos, spawnRadius, true) then
                     opened = true
-                    logf("opened confirm: new drops detected n=%d", n)
                     break
                 end
             end
             local p = chestPrompt(chest)
             if not (p and p.Parent) then
                 opened = true
-                logf("opened confirm: prompt missing")
                 break
             end
             task.wait(0.10)
@@ -1200,71 +866,67 @@ return function(C, R, UI)
             while alive and chest and chest.Parent and os.clock() <= tEnd do
                 local pos = modelWorldPos(chest)
                 if pos then
-                    local found, n = scanNewNear(pos, captureRadius, true)
-                    if found then
-                        logf("capture tick: new drops n=%d (captured=%d)", n, #CapturedList)
-                    end
+                    scanNewNear(pos, captureRadius, true)
                 end
                 task.wait(0.08)
             end
         end
 
-        logf("capture window end: opened=%s gotAny=%s captured=%d",
-            tostring(opened),
-            tostring(gotAny),
-            #CapturedList
-        )
-
         return opened, gotAny
     end
+
+    local MAX_ANGLE_TRIES = 8
 
     local function openChestOnce(chest)
         if not (chest and chest.Parent) then return false end
         if EXCLUDE_NAMES[chest.Name] or isSnowChestName(chest.Name) or isHalloweenChestName(chest.Name) then
             pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
-            logf("openChestOnce skipped excluded: %s", chest.Name)
             return false
         end
 
         attemptedAt[chest] = os.clock()
 
-        local pos = modelWorldPos(chest)
-        if not pos then
+        local mp = mainPart(chest)
+        if not mp then
             pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
-            logf("openChestOnce no pos -> mark opened: %s", chest.Name)
             return false
         end
 
-        local preSet = snapshotNearChest(pos, math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, 10.0) + 8.0)
+        local chestCenter = mp.Position
+        local chestTopY = mp.Position.Y + (mp.Size.Y * 0.5)
 
-        local prompt = chestPrompt(chest)
-        if not prompt then
-            logf("openChestOnce no prompt: %s", chest.Name)
+        local preSet = snapshotNearChest(chestCenter, math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, 10.0) + 8.0)
+
+        local dirs = buildChestDirs(chest, mp, chestCenter)
+        if #dirs == 0 then
             return false
         end
 
-        logf("openChestOnce: %s", chest.Name)
+        local attemptCount = math.min(MAX_ANGLE_TRIES, #dirs)
+        for i=1, attemptCount do
+            local prompt = chestPrompt(chest)
+            local lookAtPos = prompt and promptWorldPos(prompt) or chestCenter
+            teleportToChestAngle(chest, mp, chestCenter, chestTopY, dirs[i], lookAtPos)
+            task.wait(0.08)
 
-        local okTrig = triggerPrompt(prompt, chest.Name)
-        if not okTrig then
-            logf("openChestOnce triggerPrompt failed: %s", chest.Name)
-            return false
+            prompt = chestPrompt(chest)
+            if prompt and promptUsable(prompt, chest) then
+                local okTrig = triggerPrompt(prompt)
+                if okTrig then
+                    local opened, gotAny = confirmAndCaptureDropsForChest(chest, preSet)
+                    if opened then
+                        pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
+                        local postDelay = math.max(tonumber(C.State.ChestPostOpenDelay) or 0.5, 0.0)
+                        if postDelay > 0 then task.wait(postDelay) end
+                        return true, gotAny
+                    end
+                end
+            end
         end
 
-        local opened, gotAny = confirmAndCaptureDropsForChest(chest, preSet)
-
-        if opened then
-            pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
-            logf("chest marked opened: %s gotAny=%s", chest.Name, tostring(gotAny))
-            local postDelay = math.max(tonumber(C.State.ChestPostOpenDelay) or 0.5, 0.0)
-            if postDelay > 0 then task.wait(postDelay) end
-            return true, gotAny
-        else
-            logf("chest NOT opened: %s (wait %.2fs)", chest.Name, math.max(tonumber(C.State.ChestNotOpenWait) or 5.0, 0.0))
-            local notOpenWait = math.max(tonumber(C.State.ChestNotOpenWait) or 5.0, 0.0)
-            if notOpenWait > 0 then task.wait(notOpenWait) end
-            return false
-        end
+        local notOpenWait = math.max(tonumber(C.State.ChestNotOpenWait) or 5.0, 0.0)
+        if notOpenWait > 0 then task.wait(notOpenWait) end
+        return false
     end
 
     local autoOn = false
@@ -1272,11 +934,9 @@ return function(C, R, UI)
 
     local function setAuto(state)
         autoOn = (state == true)
-        logf("auto set: %s", tostring(autoOn))
         if not autoOn then return end
         if runner then return end
         runner = task.spawn(function()
-            logf("auto runner start")
             while alive and autoOn do
                 local root = hrp()
                 if not root then task.wait(0.25) continue end
@@ -1285,7 +945,6 @@ return function(C, R, UI)
                 local okTp = teleportNearChest(chest)
                 if not okTp then
                     attemptedAt[chest] = os.clock()
-                    logf("teleport failed -> skip chest: %s", chest.Name)
                     task.wait(0.25)
                     continue
                 end
@@ -1295,30 +954,15 @@ return function(C, R, UI)
                     task.wait(0.10)
                 end
             end
-            logf("auto runner stop")
             runner = nil
         end)
     end
 
     local function stopAuto()
         autoOn = false
-        logf("auto stop")
     end
 
     ExtraTab:Section({ Title = "Chests" })
-
-    ExtraTab:Toggle({
-        Title = "Chest Debug Log",
-        Value = C.State.Toggles.ChestLog,
-        Callback = function(on)
-            C.State.Toggles.ChestLog = on
-            LOG_ON = (on == true)
-            ensureGui()
-            if LOG_ON then
-                logf("logging enabled")
-            end
-        end
-    })
 
     ExtraTab:Toggle({
         Title = "Auto Open Chests",
@@ -1427,7 +1071,6 @@ return function(C, R, UI)
     bind(lp.CharacterAdded:Connect(function()
         task.wait(0.15)
         releaseAllCaptured()
-        logf("character added -> released captured")
     end))
 
     local api = {}
@@ -1441,7 +1084,6 @@ return function(C, R, UI)
         end
         conns = {}
         ensureHoverOff()
-        destroyGui()
     end
     _G.__AutoChestExtra = api
 
