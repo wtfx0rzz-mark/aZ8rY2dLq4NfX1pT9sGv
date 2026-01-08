@@ -14,13 +14,21 @@ return function(C, R, UI)
     end
 
     local function mainPart(m)
-        if not (m and m:IsA("Model")) then return nil end
-        return m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart")
+        if not m then return nil end
+        if m:IsA("BasePart") then return m end
+        if m:IsA("Model") then
+            return m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart")
+        end
+        return nil
     end
 
     local function allParts(m)
         local t = {}
         if not m then return t end
+        if m:IsA("BasePart") then
+            t[1] = m
+            return t
+        end
         for _,d in ipairs(m:GetDescendants()) do
             if d:IsA("BasePart") then
                 t[#t+1] = d
@@ -175,7 +183,7 @@ return function(C, R, UI)
         "Giant Sack","Good Sack","Blueprint","Forest Gem","Key","Flashlight","Strong Flashlight","Taming flute","Cultist Gem","Tusk","Infernal Sack"
     }) do preDragImportantSet[n] = true end
 
-    local fuelModeSet = { ["Coal"] = true, ["Fuel Canister"] = true, ["Oil Barrel"] = true }
+    local fuelModeSet = { ["Coal"] = true, ["Fuel Canister"] = true, ["Oil Barrel"] = true, ["Log"] = true }
     local scrapModeSet = {}
     for k,v in pairs(junkSet) do if v then scrapModeSet[k] = true end end
     scrapModeSet["Log"] = true
@@ -246,10 +254,12 @@ return function(C, R, UI)
 
     local function hasIceBlockTag(inst)
         if not inst then return false end
-        for _,d in ipairs(inst:GetDescendants()) do
-            local n = (d.Name or ""):lower()
-            if n:find("iceblock",1,true) or n:find("ice block",1,true) then
-                return true
+        if inst:IsA("Model") then
+            for _,d in ipairs(inst:GetDescendants()) do
+                local n = (d.Name or ""):lower()
+                if n:find("iceblock",1,true) or n:find("ice block",1,true) then
+                    return true
+                end
             end
         end
         local cur = inst.Parent
@@ -274,8 +284,18 @@ return function(C, R, UI)
         return false
     end
 
-    local function isInsideTree(m)
-        local cur = m and m.Parent
+    local function isExcludedInst(inst)
+        if not inst then return true end
+        if inst:IsA("Model") then
+            if isExcludedModel(inst) then return true end
+        end
+        if isUnderLogWall(inst) then return true end
+        if hasIceBlockTag(inst) then return true end
+        return false
+    end
+
+    local function isInsideTree(inst)
+        local cur = inst and inst.Parent
         while cur and cur ~= WS do
             local nm = (cur.Name or ""):lower()
             if nm:find("tree",1,true) or nm:find("bush",1,true) then return true end
@@ -285,9 +305,16 @@ return function(C, R, UI)
         return false
     end
 
+    local ALLOW_OUTSIDE_ITEMS = { ["Log"] = true }
+
     local function nameMatches(selectedSet, m)
         local itemsFolder = itemsRootOrNil()
-        if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
+        if itemsFolder and not m:IsDescendantOf(itemsFolder) then
+            local nm0 = m and m.Name or ""
+            if not (ALLOW_OUTSIDE_ITEMS[nm0] and selectedSet and selectedSet[nm0]) then
+                return false
+            end
+        end
 
         local nm = m and m.Name or ""
         local l  = nm:lower()
@@ -334,7 +361,7 @@ return function(C, R, UI)
             if cur:IsA("Model") then lastModel = cur end
             cur = cur.Parent
         end
-        if lastModel and lastModel.Parent == itemsFolder then return lastModel end
+        if lastModel and itemsFolder and lastModel.Parent == itemsFolder then return lastModel end
         return lastModel
     end
 
@@ -343,6 +370,7 @@ return function(C, R, UI)
         local itemsFolder = itemsRootOrNil()
         local m = topModelUnderItems(part, itemsFolder) or part:FindFirstAncestorOfClass("Model")
         if m and nameMatches(selectedSet, m) then return m end
+        if nameMatches(selectedSet, part) then return part end
         return nil
     end
 
@@ -424,11 +452,19 @@ return function(C, R, UI)
     end
 
     local function canPick(m, selectedSet, jobId)
-        if not (m and m.Parent and m:IsA("Model")) then return false end
+        if not (m and m.Parent) then return false end
+        if not (m:IsA("Model") or m:IsA("BasePart")) then return false end
         if finalized[m] then return false end
+
         local itemsFolder = itemsRootOrNil()
-        if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
-        if isExcludedModel(m) or isUnderLogWall(m) or hasIceBlockTag(m) then return false end
+        if itemsFolder and not m:IsDescendantOf(itemsFolder) then
+            local nm0 = m.Name or ""
+            if not (ALLOW_OUTSIDE_ITEMS[nm0] and selectedSet and selectedSet[nm0]) then
+                return false
+            end
+        end
+
+        if isExcludedInst(m) then return false end
 
         local done = m:GetAttribute(DONE_ATTR)
         if done and CURRENT_RUN_ID and tostring(done) == tostring(CURRENT_RUN_ID) then return false end
@@ -520,9 +556,11 @@ return function(C, R, UI)
     local overlapParams = OverlapParams.new()
     overlapParams.MaxParts = 1000
 
-    local function refreshOverlapFilter()
+    local function refreshOverlapFilter(selectedSet)
         local itemsFolder = itemsRootOrNil()
-        if itemsFolder then
+        local allowOutside = (selectedSet and selectedSet["Log"]) and true or false
+
+        if itemsFolder and not allowOutside then
             overlapParams.FilterType = Enum.RaycastFilterType.Include
             overlapParams.FilterDescendantsInstances = { itemsFolder }
         else
@@ -534,45 +572,65 @@ return function(C, R, UI)
     local function collectCandidatesFromSet_FullScan(selectedSet, jobId, maxDist)
         if not selectedSet then return {} end
         local itemsFolder = itemsRootOrNil()
-        if not itemsFolder then return {} end
-
         local root = hrp()
         if not root then return {} end
         local rootPos = root.Position
 
         local uniq, out = {}, {}
-        for _,d in ipairs(itemsFolder:GetDescendants()) do
-            local m = nil
-            if d:IsA("Model") then
-                if nameMatches(selectedSet, d) then m = d end
-            elseif d:IsA("BasePart") then
-                m = nearestSelectedModelFromPart(d, selectedSet)
-            end
-            if m and not uniq[m] and canPick(m, selectedSet, jobId) then
-                local mp = mainPart(m)
-                if mp then
-                    local dist = (mp.Position - rootPos).Magnitude
-                    if (not maxDist) or dist <= maxDist then
-                        uniq[m] = true
-                        out[#out+1] = m
+
+        if itemsFolder then
+            for _,d in ipairs(itemsFolder:GetDescendants()) do
+                local m = nil
+                if d:IsA("Model") then
+                    if nameMatches(selectedSet, d) then m = d end
+                elseif d:IsA("BasePart") then
+                    m = nearestSelectedModelFromPart(d, selectedSet)
+                end
+                if m and not uniq[m] and canPick(m, selectedSet, jobId) then
+                    local mp = mainPart(m)
+                    if mp then
+                        local dist = (mp.Position - rootPos).Magnitude
+                        if (not maxDist) or dist <= maxDist then
+                            uniq[m] = true
+                            out[#out+1] = m
+                        end
                     end
                 end
             end
         end
+
+        if selectedSet["Log"] then
+            for _,d in ipairs(WS:GetDescendants()) do
+                if d:IsA("BasePart") and d.Name == "Log" then
+                    local m = nearestSelectedModelFromPart(d, selectedSet) or d
+                    if m and not uniq[m] and canPick(m, selectedSet, jobId) then
+                        local mp = mainPart(m)
+                        if mp then
+                            local dist = (mp.Position - rootPos).Magnitude
+                            if (not maxDist) or dist <= maxDist then
+                                uniq[m] = true
+                                out[#out+1] = m
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
         return out
     end
 
     local function collectCandidatesFromSet(selectedSet, jobId, maxDist)
         if not selectedSet then return {} end
         local itemsFolder = itemsRootOrNil()
-        if not itemsFolder then return {} end
+        if not itemsFolder and not selectedSet["Log"] then return {} end
 
         local root = hrp()
         if not root then return {} end
         local origin = root.Position
         local rad = maxDist or MAX_DIST_DEFAULT
 
-        refreshOverlapFilter()
+        refreshOverlapFilter(selectedSet)
 
         local ok, parts = pcall(function()
             return WS:GetPartBoundsInRadius(origin, rad, overlapParams)
@@ -592,6 +650,11 @@ return function(C, R, UI)
                 end
             end
         end
+
+        if selectedSet["Log"] and #out == 0 then
+            return collectCandidatesFromSet_FullScan(selectedSet, jobId, maxDist)
+        end
+
         return out
     end
 
@@ -655,7 +718,7 @@ return function(C, R, UI)
         if not fire then return nil end
         local mp = mainPart(fire)
         local cf = (mp and mp.CFrame) or fire:GetPivot()
-        return cf.Position + Vector3.new(0, ORB_HEIGHT + 10, 0)
+        return cf.Position + Vector3.new(0, ORB_HEIGHT + 8, 0)
     end
 
     local function scrapperOrbPos()
@@ -663,7 +726,7 @@ return function(C, R, UI)
         if not scr then return nil end
         local mp = mainPart(scr)
         local cf = (mp and mp.CFrame) or scr:GetPivot()
-        return cf.Position + Vector3.new(0, ORB_HEIGHT + 10, 0)
+        return cf.Position + Vector3.new(0, ORB_HEIGHT + 8, 0)
     end
 
     local function noticeOrbPos()
@@ -854,8 +917,8 @@ return function(C, R, UI)
             end
             if rec.staged then return end
 
-            local pivot = m:GetPivot()
-            local pos = pivot and pivot.Position
+            local pivot = m:GetPivot and m:GetPivot() or nil
+            local pos = (pivot and pivot.Position) or (mainPart(m) and mainPart(m).Position) or nil
             if not pos then
                 if rec.conn then rec.conn:Disconnect() end
                 abortRestore(m, rec)
@@ -952,7 +1015,7 @@ return function(C, R, UI)
 
                 local function handleHit(result)
                     if not result or not result.Instance then return end
-                    local m = result.Instance:FindFirstAncestorOfClass("Model")
+                    local m = result.Instance:FindFirstAncestorOfClass("Model") or result.Instance
                     if not m or seen[m] then return end
                     seen[m] = true
 
@@ -1113,7 +1176,7 @@ return function(C, R, UI)
                     seen[m] = true
                     if not m.Parent then return end
                     if inflight[m] then return end
-                    if isExcludedModel(m) or hasIceBlockTag(m) then return end
+                    if isExcludedInst(m) then return end
                     if not isPreDragImportantModel(m) then return end
 
                     local mp = mainPart(m)
