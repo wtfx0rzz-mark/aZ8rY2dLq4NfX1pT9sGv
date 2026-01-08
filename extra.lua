@@ -794,10 +794,9 @@ return function(C, R, UI)
                     for i=1,#newFound do
                         local inst = newFound[i]
                         if inst and inst.Parent then
-                            if captureInst(inst) then
-                                preSet[itemKey(inst)] = true
-                                gotAny = true
-                            end
+                            captureInst(inst)
+                            preSet[itemKey(inst)] = true
+                            gotAny = true
                         end
                     end
                 end
@@ -836,8 +835,6 @@ return function(C, R, UI)
         return opened, gotAny
     end
 
-    local CHEST_LIFT_Y = 30
-
     local function openChestOnce(chest)
         if not (chest and chest.Parent) then return false end
         if EXCLUDE_NAMES[chest.Name] or isSnowChestName(chest.Name) or isHalloweenChestName(chest.Name) then
@@ -847,35 +844,9 @@ return function(C, R, UI)
 
         attemptedAt[chest] = os.clock()
 
-        local origPivot
-        do
-            local ok, cf = pcall(function() return chest:GetPivot() end)
-            if not (ok and cf) then return false end
-            origPivot = cf
-        end
-
-        local function restore()
-            if chest and chest.Parent and origPivot then
-                pcall(function() chest:PivotTo(origPivot) end)
-            end
-        end
-
-        pcall(function()
-            chest:PivotTo(origPivot * CFrame.new(0, CHEST_LIFT_Y, 0))
-        end)
-        task.wait(0.06)
-
-        if not teleportNearChest(chest) then
-            restore()
-            local notOpenWait = math.max(tonumber(C.State.ChestNotOpenWait) or 5.0, 0.0)
-            if notOpenWait > 0 then task.wait(notOpenWait) end
-            return false
-        end
-        task.wait(0.08)
-
         local pos = modelWorldPos(chest)
         if not pos then
-            restore()
+            pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
             return false
         end
 
@@ -883,28 +854,26 @@ return function(C, R, UI)
 
         local prompt = chestPrompt(chest)
         if not prompt then
-            restore()
             return false
         end
 
-        if not triggerPrompt(prompt) then
-            restore()
+        local okTrig = triggerPrompt(prompt)
+        if not okTrig then
             return false
         end
 
         local opened, gotAny = confirmAndCaptureDropsForChest(chest, preSet)
-        restore()
 
         if opened then
             pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
             local postDelay = math.max(tonumber(C.State.ChestPostOpenDelay) or 0.5, 0.0)
             if postDelay > 0 then task.wait(postDelay) end
             return true, gotAny
+        else
+            local notOpenWait = math.max(tonumber(C.State.ChestNotOpenWait) or 5.0, 0.0)
+            if notOpenWait > 0 then task.wait(notOpenWait) end
+            return false
         end
-
-        local notOpenWait = math.max(tonumber(C.State.ChestNotOpenWait) or 5.0, 0.0)
-        if notOpenWait > 0 then task.wait(notOpenWait) end
-        return false
     end
 
     local autoOn = false
@@ -920,6 +889,13 @@ return function(C, R, UI)
                 if not root then task.wait(0.25) continue end
                 local chest = nearestUnopenedChest()
                 if not chest then task.wait(0.35) continue end
+                local okTp = teleportNearChest(chest)
+                if not okTp then
+                    attemptedAt[chest] = os.clock()
+                    task.wait(0.25)
+                    continue
+                end
+                task.wait(0.10)
                 local okOpen = openChestOnce(chest)
                 if not okOpen then
                     task.wait(0.10)
