@@ -275,16 +275,23 @@ return function(C, R, UI)
     if C.State.Toggles.ChestRun == nil then
         C.State.Toggles.ChestRun = false
     end
+    if C.State.Toggles.GrabNearby == nil then
+        C.State.Toggles.GrabNearby = false
+    end
 
-    local CHEST_POST_OPEN_DELAY = 0
-    local CHEST_NOT_OPEN_WAIT = 2
-    local CHEST_OPEN_CONFIRM_TIMEOUT = 4
-    local CHEST_CAPTURE_WINDOW = 0.5
+    local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = 0.12
+    local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = 4.0
+    local CHEST_COLLECT_WINDOW_SECONDS = 0.75
+    local CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT = 0.05
+    local CHEST_RETRY_WAIT_SECONDS = 2.0
+    local CHEST_CONFIRM_POLL_INTERVAL = 0.10
+    local CHEST_COLLECT_POLL_INTERVAL = 0.08
 
-    C.State.ChestPostOpenDelay = CHEST_POST_OPEN_DELAY
-    C.State.ChestNotOpenWait = CHEST_NOT_OPEN_WAIT
-    C.State.ChestOpenConfirmTimeout = CHEST_OPEN_CONFIRM_TIMEOUT
-    C.State.ChestCaptureWindow = CHEST_CAPTURE_WINDOW
+    C.State.ChestWaitAfterTeleportBeforeOpen = CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN
+    C.State.ChestOpenConfirmTimeoutSeconds = CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS
+    C.State.ChestCollectWindowSeconds = CHEST_COLLECT_WINDOW_SECONDS
+    C.State.ChestDelayAfterCollectionBeforeNext = CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT
+    C.State.ChestRetryWaitSeconds = CHEST_RETRY_WAIT_SECONDS
 
     if not tonumber(C.State.ChestCaptureRadius) then
         C.State.ChestCaptureRadius = 22.00
@@ -806,42 +813,41 @@ return function(C, R, UI)
         return (os.clock() - t) <= windowSec
     end
 
+    local function captureAllNear(pos, rad, maxCount)
+        local cands = getCandidatesNear(pos, rad)
+        local cap = 0
+        for i=1,#cands do
+            local inst = cands[i]
+            if inst and inst.Parent and (not isChestInst(inst)) and (not CapturedSet[inst]) then
+                if captureInst(inst) then
+                    cap += 1
+                    if maxCount and cap >= maxCount then break end
+                end
+            end
+        end
+        return cap
+    end
+
     local function confirmAndCaptureDropsForChest(chest, preSet)
         local opened = false
         local gotAny = false
         local t0 = os.clock()
 
-        local confirmTimeout = math.max(CHEST_OPEN_CONFIRM_TIMEOUT, 0.5)
+        local confirmTimeout = math.max(CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS, 0.5)
         local spawnRadius = math.max(tonumber(C.State.ChestSpawnRadius) or 10.0, 2.0)
         local captureRadius = math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, spawnRadius)
-        local captureWindow = math.max(CHEST_CAPTURE_WINDOW, 0.05)
+        local captureWindow = math.max(CHEST_COLLECT_WINDOW_SECONDS, 0.05)
 
-        local function scanNewNear(chestPos, rad, doCapture)
+        local function sawNewSinceSnapshot(chestPos, rad)
             local cands = getCandidatesNear(chestPos, rad)
-            local newFound = {}
             for i=1,#cands do
                 local inst = cands[i]
-                if inst and inst.Parent then
-                    if not isChestInst(inst) then
-                        local k = itemKey(inst)
-                        if not preSet[k] then
-                            newFound[#newFound+1] = inst
-                        end
+                if inst and inst.Parent and (not isChestInst(inst)) then
+                    local k = itemKey(inst)
+                    if not preSet[k] then
+                        return true
                     end
                 end
-            end
-            if #newFound > 0 then
-                if doCapture then
-                    for i=1,#newFound do
-                        local inst = newFound[i]
-                        if inst and inst.Parent then
-                            captureInst(inst)
-                            preSet[itemKey(inst)] = true
-                            gotAny = true
-                        end
-                    end
-                end
-                return true
             end
             return false
         end
@@ -849,7 +855,7 @@ return function(C, R, UI)
         while alive and chest and chest.Parent and (os.clock() - t0) <= confirmTimeout do
             local pos = modelWorldPos(chest)
             if pos then
-                if scanNewNear(pos, spawnRadius, true) then
+                if sawNewSinceSnapshot(pos, spawnRadius) then
                     opened = true
                     break
                 end
@@ -859,7 +865,7 @@ return function(C, R, UI)
                 opened = true
                 break
             end
-            task.wait(0.10)
+            task.wait(CHEST_CONFIRM_POLL_INTERVAL)
         end
 
         if opened and chest and chest.Parent then
@@ -867,10 +873,17 @@ return function(C, R, UI)
             while alive and chest and chest.Parent and os.clock() <= tEnd do
                 local pos = modelWorldPos(chest)
                 if pos then
-                    scanNewNear(pos, captureRadius, true)
+                    local cap = captureAllNear(pos, captureRadius)
+                    if cap > 0 then gotAny = true end
                 end
-                task.wait(0.08)
+                task.wait(CHEST_COLLECT_POLL_INTERVAL)
             end
+            local pos = modelWorldPos(chest)
+            if pos then
+                local cap = captureAllNear(pos, captureRadius)
+                if cap > 0 then gotAny = true end
+            end
+            task.wait(0.05)
         end
 
         return opened, gotAny
@@ -895,6 +908,11 @@ return function(C, R, UI)
 
         local prompt = findChestPromptPreferred(chest)
         if not prompt then
+            local cap = captureAllNear(pos, tonumber(C.State.ChestCaptureRadius) or 22.0)
+            if cap > 0 then
+                pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
+                return true, true
+            end
             return false
         end
 
@@ -1006,7 +1024,7 @@ return function(C, R, UI)
         if #Tracked == 0 then return nil end
 
         local best, bestD = nil, math.huge
-        local skipWindow = math.max(CHEST_NOT_OPEN_WAIT, 1.0)
+        local skipWindow = math.max(CHEST_RETRY_WAIT_SECONDS, 1.0)
         local rpos = root.Position
 
         for i=1,#Tracked do
@@ -1072,14 +1090,17 @@ return function(C, R, UI)
                     continue
                 end
 
-                task.wait(0.10)
+                local waitBeforeOpen = tonumber(C.State.ChestWaitAfterTeleportBeforeOpen) or CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN
+                if waitBeforeOpen > 0 then task.wait(waitBeforeOpen) end
 
                 local okOpen = openChestOnce(chest)
                 if okOpen then
                     removeTrackedChest(chest)
-                    if CHEST_POST_OPEN_DELAY > 0 then task.wait(CHEST_POST_OPEN_DELAY) end
+                    local postDelay = tonumber(C.State.ChestDelayAfterCollectionBeforeNext) or CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT
+                    if postDelay > 0 then task.wait(postDelay) end
                 else
-                    if CHEST_NOT_OPEN_WAIT > 0 then task.wait(CHEST_NOT_OPEN_WAIT) end
+                    local retryWait = tonumber(C.State.ChestRetryWaitSeconds) or CHEST_RETRY_WAIT_SECONDS
+                    if retryWait > 0 then task.wait(retryWait) end
                 end
             end
             runner = nil
@@ -1089,6 +1110,34 @@ return function(C, R, UI)
     local function stopRun()
         runOn = false
         C.State.Toggles.ChestRun = false
+    end
+
+    local grabOn = false
+    local grabLoop = nil
+    local NEARBY_GRAB_RADIUS_STUDS = 10.0
+    local NEARBY_GRAB_INTERVAL_SECONDS = 0.35
+    local NEARBY_GRAB_MAX_PER_TICK = 80
+
+    local function startGrabNearby()
+        if grabOn then return end
+        grabOn = true
+        C.State.Toggles.GrabNearby = true
+        if grabLoop then return end
+        grabLoop = task.spawn(function()
+            while alive and grabOn do
+                local root = hrp()
+                if root then
+                    captureAllNear(root.Position, NEARBY_GRAB_RADIUS_STUDS, NEARBY_GRAB_MAX_PER_TICK)
+                end
+                task.wait(NEARBY_GRAB_INTERVAL_SECONDS)
+            end
+            grabLoop = nil
+        end)
+    end
+
+    local function stopGrabNearby()
+        grabOn = false
+        C.State.Toggles.GrabNearby = false
     end
 
     ExtraTab:Section({ Title = "Chests" })
@@ -1121,13 +1170,6 @@ return function(C, R, UI)
         end
     })
 
-    ExtraTab:Button({
-        Title = "Drop Captured Items",
-        Callback = function()
-            releaseAllCaptured()
-        end
-    })
-
     ExtraTab:Slider({
         Title = "Capture radius (studs)",
         Min = 6,
@@ -1156,6 +1198,29 @@ return function(C, R, UI)
         end
     })
 
+    ExtraTab:Section({ Title = "Nearby Items" })
+
+    ExtraTab:Button({
+        Title = "Start Grab Nearby (10 studs)",
+        Callback = function()
+            startGrabNearby()
+        end
+    })
+
+    ExtraTab:Button({
+        Title = "Stop Grab Nearby",
+        Callback = function()
+            stopGrabNearby()
+        end
+    })
+
+    ExtraTab:Button({
+        Title = "Drop All Captured Items",
+        Callback = function()
+            releaseAllCaptured()
+        end
+    })
+
     bind(lp.CharacterAdded:Connect(function()
         task.wait(0.25)
         refreshOverlapFilter()
@@ -1171,6 +1236,7 @@ return function(C, R, UI)
         alive = false
         stopRun()
         stopTracking()
+        stopGrabNearby()
         releaseAllCaptured()
         for i=1,#conns do
             local c = conns[i]
@@ -1186,5 +1252,9 @@ return function(C, R, UI)
         if C.State.Toggles.ChestRun then
             startRun()
         end
+    end
+
+    if C.State.Toggles.GrabNearby then
+        startGrabNearby()
     end
 end
