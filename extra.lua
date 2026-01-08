@@ -1,3 +1,4 @@
+-- extra.lua
 return function(C, R, UI)
     local function run()
         C  = C  or _G.C
@@ -7,7 +8,6 @@ return function(C, R, UI)
         local Players  = Services.Players or game:GetService("Players")
         local RS       = Services.RS or game:GetService("ReplicatedStorage")
         local WS       = Services.WS or game:GetService("Workspace")
-        local Run      = Services.Run or game:GetService("RunService")
         local VIM      = Services.VIM or game:GetService("VirtualInputManager")
         local UIS      = Services.UIS or game:GetService("UserInputService")
 
@@ -20,27 +20,24 @@ return function(C, R, UI)
 
         C.Config = C.Config or {}
         local CFG = C.Config
-        CFG.CHEST_SCAN_INTERVAL     = CFG.CHEST_SCAN_INTERVAL     or 0.20
-        CFG.CHEST_PRE_RADIUS        = CFG.CHEST_PRE_RADIUS        or 22
-        CFG.CHEST_CAPTURE_RADIUS    = CFG.CHEST_CAPTURE_RADIUS    or 26
-        CFG.CHEST_POST_OPEN_DELAY   = CFG.CHEST_POST_OPEN_DELAY   or 0.50
-        CFG.CHEST_NOT_OPEN_WAIT     = CFG.CHEST_NOT_OPEN_WAIT     or 5.00
-        CFG.CHEST_TELEPORT_UP       = CFG.CHEST_TELEPORT_UP       or 3.0
-        CFG.CHEST_TELEPORT_BACK     = CFG.CHEST_TELEPORT_BACK     or 2.5
-        CFG.DROP_SPREAD             = CFG.DROP_SPREAD             or 7.0
-        CFG.FLOAT_FIX_DELAY         = CFG.FLOAT_FIX_DELAY         or 5.0
-        CFG.FLOAT_FIX_RADIUS        = CFG.FLOAT_FIX_RADIUS        or 30.0
+        CFG.CHEST_SCAN_INTERVAL   = CFG.CHEST_SCAN_INTERVAL   or 0.20
+        CFG.CHEST_PRE_RADIUS      = CFG.CHEST_PRE_RADIUS      or 22
+        CFG.CHEST_CAPTURE_RADIUS  = CFG.CHEST_CAPTURE_RADIUS  or 26
+        CFG.CHEST_POST_OPEN_DELAY = CFG.CHEST_POST_OPEN_DELAY or 0.50
+        CFG.CHEST_NOT_OPEN_WAIT   = CFG.CHEST_NOT_OPEN_WAIT   or 5.00
+        CFG.CHEST_TELEPORT_UP     = CFG.CHEST_TELEPORT_UP     or 3.0
+        CFG.CHEST_TELEPORT_BACK   = CFG.CHEST_TELEPORT_BACK   or 2.5
+        CFG.DROP_SPREAD           = CFG.DROP_SPREAD           or 7.0
+        CFG.FLOAT_FIX_DELAY       = CFG.FLOAT_FIX_DELAY       or 5.0
+        CFG.FLOAT_FIX_RADIUS      = CFG.FLOAT_FIX_RADIUS      or 30.0
 
         if ST.AutoOpenChests == nil then ST.AutoOpenChests = false end
         if ST.DebugLog == nil then ST.DebugLog = true end
         if ST.TreatPromptGoneAsOpened == nil then ST.TreatPromptGoneAsOpened = false end
         if ST.ScanDescendantsForItems == nil then ST.ScanDescendantsForItems = false end
-        if ST.LogAttributeDiffs == nil then ST.LogAttributeDiffs = true end
-        if ST.LogPromptSignals == nil then ST.LogPromptSignals = true end
-
+        if ST._chestToken == nil then ST._chestToken = 0 end
         ST.Captured = ST.Captured or {}
         ST.CapturedSet = ST.CapturedSet or {}
-        ST._chestToken = ST._chestToken or 0
 
         local UID_OPEN_KEY = tostring(lp.UserId) .. "Opened"
 
@@ -59,20 +56,18 @@ return function(C, R, UI)
             frame.Active = true
             local dragging = false
             local dragStart, startPos
-            local function began(input)
+            (handle or frame).InputBegan:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                     dragging = true
                     dragStart = input.Position
                     startPos = frame.Position
                 end
-            end
-            local function ended(input)
+            end)
+            (handle or frame).InputEnded:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                     dragging = false
                 end
-            end
-            (handle or frame).InputBegan:Connect(began)
-            (handle or frame).InputEnded:Connect(ended)
+            end)
             UIS.InputChanged:Connect(function(input)
                 if not dragging then return end
                 if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
@@ -120,7 +115,6 @@ return function(C, R, UI)
             titleLabel.TextSize = 14
             titleLabel.Font = Enum.Font.SourceSansBold
             titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-            titleLabel.TextWrapped = true
 
             local minimizeButton = Instance.new("TextButton")
             minimizeButton.Parent = titleBar
@@ -228,9 +222,7 @@ return function(C, R, UI)
             copyButton.MouseButton1Click:Connect(function()
                 local txt = consoleText.Text or ""
                 local ok = false
-                if typeof(setclipboard) == "function" then
-                    ok = pcall(function() setclipboard(txt) end)
-                end
+                if typeof(setclipboard) == "function" then ok = pcall(function() setclipboard(txt) end) end
                 if not ok then
                     consoleText.Text = (consoleText.Text or "") .. "\n[" .. nowStr() .. "] setclipboard not available\n"
                 end
@@ -241,9 +233,7 @@ return function(C, R, UI)
             local function append(line)
                 consoleText.Text = (consoleText.Text or "") .. line .. "\n"
                 task.defer(function()
-                    pcall(function()
-                        consoleArea.CanvasPosition = Vector2.new(0, consoleText.TextBounds.Y + 999)
-                    end)
+                    pcall(function() consoleArea.CanvasPosition = Vector2.new(0, consoleText.TextBounds.Y + 999) end)
                 end)
             end
 
@@ -255,60 +245,12 @@ return function(C, R, UI)
         end
 
         local function logf(msg)
-            if ST.DebugLog and ST.Logger and ST.Logger.Append then
+            if ST.Logger and ST.Logger.Append then
                 ST.Logger.Append("[" .. nowStr() .. "] " .. tostring(msg))
             end
         end
 
-        local Tabs = (UI and UI.Tabs) or {}
-        local tab = Tabs.Extra or Tabs.EXTRAS or Tabs.Chest or Tabs.Chests or Tabs.Auto or Tabs.Main
-        if not tab then
-            for k, v in pairs(Tabs) do
-                if type(k) == "string" and type(v) == "table" then
-                    local lk = string.lower(k)
-                    if lk:find("extra") or lk:find("chest") then
-                        tab = v
-                        break
-                    end
-                end
-            end
-        end
-
-        local function addToggle(label, default, cb)
-            if not tab then return false end
-            local ok = false
-            if type(tab.Toggle) == "function" then
-                ok = pcall(function() tab:Toggle(label, { Default = default, Callback = cb }) end)
-                if ok then return true end
-            end
-            if type(tab.AddToggle) == "function" then
-                ok = pcall(function() tab:AddToggle(label, default, cb) end)
-                if ok then return true end
-            end
-            if type(tab.CreateToggle) == "function" then
-                ok = pcall(function() tab:CreateToggle(label, default, cb) end)
-                if ok then return true end
-            end
-            return false
-        end
-
-        local function addButton(label, cb)
-            if not tab then return false end
-            local ok = false
-            if type(tab.Button) == "function" then
-                ok = pcall(function() tab:Button(label, cb) end)
-                if ok then return true end
-            end
-            if type(tab.AddButton) == "function" then
-                ok = pcall(function() tab:AddButton(label, cb) end)
-                if ok then return true end
-            end
-            if type(tab.CreateButton) == "function" then
-                ok = pcall(function() tab:CreateButton(label, cb) end)
-                if ok then return true end
-            end
-            return false
-        end
+        logf("logger ready")
 
         local function hrp()
             local ch = lp.Character or lp.CharacterAdded:Wait()
@@ -325,10 +267,7 @@ return function(C, R, UI)
             if x:IsA("Model") then
                 if x.PrimaryPart and x.PrimaryPart:IsA("BasePart") then return x.PrimaryPart end
                 local p = x:FindFirstChildWhichIsA("BasePart", true)
-                if p then
-                    pcall(function() x.PrimaryPart = p end)
-                    return p
-                end
+                if p then pcall(function() x.PrimaryPart = p end) return p end
             end
             return nil
         end
@@ -347,10 +286,7 @@ return function(C, R, UI)
 
         local function setAnchored(x, v)
             if not x or not x.Parent then return end
-            if x:IsA("BasePart") then
-                pcall(function() x.Anchored = v end)
-                return
-            end
+            if x:IsA("BasePart") then pcall(function() x.Anchored = v end) return end
             if x:IsA("Model") then
                 for _, d in ipairs(x:GetDescendants()) do
                     if d:IsA("BasePart") then pcall(function() d.Anchored = v end) end
@@ -360,10 +296,7 @@ return function(C, R, UI)
 
         local function setCollide(x, v)
             if not x or not x.Parent then return end
-            if x:IsA("BasePart") then
-                pcall(function() x.CanCollide = v end)
-                return
-            end
+            if x:IsA("BasePart") then pcall(function() x.CanCollide = v end) return end
             if x:IsA("Model") then
                 for _, d in ipairs(x:GetDescendants()) do
                     if d:IsA("BasePart") then pcall(function() d.CanCollide = v end) end
@@ -382,15 +315,11 @@ return function(C, R, UI)
 
         local function moveTo(x, cf)
             if not x or not x.Parent then return false end
-            if x:IsA("BasePart") then
-                local ok = pcall(function() x.CFrame = cf end)
-                return ok
-            end
+            if x:IsA("BasePart") then return pcall(function() x.CFrame = cf end) end
             if x:IsA("Model") then
                 local pp = getRootPart(x)
                 if not pp then return false end
-                local ok = pcall(function() x:SetPrimaryPartCFrame(cf) end)
-                return ok
+                return pcall(function() x:SetPrimaryPartCFrame(cf) end)
             end
             return false
         end
@@ -422,7 +351,7 @@ return function(C, R, UI)
         end
 
         local StartDragRE = findRemoteEvent({ "RequestStartDraggingItem", "StartDraggingItem", "StartDragging", "RequestDragItem", "RequestDrag" })
-        local StopDragRE  = findRemoteEvent({ "StopDraggingItem", "RequestStopDraggingItem", "StopDragging", "RequestStopDragging", "RequestStopDragItem", "RequestStopDrag" })
+        local StopDragRE  = findRemoteEvent({ "StopDraggingItem", "RequestStopDraggingItem", "StopDragging", "RequestStopDragging", "RequestStopDragItem", "RequestStopDrag", "StopDraggingItemRemote" })
 
         local function startDragOnce(item)
             if not item or not item.Parent then return end
@@ -444,8 +373,6 @@ return function(C, R, UI)
                 if StopDragRE then
                     local ok, err = pcall(function() StopDragRE:FireServer(item) end)
                     if i == 1 then logf("StopDrag item=" .. (item.Name or "?") .. " ok=" .. tostring(ok) .. (err and (" err=" .. tostring(err)) or "")) end
-                else
-                    if i == 1 then logf("StopDragRE=nil item=" .. (item.Name or "?")) end
                 end
                 task.wait(stepDelay)
             end
@@ -493,7 +420,7 @@ return function(C, R, UI)
                     end
                 end
             end
-            logf("snapshotNear r=" .. tostring(radius) .. " count=" .. tostring(c) .. " mode=" .. (ST.ScanDescendantsForItems and "desc" or "children"))
+            logf("snapshotNear r=" .. tostring(radius) .. " count=" .. tostring(c))
             return set
         end
 
@@ -560,7 +487,7 @@ return function(C, R, UI)
 
                     keep[#keep + 1] = item
                     keepSet[item] = true
-                    logf("DROP item=" .. (item.Name or "?") .. " -> " .. string.format("(%.1f,%.1f,%.1f)", placePos.X, placePos.Y, placePos.Z))
+                    logf("DROP item=" .. (item.Name or "?"))
                 end
             end
 
@@ -604,28 +531,6 @@ return function(C, R, UI)
             end)
         end
 
-        local function promptInfo(prompt)
-            if not prompt then return "prompt=nil" end
-            local parent = prompt.Parent
-            return table.concat({
-                "prompt=" .. tostring(prompt.Name),
-                "enabled=" .. tostring(prompt.Enabled),
-                "hold=" .. tostring(prompt.HoldDuration),
-                "los=" .. tostring(prompt.RequiresLineOfSight),
-                "maxDist=" .. tostring(prompt.MaxActivationDistance),
-                "parent=" .. tostring(parent and parent.Name or "nil"),
-            }, " ")
-        end
-
-        local function distToPrompt(prompt)
-            if not prompt or not prompt.Parent then return nil end
-            local h = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
-            if not h then return nil end
-            local p = (prompt.Parent:IsA("BasePart") and prompt.Parent.Position) or getPos(prompt.Parent)
-            if not p then return nil end
-            return (h.Position - p).Magnitude
-        end
-
         local function tryTriggerPrompt(prompt)
             if not prompt or not prompt.Parent then return false, "no_prompt" end
             if typeof(fireproximityprompt) == "function" then
@@ -657,30 +562,6 @@ return function(C, R, UI)
             pcall(function() h.CFrame = CFrame.new(target, pos) end)
         end
 
-        local function copyAttrs(inst)
-            local t = {}
-            if not inst then return t end
-            local ok, attrs = pcall(function() return inst:GetAttributes() end)
-            if ok and type(attrs) == "table" then
-                for k, v in pairs(attrs) do t[k] = v end
-            end
-            return t
-        end
-
-        local function diffAttrs(a, b)
-            local out = {}
-            local seen = {}
-            for k, v in pairs(a) do
-                seen[k] = true
-                if b[k] ~= v then out[#out + 1] = { k = k, from = v, to = b[k] } end
-            end
-            for k, v in pairs(b) do
-                if not seen[k] then out[#out + 1] = { k = k, from = nil, to = v } end
-            end
-            table.sort(out, function(x, y) return tostring(x.k) < tostring(y.k) end)
-            return out
-        end
-
         local function processChest(chest)
             if not chest or not chest.Parent then return false end
             if chest:GetAttribute(UID_OPEN_KEY) == true then return false end
@@ -691,82 +572,35 @@ return function(C, R, UI)
                 return false
             end
 
-            local h = hrp()
-            local dist = (h.Position - cpos).Magnitude
-
-            logf("CHEST begin name=" .. (chest.Name or "?") .. " dist=" .. string.format("%.1f", dist) .. " path=" .. safePath(chest))
-
+            logf("CHEST begin name=" .. (chest.Name or "?") .. " path=" .. safePath(chest))
             teleportNear(cpos)
             task.wait(0.10)
 
             local prompt = findProxPrompt(chest)
-            local pd = distToPrompt(prompt)
-            logf("CHEST prompt " .. promptInfo(prompt) .. (pd and (" distToPrompt=" .. string.format("%.1f", pd)) or ""))
+            logf("CHEST prompt=" .. tostring(prompt ~= nil))
 
             local pre = snapshotNear(cpos, CFG.CHEST_PRE_RADIUS)
-            local attrsBefore = ST.LogAttributeDiffs and copyAttrs(chest) or nil
 
+            local opened = false
+            local capturedAny = false
             local promptWasPresent = (prompt ~= nil)
             local promptWentNilAt = nil
             local tries = 0
             local lastTry = 0
             local t0 = os.clock()
-            local capturedAny = false
-            local opened = false
-
-            local conns = {}
-            local function addConn(sig, fn)
-                local ok, c = pcall(function() return sig:Connect(fn) end)
-                if ok and c then table.insert(conns, c) end
-            end
-            local function disconnectAll()
-                for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
-            end
-
-            if ST.LogPromptSignals and prompt then
-                addConn(prompt:GetPropertyChangedSignal("Enabled"), function()
-                    logf("PROMPT Enabled changed -> " .. tostring(prompt.Enabled) .. " " .. promptInfo(prompt))
-                end)
-                addConn(prompt.AncestryChanged, function(_, parent)
-                    logf("PROMPT ancestry -> parent=" .. tostring(parent and parent.Name or "nil") .. " " .. promptInfo(prompt))
-                end)
-            end
-
-            if ST.LogAttributeDiffs then
-                addConn(chest.AttributeChanged, function(attr)
-                    local v = chest:GetAttribute(attr)
-                    logf("CHEST AttributeChanged " .. tostring(attr) .. "=" .. tostring(v))
-                end)
-            end
 
             while os.clock() - t0 <= CFG.CHEST_NOT_OPEN_WAIT do
-                if not chest.Parent then
-                    logf("CHEST removed mid-loop -> opened=true")
-                    opened = true
-                    break
-                end
+                if not chest.Parent then opened = true; logf("CHEST removed -> opened") break end
 
                 if prompt and (not prompt.Parent or prompt.Enabled == false) then
                     if promptWentNilAt == nil then promptWentNilAt = os.clock() end
-                    logf("CHEST prompt invalid/disabled -> nil (" .. promptInfo(prompt) .. ")")
                     prompt = nil
+                    logf("CHEST prompt lost/disabled")
                 end
 
-                if not prompt then
+                if (not prompt) then
                     local p2 = findProxPrompt(chest)
-                    if p2 then
-                        prompt = p2
-                        local pd2 = distToPrompt(prompt)
-                        logf("CHEST prompt reacquired " .. promptInfo(prompt) .. (pd2 and (" distToPrompt=" .. string.format("%.1f", pd2)) or ""))
-                        if ST.LogPromptSignals then
-                            addConn(prompt:GetPropertyChangedSignal("Enabled"), function()
-                                logf("PROMPT Enabled changed -> " .. tostring(prompt.Enabled) .. " " .. promptInfo(prompt))
-                            end)
-                            addConn(prompt.AncestryChanged, function(_, parent)
-                                logf("PROMPT ancestry -> parent=" .. tostring(parent and parent.Name or "nil") .. " " .. promptInfo(prompt))
-                            end)
-                        end
-                    end
+                    if p2 then prompt = p2; logf("CHEST prompt reacquired") end
                 end
 
                 if prompt == nil and promptWasPresent and promptWentNilAt == nil then
@@ -777,17 +611,12 @@ return function(C, R, UI)
                     lastTry = os.clock()
                     tries += 1
                     local ok, how = tryTriggerPrompt(prompt)
-                    local pd3 = distToPrompt(prompt)
-                    logf("CHEST try#" .. tostring(tries) .. " ok=" .. tostring(ok) .. " via=" .. tostring(how) .. " " .. promptInfo(prompt) .. (pd3 and (" distToPrompt=" .. string.format("%.1f", pd3)) or ""))
+                    logf("CHEST try#" .. tostring(tries) .. " ok=" .. tostring(ok) .. " via=" .. tostring(how))
                 end
 
                 local newItems = diffNear(cpos, CFG.CHEST_CAPTURE_RADIUS, pre)
                 if #newItems > 0 then
-                    logf("CHEST diff items=" .. tostring(#newItems) .. " r=" .. tostring(CFG.CHEST_CAPTURE_RADIUS))
-                    for i = 1, math.min(#newItems, 12) do
-                        local it = newItems[i]
-                        logf("  + " .. (it and it.Name or "?") .. " path=" .. safePath(it))
-                    end
+                    logf("CHEST diff items=" .. tostring(#newItems))
                     for _, it in ipairs(newItems) do
                         if it and it.Parent and not ST.CapturedSet[it] then
                             hoverCaptured(it)
@@ -803,10 +632,9 @@ return function(C, R, UI)
                 end
 
                 if ST.TreatPromptGoneAsOpened and promptWentNilAt then
-                    local dt = os.clock() - promptWentNilAt
-                    if dt >= 0.35 then
+                    if (os.clock() - promptWentNilAt) >= 0.35 then
                         opened = true
-                        logf("CHEST opened_by_promptGone dt=" .. string.format("%.2f", dt) .. " tries=" .. tostring(tries))
+                        logf("CHEST opened_by_promptGone tries=" .. tostring(tries))
                         break
                     end
                 end
@@ -814,29 +642,14 @@ return function(C, R, UI)
                 task.wait(CFG.CHEST_SCAN_INTERVAL)
             end
 
-            disconnectAll()
-
             if opened then
                 pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
                 task.wait(CFG.CHEST_POST_OPEN_DELAY)
-                if ST.LogAttributeDiffs and attrsBefore then
-                    local after = copyAttrs(chest)
-                    local diffs = diffAttrs(attrsBefore, after)
-                    if #diffs > 0 then
-                        logf("CHEST attrs diff count=" .. tostring(#diffs))
-                        for i = 1, math.min(#diffs, 12) do
-                            local d = diffs[i]
-                            logf("  * " .. tostring(d.k) .. ": " .. tostring(d.from) .. " -> " .. tostring(d.to))
-                        end
-                    else
-                        logf("CHEST attrs diff none")
-                    end
-                end
-                logf("CHEST end OPENED marked=" .. UID_OPEN_KEY)
+                logf("CHEST end OPENED marked")
                 return true
             end
 
-            logf("CHEST end NOT_OPENED tries=" .. tostring(tries) .. " promptWasPresent=" .. tostring(promptWasPresent) .. " promptNow=" .. tostring(prompt ~= nil))
+            logf("CHEST end NOT_OPENED tries=" .. tostring(tries) .. " promptWasPresent=" .. tostring(promptWasPresent))
             return false
         end
 
@@ -845,7 +658,7 @@ return function(C, R, UI)
             if not folder then return {} end
             local out = {}
             for _, child in ipairs(folder:GetChildren()) do
-                if isChest(child) then table.insert(out, child) end
+                if isChest(child) then out[#out + 1] = child end
             end
             table.sort(out, function(a, b) return (a.Name or "") < (b.Name or "") end)
             return out
@@ -859,8 +672,7 @@ return function(C, R, UI)
                 local didAny = false
                 for _, chest in ipairs(chests) do
                     if not ST.AutoOpenChests or ST._chestToken ~= token then break end
-                    local ok = processChest(chest)
-                    if ok then didAny = true end
+                    if processChest(chest) then didAny = true end
                     task.wait(0.05)
                 end
                 if not ST.AutoOpenChests or ST._chestToken ~= token then break end
@@ -869,89 +681,89 @@ return function(C, R, UI)
             logf("WORKER stop token=" .. tostring(token))
         end
 
-        local ok1 = addToggle("Auto Open Chests", ST.AutoOpenChests, function(v)
-            ST.AutoOpenChests = (v == true)
-            ST._chestToken = (ST._chestToken or 0) + 1
-            logf("TOGGLE AutoOpenChests=" .. tostring(ST.AutoOpenChests) .. " token=" .. tostring(ST._chestToken))
-            if ST.AutoOpenChests then
-                local token = ST._chestToken
-                task.spawn(function() chestWorker(token) end)
+        -- SAFE WindUI attach (cannot break tabs): defer + no iteration + all pcall.
+        local function attachWindUI()
+            local tries = 0
+            while tries < 80 do
+                tries += 1
+                local tabs = UI and UI.Tabs
+                local tab = nil
+                if type(tabs) == "table" then
+                    tab = tabs.Extra or tabs.Extras or tabs.Chest or tabs.Chests
+                end
+                if tab then
+                    local function addToggle(label, default, cb)
+                        local ok = false
+                        if type(tab.Toggle) == "function" then
+                            ok = pcall(function() tab:Toggle(label, { Default = default, Callback = cb }) end)
+                            if ok then return true end
+                            ok = pcall(function() tab:Toggle(label, default, cb) end)
+                            if ok then return true end
+                        end
+                        if type(tab.AddToggle) == "function" then
+                            ok = pcall(function() tab:AddToggle(label, default, cb) end)
+                            if ok then return true end
+                        end
+                        if type(tab.CreateToggle) == "function" then
+                            ok = pcall(function() tab:CreateToggle(label, default, cb) end)
+                            if ok then return true end
+                        end
+                        return false
+                    end
+
+                    local function addButton(label, cb)
+                        local ok = false
+                        if type(tab.Button) == "function" then
+                            ok = pcall(function() tab:Button(label, cb) end)
+                            if ok then return true end
+                        end
+                        if type(tab.AddButton) == "function" then
+                            ok = pcall(function() tab:AddButton(label, cb) end)
+                            if ok then return true end
+                        end
+                        if type(tab.CreateButton) == "function" then
+                            ok = pcall(function() tab:CreateButton(label, cb) end)
+                            if ok then return true end
+                        end
+                        return false
+                    end
+
+                    local okToggle = addToggle("Auto Open Chests", ST.AutoOpenChests, function(v)
+                        ST.AutoOpenChests = (v == true)
+                        ST._chestToken = (ST._chestToken or 0) + 1
+                        logf("TOGGLE AutoOpenChests=" .. tostring(ST.AutoOpenChests) .. " token=" .. tostring(ST._chestToken))
+                        if ST.AutoOpenChests then
+                            local token = ST._chestToken
+                            task.spawn(function() chestWorker(token) end)
+                        end
+                    end)
+
+                    local okBtn = addButton("Drop Captured Items", function()
+                        dropCaptured()
+                    end)
+
+                    logf("WindUI attach ok toggle=" .. tostring(okToggle) .. " button=" .. tostring(okBtn))
+                    return
+                end
+                task.wait(0.15)
             end
-        end)
-
-        local ok2 = addToggle("Debug Log", ST.DebugLog, function(v)
-            ST.DebugLog = (v == true)
-            logf("TOGGLE DebugLog=" .. tostring(ST.DebugLog))
-        end)
-
-        local ok3 = addToggle("Treat Prompt Gone As Opened", ST.TreatPromptGoneAsOpened, function(v)
-            ST.TreatPromptGoneAsOpened = (v == true)
-            logf("TOGGLE TreatPromptGoneAsOpened=" .. tostring(ST.TreatPromptGoneAsOpened))
-        end)
-
-        local ok4 = addToggle("Scan Items Descendants", ST.ScanDescendantsForItems, function(v)
-            ST.ScanDescendantsForItems = (v == true)
-            logf("TOGGLE ScanDescendantsForItems=" .. tostring(ST.ScanDescendantsForItems))
-        end)
-
-        local ok5 = addToggle("Log Chest Attribute Diffs", ST.LogAttributeDiffs, function(v)
-            ST.LogAttributeDiffs = (v == true)
-            logf("TOGGLE LogAttributeDiffs=" .. tostring(ST.LogAttributeDiffs))
-        end)
-
-        local ok6 = addToggle("Log Prompt Signals", ST.LogPromptSignals, function(v)
-            ST.LogPromptSignals = (v == true)
-            logf("TOGGLE LogPromptSignals=" .. tostring(ST.LogPromptSignals))
-        end)
-
-        addButton("Drop Captured Items", function()
-            dropCaptured()
-        end)
-
-        addButton("Log Nearby Prompt Info", function()
-            local h = hrp()
-            local chests = listChests()
-            logf("NEARBY hrp=" .. string.format("(%.1f,%.1f,%.1f)", h.Position.X, h.Position.Y, h.Position.Z) .. " chests=" .. tostring(#chests))
-            for i = 1, math.min(#chests, 10) do
-                local chest = chests[i]
-                local cpos = getPos(chest)
-                local dist = (cpos and (h.Position - cpos).Magnitude) or -1
-                local prompt = findProxPrompt(chest)
-                local pd = distToPrompt(prompt)
-                logf("  chest=" .. (chest.Name or "?") .. " dist=" .. string.format("%.1f", dist) .. " " .. promptInfo(prompt) .. (pd and (" distToPrompt=" .. string.format("%.1f", pd)) or ""))
-            end
-        end)
-
-        if not tab then
-            logf("TAB NOT FOUND: UI.Tabs has no Extra/Chest/Auto/Main match; controls not added")
-        else
-            logf("TAB OK: controls added=" .. tostring(ok1 and ok2 and ok3 and ok4 and ok5 and ok6))
+            logf("WindUI attach failed: UI.Tabs.Extra not found (no crash).")
         end
 
-        logf("extra.lua loaded (logger + chest debug)")
+        task.spawn(function()
+            local ok, err = pcall(attachWindUI)
+            if not ok then logf("WindUI attach error: " .. tostring(err)) end
+        end)
+
+        logf("extra.lua loaded")
     end
 
     local ok, err = pcall(run)
     if not ok then
         warn("[extra.lua] error: " .. tostring(err))
-        local lp2 = game:GetService("Players").LocalPlayer
-        if lp2 then
-            local pg = lp2:FindFirstChild("PlayerGui")
-            if pg then
-                local g = pg:FindFirstChild("ExtraLoggerGui")
-                if g then
-                    local function tryAppend(line)
-                        local f = g:FindFirstChild("ConsoleFrame", true)
-                        if not f then return end
-                        local area = f:FindFirstChild("ConsoleArea", true)
-                        if not area then return end
-                        local txt = area:FindFirstChild("ConsoleText", true)
-                        if not txt then return end
-                        txt.Text = (txt.Text or "") .. "\n[FATAL] " .. tostring(line) .. "\n"
-                    end
-                    pcall(function() tryAppend(err) end)
-                end
-            end
+        local C2 = _G.C
+        if C2 and C2.State and C2.State.Extra and C2.State.Extra.Logger and C2.State.Extra.Logger.Append then
+            pcall(function() C2.State.Extra.Logger.Append("[FATAL] " .. tostring(err)) end)
         end
     end
 end
