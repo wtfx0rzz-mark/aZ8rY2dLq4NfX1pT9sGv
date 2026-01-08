@@ -8,6 +8,7 @@ return function(C, R, UI)
     local WS = game:GetService("Workspace")
     local PPS = game:GetService("ProximityPromptService")
     local RunService = game:GetService("RunService")
+    local UIS = game:GetService("UserInputService")
 
     local lp = C.LocalPlayer or Players.LocalPlayer
     local ExtraTab = UI.Tabs.Extra
@@ -167,7 +168,7 @@ return function(C, R, UI)
     end
 
     --=====================================================
-    -- Tiny chest logger (ring buffer, optional UI hookups)
+    -- Tiny chest logger (ring buffer + on-screen GUI window)
     --=====================================================
     local function now()
         return os.clock()
@@ -191,6 +192,10 @@ return function(C, R, UI)
         if #buf > maxN then
             table.remove(buf, 1)
         end
+        local g = C.Extra.Chest.Gui
+        if g and g.SetText then
+            g.SetText(table.concat(buf, "\n"))
+        end
     end
 
     local function logf(fmt, ...)
@@ -205,16 +210,275 @@ return function(C, R, UI)
     end
 
     local function clearLogs()
-        local buf = C.Extra.Chest.LogBuf
-        table.clear(buf)
+        table.clear(C.Extra.Chest.LogBuf)
+        local g = C.Extra.Chest.Gui
+        if g and g.SetText then
+            g.SetText("")
+        end
     end
 
     C.Extra.Chest.GetLogsText = getLogsText
     C.Extra.Chest.ClearLogs   = clearLogs
     C.Extra.Chest.Logf        = logf
 
+    local function destroyGui()
+        local g = C.Extra.Chest.Gui
+        if g and g.Destroy then pcall(g.Destroy) end
+        C.Extra.Chest.Gui = nil
+    end
+
+    local function ensureGui()
+        if C.Extra.Chest.Gui and C.Extra.Chest.Gui.Alive then
+            return C.Extra.Chest.Gui
+        end
+
+        local guiObj = { Alive = true }
+
+        local ok = pcall(function()
+            local playerGui = lp:FindFirstChildOfClass("PlayerGui") or lp:WaitForChild("PlayerGui", 10)
+            if not playerGui then return end
+
+            local existing = playerGui:FindFirstChild("ChestLogGui")
+            if existing then pcall(function() existing:Destroy() end) end
+
+            local screenGui = Instance.new("ScreenGui")
+            screenGui.Name = "ChestLogGui"
+            screenGui.ResetOnSpawn = false
+            screenGui.Parent = playerGui
+
+            local frame = Instance.new("Frame")
+            frame.Name = "Window"
+            frame.Parent = screenGui
+            frame.Size = UDim2.new(0, 420, 0, 240)
+            frame.Position = UDim2.new(0.60, -210, 0.35, -120)
+            frame.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+            frame.BorderSizePixel = 0
+            frame.Active = true
+
+            local stroke = Instance.new("UIStroke")
+            stroke.Thickness = 1
+            stroke.Color = Color3.fromRGB(60, 60, 60)
+            stroke.Parent = frame
+
+            local titleBar = Instance.new("Frame")
+            titleBar.Name = "TitleBar"
+            titleBar.Parent = frame
+            titleBar.Size = UDim2.new(1, 0, 0, 26)
+            titleBar.Position = UDim2.new(0, 0, 0, 0)
+            titleBar.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
+            titleBar.BorderSizePixel = 0
+            titleBar.Active = true
+
+            local title = Instance.new("TextLabel")
+            title.Name = "Title"
+            title.Parent = titleBar
+            title.Size = UDim2.new(1, -180, 1, 0)
+            title.Position = UDim2.new(0, 8, 0, 0)
+            title.BackgroundTransparency = 1
+            title.Text = "Chest Log"
+            title.TextXAlignment = Enum.TextXAlignment.Left
+            title.TextColor3 = Color3.fromRGB(235, 235, 235)
+            title.Font = Enum.Font.Code
+            title.TextSize = 14
+
+            local function mkBtn(name, txt, xOffset)
+                local b = Instance.new("TextButton")
+                b.Name = name
+                b.Parent = titleBar
+                b.Size = UDim2.new(0, 52, 0, 20)
+                b.Position = UDim2.new(1, xOffset, 0, 3)
+                b.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+                b.BorderSizePixel = 0
+                b.Text = txt
+                b.TextColor3 = Color3.fromRGB(235, 235, 235)
+                b.Font = Enum.Font.Code
+                b.TextSize = 12
+                local s = Instance.new("UIStroke")
+                s.Thickness = 1
+                s.Color = Color3.fromRGB(70, 70, 70)
+                s.Parent = b
+                return b
+            end
+
+            local btnMin  = mkBtn("Min",  "Min",  -168)
+            local btnCopy = mkBtn("Copy", "Copy", -112)
+            local btnClr  = mkBtn("Clear","Clear",-56)
+
+            local btnX = Instance.new("TextButton")
+            btnX.Name = "Close"
+            btnX.Parent = titleBar
+            btnX.Size = UDim2.new(0, 24, 0, 20)
+            btnX.Position = UDim2.new(1, -28, 0, 3)
+            btnX.BackgroundColor3 = Color3.fromRGB(120, 45, 45)
+            btnX.BorderSizePixel = 0
+            btnX.Text = "X"
+            btnX.TextColor3 = Color3.fromRGB(255, 255, 255)
+            btnX.Font = Enum.Font.Code
+            btnX.TextSize = 12
+            local sx = Instance.new("UIStroke")
+            sx.Thickness = 1
+            sx.Color = Color3.fromRGB(160, 70, 70)
+            sx.Parent = btnX
+
+            local body = Instance.new("Frame")
+            body.Name = "Body"
+            body.Parent = frame
+            body.Size = UDim2.new(1, -12, 1, -38)
+            body.Position = UDim2.new(0, 6, 0, 32)
+            body.BackgroundColor3 = Color3.fromRGB(26, 26, 26)
+            body.BorderSizePixel = 0
+
+            local bodyStroke = Instance.new("UIStroke")
+            bodyStroke.Thickness = 1
+            bodyStroke.Color = Color3.fromRGB(60, 60, 60)
+            bodyStroke.Parent = body
+
+            local box = Instance.new("TextBox")
+            box.Name = "LogBox"
+            box.Parent = body
+            box.Size = UDim2.new(1, -8, 1, -8)
+            box.Position = UDim2.new(0, 4, 0, 4)
+            box.BackgroundTransparency = 1
+            box.TextColor3 = Color3.fromRGB(220, 220, 220)
+            box.TextXAlignment = Enum.TextXAlignment.Left
+            box.TextYAlignment = Enum.TextYAlignment.Top
+            box.Font = Enum.Font.Code
+            box.TextSize = 12
+            box.ClearTextOnFocus = false
+            box.MultiLine = true
+            box.TextEditable = true
+            box.Text = ""
+
+            local resizeHandle = Instance.new("Frame")
+            resizeHandle.Name = "ResizeHandle"
+            resizeHandle.Parent = frame
+            resizeHandle.Size = UDim2.new(0, 14, 0, 14)
+            resizeHandle.Position = UDim2.new(1, -14, 1, -14)
+            resizeHandle.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+            resizeHandle.BorderSizePixel = 0
+            resizeHandle.Active = true
+
+            local resizeStroke = Instance.new("UIStroke")
+            resizeStroke.Thickness = 1
+            resizeStroke.Color = Color3.fromRGB(90, 90, 90)
+            resizeStroke.Parent = resizeHandle
+
+            local minimized = false
+            local prevSize = frame.Size
+
+            local dragOn = false
+            local dragStart
+            local dragPos
+
+            titleBar.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    dragOn = true
+                    dragStart = input.Position
+                    dragPos = frame.Position
+                    input.Changed:Connect(function()
+                        if input.UserInputState == Enum.UserInputState.End then
+                            dragOn = false
+                        end
+                    end)
+                end
+            end)
+
+            UIS.InputChanged:Connect(function(input)
+                if dragOn and input.UserInputType == Enum.UserInputType.MouseMovement then
+                    local delta = input.Position - dragStart
+                    frame.Position = UDim2.new(dragPos.X.Scale, dragPos.X.Offset + delta.X, dragPos.Y.Scale, dragPos.Y.Offset + delta.Y)
+                end
+            end)
+
+            local resizing = false
+            local rsStart
+            local rsSize
+
+            resizeHandle.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    resizing = true
+                    rsStart = input.Position
+                    rsSize = frame.AbsoluteSize
+                    input.Changed:Connect(function()
+                        if input.UserInputState == Enum.UserInputState.End then
+                            resizing = false
+                        end
+                    end)
+                end
+            end)
+
+            UIS.InputChanged:Connect(function(input)
+                if resizing and input.UserInputType == Enum.UserInputType.MouseMovement then
+                    local delta = input.Position - rsStart
+                    local w = math.max(260, rsSize.X + delta.X)
+                    local h = math.max(120, rsSize.Y + delta.Y)
+                    frame.Size = UDim2.new(0, w, 0, h)
+                end
+            end)
+
+            btnMin.MouseButton1Click:Connect(function()
+                minimized = not minimized
+                if minimized then
+                    prevSize = frame.Size
+                    body.Visible = false
+                    resizeHandle.Visible = false
+                    frame.Size = UDim2.new(0, frame.AbsoluteSize.X, 0, 26)
+                else
+                    body.Visible = true
+                    resizeHandle.Visible = true
+                    frame.Size = prevSize
+                end
+            end)
+
+            btnCopy.MouseButton1Click:Connect(function()
+                local txt = getLogsText()
+                if typeof(setclipboard) == "function" then
+                    pcall(function() setclipboard(txt) end)
+                else
+                    box.Text = txt
+                    pcall(function() box:CaptureFocus() end)
+                end
+            end)
+
+            btnClr.MouseButton1Click:Connect(function()
+                clearLogs()
+            end)
+
+            btnX.MouseButton1Click:Connect(function()
+                pcall(function() screenGui:Destroy() end)
+                guiObj.Alive = false
+            end)
+
+            guiObj.SetText = function(t)
+                if not guiObj.Alive then return end
+                if not screenGui.Parent then return end
+                box.Text = t or ""
+                box.CursorPosition = #box.Text + 1
+            end
+
+            guiObj.Destroy = function()
+                guiObj.Alive = false
+                if screenGui and screenGui.Parent then
+                    pcall(function() screenGui:Destroy() end)
+                end
+            end
+
+            guiObj._ScreenGui = screenGui
+        end)
+
+        if not ok then
+            guiObj.Alive = false
+        end
+
+        C.Extra.Chest.Gui = guiObj
+        guiObj.SetText(getLogsText())
+        return guiObj
+    end
+
+    ensureGui()
+
     --=====================================================
-    -- Chest code
+    -- Chest logic (unchanged except targeted logf calls)
     --=====================================================
     local function hrp()
         local ch = lp.Character
@@ -505,9 +769,7 @@ return function(C, R, UI)
 
     local function releaseAllCaptured()
         local n0 = #CapturedList
-        if n0 > 0 then
-            logf("releaseAllCaptured begin: %d", n0)
-        end
+        if n0 > 0 then logf("releaseAllCaptured begin: %d", n0) end
         ensureHoverOff()
         for i = #CapturedList, 1, -1 do
             local m = CapturedList[i]
@@ -522,9 +784,7 @@ return function(C, R, UI)
         end
         table.clear(CapturedList)
         for k,_ in pairs(CapturedSet) do CapturedSet[k] = nil end
-        if n0 > 0 then
-            logf("releaseAllCaptured end: 0")
-        end
+        if n0 > 0 then logf("releaseAllCaptured end: 0") end
     end
 
     local function captureInst(inst)
@@ -983,11 +1243,7 @@ return function(C, R, UI)
             return false
         end
 
-        logf("openChestOnce: %s (preSet=%d)", chest.Name, (function()
-            local c = 0
-            for _ in pairs(preSet) do c += 1 end
-            return c
-        end)())
+        logf("openChestOnce: %s", chest.Name)
 
         local okTrig = triggerPrompt(prompt, chest.Name)
         if not okTrig then
@@ -1057,27 +1313,9 @@ return function(C, R, UI)
         Callback = function(on)
             C.State.Toggles.ChestLog = on
             LOG_ON = (on == true)
+            ensureGui()
             if LOG_ON then
                 logf("logging enabled")
-            end
-        end
-    })
-
-    ExtraTab:Button({
-        Title = "Copy Chest Logs",
-        Callback = function()
-            local txt = C.Extra and C.Extra.Chest and C.Extra.Chest.GetLogsText and C.Extra.Chest.GetLogsText() or ""
-            if typeof(setclipboard) == "function" then
-                pcall(function() setclipboard(txt) end)
-            end
-        end
-    })
-
-    ExtraTab:Button({
-        Title = "Clear Chest Logs",
-        Callback = function()
-            if C.Extra and C.Extra.Chest and C.Extra.Chest.ClearLogs then
-                C.Extra.Chest.ClearLogs()
             end
         end
     })
@@ -1203,7 +1441,7 @@ return function(C, R, UI)
         end
         conns = {}
         ensureHoverOff()
-        logf("destroyed")
+        destroyGui()
     end
     _G.__AutoChestExtra = api
 
