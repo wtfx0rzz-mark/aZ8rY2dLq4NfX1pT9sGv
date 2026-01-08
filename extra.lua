@@ -166,11 +166,6 @@ return function(C, R, UI)
         startRifleZeroReload()
     end
 
-    local function humanoid()
-        local ch = lp.Character
-        return ch and ch:FindFirstChildOfClass("Humanoid") or nil
-    end
-
     local function hrp()
         local ch = lp.Character
         return ch and ch:FindFirstChild("HumanoidRootPart") or nil
@@ -544,176 +539,30 @@ return function(C, R, UI)
         return chestModel:FindFirstChildWhichIsA("ProximityPrompt", true)
     end
 
-    local function promptWorldPos(prompt)
-        if not (prompt and prompt.Parent) then return nil end
-        local p = prompt.Parent
-        if p:IsA("Attachment") then
-            local ok, wp = pcall(function() return p.WorldPosition end)
-            return ok and wp or nil
-        end
-        if p:IsA("BasePart") then
-            return p.Position
-        end
-        local mp = mainPart(p)
-        if mp then return mp.Position end
-        return nil
-    end
-
-    local function rayParamsForPrompt(extraExclude)
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        params.IgnoreWater = true
-        local ex = { lp.Character }
-        if extraExclude then
-            for i=1,#extraExclude do
-                if extraExclude[i] then ex[#ex+1] = extraExclude[i] end
-            end
-        end
-        params.FilterDescendantsInstances = ex
-        return params
-    end
-
-    local function hasLOS_ToPrompt(fromPos, toPos)
-        local dir = (toPos - fromPos)
-        if dir.Magnitude < 0.05 then return true end
-        local hit = WS:Raycast(fromPos, dir, rayParamsForPrompt(nil))
-        return hit == nil
-    end
-
-    local function promptUsable(prompt, chestModel)
-        if not (prompt and prompt.Parent) then return false end
-        if prompt.Enabled == false then return false end
-        local root = hrp()
-        if not root then return false end
-        local ppos = promptWorldPos(prompt)
-        if not ppos then return false end
-        local maxD = tonumber(prompt.MaxActivationDistance) or 10
-        if (ppos - root.Position).Magnitude > (maxD + 0.25) then
-            return false
-        end
-        if prompt.RequiresLineOfSight then
-            local cam = WS.CurrentCamera
-            local from = (cam and cam.CFrame.Position) or (root.Position + Vector3.new(0, 1.5, 0))
-            if not hasLOS_ToPrompt(from, ppos) then
-                return false
-            end
-        end
-        if chestModel and chestModel.Parent then
-            local mp = mainPart(chestModel)
-            if mp and (mp.Position - root.Position).Magnitude > 18 then
-                return false
-            end
-        end
-        return true
-    end
-
     local function triggerPrompt(prompt)
         if not (prompt and prompt.Parent) then return false end
-        local ok = pcall(function() prompt:InputHoldBegin() end)
-        if not ok then return false end
+        pcall(function() prompt.RequiresLineOfSight = false end)
+        pcall(function()
+            if prompt.HoldDuration > 0.12 then
+                prompt.HoldDuration = 0.12
+            end
+        end)
+        local ok = pcall(function()
+            PPS:TriggerPrompt(prompt)
+        end)
+        if ok then return true end
+        local ok2 = pcall(function()
+            prompt:InputHoldBegin()
+        end)
+        if not ok2 then return false end
         local hold = tonumber(prompt.HoldDuration) or 0
-        local waitTime = (hold > 0) and (hold + 0.06) or 0.06
-        task.wait(waitTime)
-        if prompt and prompt.Parent then
-            pcall(function() prompt:InputHoldEnd() end)
-        end
+        local waitTime = (hold > 0) and (hold + 0.05) or 0.05
+        task.delay(waitTime, function()
+            if prompt and prompt.Parent then
+                pcall(function() prompt:InputHoldEnd() end)
+            end
+        end)
         return true
-    end
-
-    local function withFlyDownState(fn)
-        local root = hrp()
-        if not root then return false end
-        local hum = humanoid()
-        local cam = WS.CurrentCamera
-        local prev = {
-            camType = cam and cam.CameraType or nil,
-            camSubject = cam and cam.CameraSubject or nil,
-            camCFrame = cam and cam.CFrame or nil,
-            autoRotate = hum and hum.AutoRotate or nil,
-            platformStand = hum and hum.PlatformStand or nil
-        }
-        if hum then
-            pcall(function() hum.AutoRotate = false end)
-            pcall(function() hum.PlatformStand = true end)
-        end
-        local ok, res = pcall(fn, prev)
-        if cam and prev.camType then
-            pcall(function() cam.CameraType = prev.camType end)
-            if prev.camSubject then pcall(function() cam.CameraSubject = prev.camSubject end) end
-            if prev.camType == Enum.CameraType.Scriptable and prev.camCFrame then
-                pcall(function() cam.CFrame = prev.camCFrame end)
-            end
-        end
-        if hum then
-            if prev.autoRotate ~= nil then pcall(function() hum.AutoRotate = prev.autoRotate end) end
-            if prev.platformStand ~= nil then pcall(function() hum.PlatformStand = prev.platformStand end) end
-        end
-        if not ok then return false end
-        return res
-    end
-
-    local function setCameraAboveDown(chestCenter, height)
-        local cam = WS.CurrentCamera
-        if not cam then return end
-        local h = tonumber(height) or 20
-        local camPos = chestCenter + Vector3.new(0, h, 0)
-        pcall(function() cam.CameraType = Enum.CameraType.Scriptable end)
-        pcall(function() cam.CFrame = CFrame.new(camPos, chestCenter) end)
-    end
-
-    local function faceBodyDownAt(pos)
-        local root = hrp()
-        if not root then return false end
-        local downTarget = pos + Vector3.new(0, -1, 0)
-        local cf = CFrame.lookAt(pos, downTarget, Vector3.new(0, 0, 1))
-        local ch = lp.Character
-        if ch then pcall(function() ch:PivotTo(cf) end) end
-        return pcall(function() root.CFrame = cf end)
-    end
-
-    local function tempUnblockLineOfSight(chestModel, prompt)
-        local cam = WS.CurrentCamera
-        if not cam then return function() end end
-        local toPos = promptWorldPos(prompt)
-        if not toPos then return function() end end
-        local restore = {}
-        local function rememberAndSet(part)
-            if restore[part] then return end
-            restore[part] = {
-                canQuery = part.CanQuery,
-                ltm = part.LocalTransparencyModifier
-            }
-            pcall(function() part.LocalTransparencyModifier = 1 end)
-            pcall(function() part.CanQuery = false end)
-        end
-        local maxSteps = 12
-        local steps = 0
-        while steps < maxSteps do
-            steps += 1
-            local fromPos = cam.CFrame.Position
-            local dir = (toPos - fromPos)
-            if dir.Magnitude < 0.1 then break end
-            local hit = WS:Raycast(fromPos, dir, rayParamsForPrompt(nil))
-            if not hit or not hit.Instance then break end
-            if chestModel and hit.Instance:IsDescendantOf(chestModel) then
-                break
-            end
-            if hit.Instance:IsA("BasePart") then
-                rememberAndSet(hit.Instance)
-            else
-                local p = hit.Instance:FindFirstAncestorOfClass("BasePart")
-                if p then rememberAndSet(p) end
-            end
-        end
-        return function()
-            for part, st in pairs(restore) do
-                if part and part.Parent then
-                    if st.ltm ~= nil then pcall(function() part.LocalTransparencyModifier = st.ltm end) end
-                    if st.canQuery ~= nil then pcall(function() part.CanQuery = st.canQuery end) end
-                end
-            end
-            table.clear(restore)
-        end
     end
 
     local CHEST_FLOOR_RAY_DEPTH = 80.0
@@ -751,6 +600,18 @@ return function(C, R, UI)
         return hit and hit.Position or nil
     end
 
+    local function hasLineOfSightToChest(standPos, chestModel, chestCenter)
+        local params = makeChestRayParams({ chestModel })
+        local from = standPos + Vector3.new(0, 1.0, 0)
+        local to   = chestCenter + Vector3.new(0, 0.8, 0)
+        local dir = (to - from)
+        if dir.Magnitude < 0.05 then return true end
+        local hit = WS:Raycast(from, dir, params)
+        if not hit then return true end
+        if hit.Instance and hit.Instance:IsDescendantOf(chestModel) then return true end
+        return false
+    end
+
     local function hingeBackCenter(m)
         local pts = {}
         for _,d in ipairs(m:GetDescendants()) do
@@ -784,6 +645,7 @@ return function(C, R, UI)
         end
         local mp = mainPart(m)
         if not mp then return false end
+
         local chestCenter = mp.Position
         local chestTopY = mp.Position.Y + (mp.Size.Y * 0.5)
         local root = hrp()
@@ -819,8 +681,10 @@ return function(C, R, UI)
             local floorPos = floorAtFromChestTop(m, chestTopY, desired)
             local standY = floorPos and (floorPos.Y + STAND_UP) or (chestCenter.Y + STAND_UP)
             local standPos = Vector3.new(desired.X, standY, desired.Z)
-            bestCF = CFrame.new(standPos, chestCenter)
-            break
+            if hasLineOfSightToChest(standPos, m, chestCenter) then
+                bestCF = CFrame.new(standPos, chestCenter)
+                break
+            end
         end
 
         if not bestCF then
@@ -971,35 +835,7 @@ return function(C, R, UI)
         return opened, gotAny
     end
 
-    local function tryOpenFromTopDown(chest, mp, prompt, chestCenter, chestTopY, dir)
-        local sideDist = 5.0
-        local heightAboveTop = 3.5
-        local pos = chestCenter + dir * sideDist + Vector3.new(0, (mp.Size.Y * 0.5) + heightAboveTop, 0)
-
-        return withFlyDownState(function()
-            faceBodyDownAt(pos)
-            setCameraAboveDown(chestCenter, 22)
-            task.wait(0.05)
-
-            prompt = chestPrompt(chest)
-            if not prompt then return false end
-
-            if prompt.RequiresLineOfSight and not promptUsable(prompt, chest) then
-                local restore = tempUnblockLineOfSight(chest, prompt)
-                task.wait(0.02)
-                local okUsable = promptUsable(prompt, chest)
-                if not okUsable then
-                    restore()
-                    return false
-                end
-                local okTrig = triggerPrompt(prompt)
-                restore()
-                return okTrig
-            end
-
-            return triggerPrompt(prompt)
-        end)
-    end
+    local CHEST_LIFT_Y = 30
 
     local function openChestOnce(chest)
         if not (chest and chest.Parent) then return false end
@@ -1010,52 +846,61 @@ return function(C, R, UI)
 
         attemptedAt[chest] = os.clock()
 
-        local mp = mainPart(chest)
-        if not mp then
+        local origPivot = nil
+        local lifted = false
+        local function restoreChest()
+            if lifted and origPivot and chest and chest.Parent then
+                pcall(function() chest:PivotTo(origPivot) end)
+            end
+            lifted = false
+            origPivot = nil
+        end
+
+        do
+            local ok, cf = pcall(function() return chest:GetPivot() end)
+            if ok and cf then
+                origPivot = cf
+                pcall(function() chest:PivotTo(cf * CFrame.new(0, CHEST_LIFT_Y, 0)) end)
+                lifted = true
+                task.wait(0.06)
+            end
+        end
+
+        local pos = modelWorldPos(chest)
+        if not pos then
+            restoreChest()
             pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
             return false
         end
 
-        local chestCenter = mp.Position
-        local chestTopY = mp.Position.Y + (mp.Size.Y * 0.5)
-        local preSet = snapshotNearChest(chestCenter, math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, 10.0) + 8.0)
+        local preSet = snapshotNearChest(pos, math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, 10.0) + 8.0)
 
-        local dirs = {
-            mp.CFrame.LookVector,
-            -mp.CFrame.LookVector,
-            mp.CFrame.RightVector,
-            -mp.CFrame.RightVector,
-            (mp.CFrame.LookVector + mp.CFrame.RightVector).Unit,
-            (mp.CFrame.LookVector - mp.CFrame.RightVector).Unit,
-            (-mp.CFrame.LookVector + mp.CFrame.RightVector).Unit,
-            (-mp.CFrame.LookVector - mp.CFrame.RightVector).Unit
-        }
-
-        for i=1,#dirs do
-            if not (chest and chest.Parent) then return false end
-            local prompt = chestPrompt(chest)
-            if not prompt then
-                task.wait(0.08)
-                prompt = chestPrompt(chest)
-            end
-            if prompt then
-                local okTrig = tryOpenFromTopDown(chest, mp, prompt, chestCenter, chestTopY, dirs[i])
-                if okTrig then
-                    local opened, gotAny = confirmAndCaptureDropsForChest(chest, preSet)
-                    if opened then
-                        pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
-                        local postDelay = math.max(tonumber(C.State.ChestPostOpenDelay) or 0.5, 0.0)
-                        if postDelay > 0 then task.wait(postDelay) end
-                        return true, gotAny
-                    end
-                end
-            end
-            task.wait(0.06)
+        local prompt = chestPrompt(chest)
+        if not prompt then
+            restoreChest()
+            return false
         end
 
-        local notOpenWait = math.max(tonumber(C.State.ChestNotOpenWait) or 5.0, 0.0)
-        if notOpenWait > 0 then task.wait(notOpenWait) end
-        return false
+        local okTrig = triggerPrompt(prompt)
+        if not okTrig then
+            restoreChest()
+            return false
+        end
+
+        local opened, gotAny = confirmAndCaptureDropsForChest(chest, preSet)
+
+        if opened then
+            pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
+            local postDelay = math.max(tonumber(C.State.ChestPostOpenDelay) or 0.5, 0.0)
+            if postDelay > 0 then task.wait(postDelay) end
+            restoreChest()
+            return true, gotAny
+        else
+            restoreChest()
+            local notOpenWait = math.max(tonumber(C.State.ChestNotOpenWait) or 5.0, 0.0)
+            if notOpenWait > 0 then task.wait(notOpenWait) end
+            return false
+        end
     end
 
     local autoOn = false
