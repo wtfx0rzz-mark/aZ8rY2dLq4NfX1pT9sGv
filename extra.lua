@@ -1,14 +1,15 @@
 -- extra.lua
+
 return function(C, R, UI)
     C  = C  or _G.C
     UI = UI or _G.UI
     assert(C and UI and UI.Tabs and UI.Tabs.Extra, "extra.lua: missing context or Extra tab")
 
-    local Players               = game:GetService("Players")
-    local ReplicatedStorage     = game:GetService("ReplicatedStorage")
-    local ProximityPromptService= game:GetService("ProximityPromptService")
-    local RunService            = game:GetService("RunService")
-    local Workspace             = game:GetService("Workspace")
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local ProximityPromptService = game:GetService("ProximityPromptService")
+    local RunService = game:GetService("RunService")
+    local Workspace = game:GetService("Workspace")
 
     local lp = C.LocalPlayer or Players.LocalPlayer
     local ExtraTab = UI.Tabs.Extra
@@ -16,21 +17,18 @@ return function(C, R, UI)
     C.State = C.State or { Toggles = {} }
     C.State.Toggles = C.State.Toggles or {}
 
+    --========================
+    -- Zero ReloadTime Toggle
+    --========================
     if C.State.Toggles.RifleZeroReload == nil then
         C.State.Toggles.RifleZeroReload = true
     end
-    if C.State.Toggles.AutoChest == nil then
-        C.State.Toggles.AutoChest = false
-    end
 
-    --========================
-    -- Zero ReloadTime toggle
-    --========================
-    local zr_running = false
-    local zr_invChildConn
-    local zr_lpChildConn
-    local zr_attrConns = setmetatable({}, { __mode = "k" })
-    local zr_nvConns   = setmetatable({}, { __mode = "k" })
+    local running = false
+    local invChildConn
+    local lpChildConn
+    local attrConns = setmetatable({}, { __mode = "k" })
+    local nvConns   = setmetatable({}, { __mode = "k" })
 
     local function disconnectSignal(conn)
         if conn then
@@ -39,15 +37,15 @@ return function(C, R, UI)
     end
 
     local function clearItemSignals(item)
-        local a = zr_attrConns[item]
+        local a = attrConns[item]
         if a then
             disconnectSignal(a)
-            zr_attrConns[item] = nil
+            attrConns[item] = nil
         end
-        local n = zr_nvConns[item]
+        local n = nvConns[item]
         if n then
             disconnectSignal(n)
-            zr_nvConns[item] = nil
+            nvConns[item] = nil
         end
     end
 
@@ -60,7 +58,7 @@ return function(C, R, UI)
     end
 
     local function forceZero(item)
-        if not (zr_running and item and item.Parent) then return end
+        if not (running and item and item.Parent) then return end
 
         local ok, attr = pcall(function()
             return item:GetAttribute("ReloadTime")
@@ -82,7 +80,7 @@ return function(C, R, UI)
     end
 
     local function setupItem(item)
-        if not (zr_running and item and item:IsA("Instance")) then return end
+        if not (running and item and item:IsA("Instance")) then return end
 
         clearItemSignals(item)
 
@@ -101,8 +99,8 @@ return function(C, R, UI)
                 return item:GetAttributeChangedSignal("ReloadTime")
             end)
             if ok and sig then
-                zr_attrConns[item] = sig:Connect(function()
-                    if zr_running then
+                attrConns[item] = sig:Connect(function()
+                    if running then
                         forceZero(item)
                     end
                 end)
@@ -110,8 +108,8 @@ return function(C, R, UI)
         end
 
         if hasNv then
-            zr_nvConns[item] = nv.Changed:Connect(function()
-                if zr_running and nv.Value ~= 0 then
+            nvConns[item] = nv.Changed:Connect(function()
+                if running and nv.Value ~= 0 then
                     nv.Value = 0
                 end
             end)
@@ -125,25 +123,25 @@ return function(C, R, UI)
             setupItem(child)
         end
 
-        disconnectSignal(zr_invChildConn)
-        zr_invChildConn = inv.ChildAdded:Connect(function(child)
-            if not zr_running then return end
+        disconnectSignal(invChildConn)
+        invChildConn = inv.ChildAdded:Connect(function(child)
+            if not running then return end
             setupItem(child)
         end)
     end
 
     local function startRifleZeroReload()
-        if zr_running then return end
-        zr_running = true
+        if running then return end
+        running = true
 
         local inv = lp:FindFirstChild("Inventory") or lp:WaitForChild("Inventory", 10)
         if inv then
             hookInventory(inv)
         end
 
-        disconnectSignal(zr_lpChildConn)
-        zr_lpChildConn = lp.ChildAdded:Connect(function(child)
-            if not zr_running then return end
+        disconnectSignal(lpChildConn)
+        lpChildConn = lp.ChildAdded:Connect(function(child)
+            if not running then return end
             if child.Name == "Inventory" then
                 hookInventory(child)
             else
@@ -153,21 +151,21 @@ return function(C, R, UI)
     end
 
     local function stopRifleZeroReload()
-        if not zr_running then return end
-        zr_running = false
+        if not running then return end
+        running = false
 
-        disconnectSignal(zr_invChildConn)
-        zr_invChildConn = nil
-        disconnectSignal(zr_lpChildConn)
-        zr_lpChildConn = nil
+        disconnectSignal(invChildConn)
+        invChildConn = nil
+        disconnectSignal(lpChildConn)
+        lpChildConn = nil
 
-        for item, conn in pairs(zr_attrConns) do
+        for item, conn in pairs(attrConns) do
             disconnectSignal(conn)
-            zr_attrConns[item] = nil
+            attrConns[item] = nil
         end
-        for item, conn in pairs(zr_nvConns) do
+        for item, conn in pairs(nvConns) do
             disconnectSignal(conn)
-            zr_nvConns[item] = nil
+            nvConns[item] = nil
         end
     end
 
@@ -189,25 +187,30 @@ return function(C, R, UI)
     end
 
     --========================
-    -- Auto Chest (WindUI toggle, no on-screen ON/OFF button)
+    -- AutoChest (WindUI)
     --========================
-    if _G.__AutoChestStandalone and type(_G.__AutoChestStandalone.Destroy) == "function" then
-        pcall(function() _G.__AutoChestStandalone.Destroy() end)
+    if _G.__ExtraAutoChest and type(_G.__ExtraAutoChest.Destroy) == "function" then
+        pcall(function() _G.__ExtraAutoChest.Destroy() end)
+    end
+
+    if C.State.Toggles.AutoChest == nil then
+        C.State.Toggles.AutoChest = false
+    end
+    if C.State.Toggles.AutoChestCaptureDropsOnly == nil then
+        C.State.Toggles.AutoChestCaptureDropsOnly = true
     end
 
     local UID_OPEN_KEY = tostring(lp.UserId) .. "Opened"
 
-    local AUTO_DELAY = 0.10
+    local AUTO_DELAY = 0.12
     local FAIL_RETRY_DELAY = 0.20
     local CHEST_COOLDOWN = 0.35
-    local CAPTURE_ENABLED = true
-    local CAPTURE_RADIUS = 12
-    local CAPTURE_WINDOW = 2.25
-    local HOLD_OFFSET_Y = 10
-    local HOLD_FORWARD = 1.5
-    local START_YIELD = 0.06
-    local DRAG_TTL = 60.0
 
+    local CAPTURE_WINDOW = 2.75
+    local CAPTURE_RADIUS_CHEST = 12
+    local START_CAPTURE_YIELD = 0.10
+
+    local DRAG_TTL = 60.0
     local FRONT_DIST = 4.0
     local STAND_UP = 2.5
     local CHEST_FLOOR_RAY_DEPTH = 80.0
@@ -233,6 +236,11 @@ return function(C, R, UI)
     local function mainPart(obj)
         if not obj or not obj.Parent then return nil end
         if obj:IsA("BasePart") then return obj end
+        if obj:IsA("Tool") then
+            local h = obj:FindFirstChild("Handle")
+            if h and h:IsA("BasePart") then return h end
+            return obj:FindFirstChildWhichIsA("BasePart", true)
+        end
         if obj:IsA("Model") then
             if obj.PrimaryPart then return obj.PrimaryPart end
             return obj:FindFirstChildWhichIsA("BasePart", true)
@@ -264,12 +272,18 @@ return function(C, R, UI)
 
     local function isChestName(n)
         if type(n) ~= "string" then return false end
-        return n:match("Chest%d*$") ~= nil or n:match("Chest$") ~= nil
+        if n:match("^Item Chest%d*$") then return true end
+        if n:match("^Item Chest$") then return true end
+        if n:match("Chest%d*$") then return true end
+        if n:match("Chest$") then return true end
+        return false
     end
+
     local function isSnowChestName(n)
         if type(n) ~= "string" then return false end
         return (n == "Snow Chest") or (n:match("^Snow Chest%d+$") ~= nil)
     end
+
     local function isHalloweenChestName(n)
         if type(n) ~= "string" then return false end
         return (n == "Halloween Chest") or (n:match("^Halloween Chest%d+$") ~= nil)
@@ -277,7 +291,19 @@ return function(C, R, UI)
 
     local function chestOpened(m)
         if not m then return false end
-        return m:GetAttribute(UID_OPEN_KEY) == true
+        local ok, v = pcall(function() return m:GetAttribute(UID_OPEN_KEY) end)
+        return ok and v == true
+    end
+
+    local function markChestOpened(m, on)
+        if not m then return end
+        pcall(function()
+            if on then
+                m:SetAttribute(UID_OPEN_KEY, true)
+            else
+                m:SetAttribute(UID_OPEN_KEY, nil)
+            end
+        end)
     end
 
     local function getRemote(...)
@@ -303,16 +329,19 @@ return function(C, R, UI)
         if not (m and RF_Stop) then return false end
         return pcall(function() RF_Stop:FireServer(m) end)
     end
+
     local function finallyStopDrag(m)
         task.delay(0.05, function() pcall(safeStopDrag, m) end)
         task.delay(0.20, function() pcall(safeStopDrag, m) end)
     end
+
     local function dragUntrack(m)
         local rec = DragActive[m]
         if not rec then return end
         DragActive[m] = nil
         for _,c in ipairs(rec.conns) do pcall(function() c:Disconnect() end) end
     end
+
     local function dragTrackRelease(m)
         local rec = DragActive[m]
         if not rec then return end
@@ -320,6 +349,7 @@ return function(C, R, UI)
         for _,c in ipairs(rec.conns) do pcall(function() c:Disconnect() end) end
         safeStopDrag(m)
     end
+
     local function dragStart(m)
         if not (m and m.Parent and RF_Start) then return false end
         if DragActive[m] then
@@ -338,6 +368,7 @@ return function(C, R, UI)
         DragActive[m] = { t0 = os.clock(), conns = c }
         return true
     end
+
     local function dragKeepAlive(m)
         local rec = DragActive[m]
         if rec then rec.t0 = os.clock() end
@@ -371,81 +402,13 @@ return function(C, R, UI)
         end
     end
 
-    local function ensureEdgeGui()
-        local playerGui = lp:FindFirstChildOfClass("PlayerGui") or lp:WaitForChild("PlayerGui")
-        local edgeGui = playerGui:FindFirstChild("EdgeButtons")
-        if not edgeGui then
-            edgeGui = Instance.new("ScreenGui")
-            edgeGui.Name = "EdgeButtons"
-            edgeGui.ResetOnSpawn = false
-            pcall(function() edgeGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling end)
-            edgeGui.Parent = playerGui
-        end
-        local stack = edgeGui:FindFirstChild("EdgeStack")
-        if not stack then
-            stack = Instance.new("Frame")
-            stack.Name = "EdgeStack"
-            stack.AnchorPoint = Vector2.new(1, 0)
-            stack.Position = UDim2.new(1, -6, 0, 6)
-            stack.Size = UDim2.new(0, 130, 1, -12)
-            stack.BackgroundTransparency = 1
-            stack.BorderSizePixel = 0
-            stack.Parent = edgeGui
-            local listLay = Instance.new("UIListLayout")
-            listLay.Name = "VList"
-            listLay.FillDirection = Enum.FillDirection.Vertical
-            listLay.SortOrder = Enum.SortOrder.LayoutOrder
-            listLay.Padding = UDim.new(0, 6)
-            listLay.HorizontalAlignment = Enum.HorizontalAlignment.Right
-            listLay.Parent = stack
-        end
-        local oldAuto = stack:FindFirstChild("AutoChestEdge")
-        if oldAuto then pcall(function() oldAuto:Destroy() end) end
-        return stack
-    end
-
-    local function makeEdgeBtn(stack, name, text, order)
-        local btn = stack:FindFirstChild(name)
-        if not btn then
-            btn = Instance.new("TextButton")
-            btn.Name = name
-            btn.Size = UDim2.new(1, 0, 0, 30)
-            btn.Text = text
-            btn.TextSize = 12
-            btn.Font = Enum.Font.GothamBold
-            btn.BackgroundColor3 = Color3.fromRGB(30,30,35)
-            btn.TextColor3 = Color3.new(1,1,1)
-            btn.BorderSizePixel = 0
-            btn.Visible = true
-            btn.LayoutOrder = order or 999
-            btn.Parent = stack
-            local corner = Instance.new("UICorner")
-            corner.CornerRadius = UDim.new(0, 8)
-            corner.Parent = btn
-        else
-            btn.Text = text
-            btn.LayoutOrder = order or btn.LayoutOrder
-            btn.Visible = true
-        end
-        return btn
-    end
-
-    local stack = ensureEdgeGui()
-    local placeBtn = makeEdgeBtn(stack, "PlaceEdge", "Place", 951)
-    placeBtn.Visible = false
-
     local CapturedSet = {}
     local CapturedList = {}
-
-    local function updatePlaceBtn()
-        placeBtn.Visible = (#CapturedList > 0)
-    end
 
     local function addCaptured(m)
         if CapturedSet[m] then return end
         CapturedSet[m] = true
         CapturedList[#CapturedList+1] = m
-        updatePlaceBtn()
     end
 
     local function removeCaptured(m)
@@ -457,7 +420,6 @@ return function(C, R, UI)
                 break
             end
         end
-        updatePlaceBtn()
     end
 
     local hoverConn = nil
@@ -465,7 +427,7 @@ return function(C, R, UI)
         local root = hrp()
         if not root then return end
         local forward = root.CFrame.LookVector
-        local basePos = root.Position + Vector3.new(0, HOLD_OFFSET_Y, 0) + forward * HOLD_FORWARD
+        local basePos = root.Position + Vector3.new(0, 10, 0) + forward * 1.5
         local baseCF = CFrame.lookAt(basePos, basePos + forward)
         for i = #CapturedList, 1, -1 do
             local m = CapturedList[i]
@@ -489,21 +451,40 @@ return function(C, R, UI)
         hoverConn = nil
     end
 
-    local function captureModel(m)
-        if not (CAPTURE_ENABLED and m and m.Parent) then return false end
-        if CapturedSet[m] then return false end
-        if m:IsA("Model") and isChestName(m.Name) then return false end
-        local root = hrp()
-        if not root then return false end
-        local pos = modelWorldPos(m)
-        if not pos then return false end
-        if (pos - root.Position).Magnitude > CAPTURE_RADIUS then return false end
+    local function isValidCaptureTarget(t)
+        if not (t and t.Parent) then return false end
+        if t:IsA("Model") or t:IsA("Tool") or t:IsA("BasePart") then
+            local n = t.Name
+            if isChestName(n) then return false end
+            if isSnowChestName(n) or isHalloweenChestName(n) then return false end
+            return true
+        end
+        return false
+    end
+
+    local function findCaptureTarget(inst)
+        if not (inst and inst.Parent) then return nil end
+        if inst:IsA("Model") or inst:IsA("Tool") or inst:IsA("BasePart") then
+            return inst
+        end
+        local m = inst:FindFirstAncestorOfClass("Model")
+        if m then return m end
+        local t = inst:FindFirstAncestorOfClass("Tool")
+        if t then return t end
+        local p = inst:FindFirstAncestorWhichIsA("BasePart")
+        if p then return p end
+        return nil
+    end
+
+    local function captureTarget(t)
+        if not isValidCaptureTarget(t) then return false end
+        if CapturedSet[t] then return false end
         refreshDragRemotes()
-        if not dragStart(m) then return false end
-        task.wait(START_YIELD)
-        setNoCollideModel(m, true)
-        setAnchoredModel(m, true)
-        addCaptured(m)
+        if not dragStart(t) then return false end
+        task.wait(0.06)
+        setNoCollideModel(t, true)
+        setAnchoredModel(t, true)
+        addCaptured(t)
         ensureHoverOn()
         return true
     end
@@ -521,61 +502,6 @@ return function(C, R, UI)
         end
         table.clear(CapturedList)
         for k,_ in pairs(CapturedSet) do CapturedSet[k] = nil end
-        updatePlaceBtn()
-    end
-
-    bind(placeBtn.MouseButton1Click:Connect(function()
-        releaseAllCaptured()
-    end))
-
-    local function scanAndCaptureNearbyItems()
-        local items = itemsFolder()
-        local root = hrp()
-        if not (items and root) then return end
-        local rpos = root.Position
-        for _,m in ipairs(items:GetChildren()) do
-            if m:IsA("Model") and m.Parent and not CapturedSet[m] then
-                if not isChestName(m.Name) then
-                    local p = modelWorldPos(m)
-                    if p and (p - rpos).Magnitude <= CAPTURE_RADIUS then
-                        captureModel(m)
-                    end
-                end
-            end
-        end
-    end
-
-    local captureToken = 0
-    local function beginCaptureWindow()
-        if not CAPTURE_ENABLED then return end
-        local items = itemsFolder()
-        if not items then return end
-        captureToken += 1
-        local myToken = captureToken
-        local tEnd = os.clock() + CAPTURE_WINDOW
-        local c = {}
-        local function tryFromInst(inst)
-            if myToken ~= captureToken then return end
-            if os.clock() > tEnd then return end
-            if not inst or not inst.Parent then return end
-            local itemsNow = itemsFolder()
-            if itemsNow and not inst:IsDescendantOf(itemsNow) then return end
-            local target = inst:IsA("Model") and inst or inst:FindFirstAncestorOfClass("Model")
-            if not target or not target.Parent then return end
-            if isChestName(target.Name) then return end
-            captureModel(target)
-        end
-        c[#c+1] = items.DescendantAdded:Connect(tryFromInst)
-        task.spawn(function()
-            while alive and myToken == captureToken and os.clock() <= tEnd do
-                scanAndCaptureNearbyItems()
-                task.wait(0.08)
-            end
-            for i=1,#c do
-                local cc = c[i]
-                if cc and cc.Disconnect then pcall(function() cc:Disconnect() end) end
-            end
-        end)
     end
 
     local function makeChestRayParams(extras)
@@ -619,24 +545,6 @@ return function(C, R, UI)
         return false
     end
 
-    local function hingeBackCenter(m)
-        local pts = {}
-        for _,d in ipairs(m:GetDescendants()) do
-            if d.Name == "Hinge" then
-                if d:IsA("BasePart") then
-                    pts[#pts+1] = d.Position
-                elseif d:IsA("Model") then
-                    local mp = mainPart(d)
-                    if mp then pts[#pts+1] = mp.Position end
-                end
-            end
-        end
-        if #pts == 0 then return nil end
-        local sum = Vector3.new(0,0,0)
-        for _,p in ipairs(pts) do sum += p end
-        return sum / #pts
-    end
-
     local function teleportToCF(cf)
         local root = hrp()
         if not root then return false end
@@ -648,19 +556,18 @@ return function(C, R, UI)
     local function teleportNearChest(m)
         if not (m and m.Parent and m:IsA("Model")) then return false end
         if EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name) then
-            pcall(function() m:SetAttribute(UID_OPEN_KEY, true) end)
+            markChestOpened(m, true)
             return false
         end
         local mp = mainPart(m)
         if not mp then
-            pcall(function() m:SetAttribute(UID_OPEN_KEY, true) end)
+            markChestOpened(m, true)
             return false
         end
 
         local chestCenter = mp.Position
         local chestTopY = mp.Position.Y + (mp.Size.Y * 0.5)
         local root = hrp()
-        local hingePos = hingeBackCenter(m)
 
         local dirs = {}
         local function addDir(v)
@@ -670,12 +577,6 @@ return function(C, R, UI)
         end
 
         if root then addDir(root.Position - chestCenter) end
-        if hingePos then
-            local v = (chestCenter - hingePos)
-            if v.Magnitude < 1e-3 then v = -mp.CFrame.LookVector end
-            addDir(v)
-        end
-
         addDir(mp.CFrame.LookVector)
         addDir(-mp.CFrame.LookVector)
         addDir(mp.CFrame.RightVector)
@@ -753,9 +654,11 @@ return function(C, R, UI)
         local list = {}
         for _,m in ipairs(items:GetChildren()) do
             if m:IsA("Model") and isChestName(m.Name) then
-                local p = chestPos(m)
-                if p then
-                    list[#list+1] = m
+                if not (EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name)) then
+                    local p = chestPos(m)
+                    if p then
+                        list[#list+1] = m
+                    end
                 end
             end
         end
@@ -773,13 +676,13 @@ return function(C, R, UI)
             end
         end
         if not (diamond and dpos) then return end
-        pcall(function() diamond:SetAttribute(UID_OPEN_KEY, true) end)
+        markChestOpened(diamond, true)
         for i=1,#chests do
             local m = chests[i]
             if m and m.Parent and m ~= diamond then
                 local p = chestPos(m)
                 if p and (p - dpos).Magnitude <= STRONGHOLD_EXCLUDE_RADIUS then
-                    pcall(function() m:SetAttribute(UID_OPEN_KEY, true) end)
+                    markChestOpened(m, true)
                 end
             end
         end
@@ -795,44 +698,99 @@ return function(C, R, UI)
         for i=1,#chests do
             local m = chests[i]
             if m and m.Parent and not chestOpened(m) then
-                if not (EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name)) then
-                    local p = chestPos(m)
-                    if p then
-                        local d = (p - root.Position).Magnitude
-                        if d < bestD then
-                            bestD = d
-                            best = m
-                        end
+                local p = chestPos(m)
+                if p then
+                    local d = (p - root.Position).Magnitude
+                    if d < bestD then
+                        bestD = d
+                        best = m
                     end
-                else
-                    pcall(function() m:SetAttribute(UID_OPEN_KEY, true) end)
                 end
             end
         end
         return best
     end
 
+    local function snapshotItems(items)
+        local set = {}
+        if not items then return set end
+        for _,ch in ipairs(items:GetChildren()) do
+            set[ch] = true
+        end
+        return set
+    end
+
+    local function beginCaptureWindowForChest(chestModel)
+        local items = itemsFolder()
+        if not items then return end
+        local cpos = chestPos(chestModel)
+        if not cpos then return end
+
+        local pre = snapshotItems(items)
+        local tEnd = os.clock() + CAPTURE_WINDOW
+        local useDiff = (C.State.Toggles.AutoChestCaptureDropsOnly == true)
+
+        local function withinChestRadius(t)
+            local p = modelWorldPos(t)
+            if not p then return false end
+            return (p - cpos).Magnitude <= CAPTURE_RADIUS_CHEST
+        end
+
+        local function tryCaptureFromInst(inst)
+            if not alive then return end
+            if os.clock() > tEnd then return end
+            if not (inst and inst.Parent) then return end
+
+            local t = findCaptureTarget(inst)
+            if not t or not t.Parent then return end
+            if isChestName(t.Name) then return end
+
+            if useDiff and pre[t] then return end
+            if not withinChestRadius(t) then return end
+
+            captureTarget(t)
+        end
+
+        local dc = items.DescendantAdded:Connect(tryCaptureFromInst)
+
+        task.spawn(function()
+            while alive and os.clock() <= tEnd do
+                local kids = items:GetChildren()
+                for i=1,#kids do
+                    local inst = kids[i]
+                    local t = findCaptureTarget(inst)
+                    if t and t.Parent then
+                        if not (useDiff and pre[t]) then
+                            if not isChestName(t.Name) and withinChestRadius(t) then
+                                captureTarget(t)
+                            end
+                        end
+                    end
+                end
+                task.wait(0.08)
+            end
+            pcall(function() dc:Disconnect() end)
+        end)
+    end
+
     local autoOn = false
     local runner = nil
 
-    local function setAuto(state)
-        autoOn = (state == true)
-        if not autoOn then
-            releaseAllCaptured()
-            placeBtn.Visible = false
-            return
-        end
+    local function startAuto()
+        if autoOn then return end
+        autoOn = true
         if runner then return end
         runner = task.spawn(function()
             while alive and autoOn do
                 local root = hrp()
                 if not root then task.wait(0.25) continue end
+
                 local chest = nearestUnopenedChest()
                 if not chest then task.wait(0.35) continue end
 
                 local okTp = teleportNearChest(chest)
                 if not okTp then
-                    pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
+                    markChestOpened(chest, true)
                     task.wait(FAIL_RETRY_DELAY)
                     continue
                 end
@@ -841,16 +799,17 @@ return function(C, R, UI)
 
                 local p = chestPrompt(chest)
                 if not p then
-                    pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
+                    markChestOpened(chest, true)
                     task.wait(FAIL_RETRY_DELAY)
                     continue
                 end
 
                 local okTrig = triggerPrompt(p)
                 if okTrig then
-                    pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
-                    beginCaptureWindow()
+                    task.wait(START_CAPTURE_YIELD)
+                    beginCaptureWindowForChest(chest)
                     task.wait(CHEST_COOLDOWN)
+                    markChestOpened(chest, true)
                 else
                     task.wait(FAIL_RETRY_DELAY)
                 end
@@ -859,46 +818,71 @@ return function(C, R, UI)
         end)
     end
 
-    bind(lp.CharacterAdded:Connect(function()
-        task.wait(0.15)
-        releaseAllCaptured()
-        placeBtn.Visible = false
-    end))
-
-    local api = {}
-    function api.Destroy()
-        alive = false
-        setAuto(false)
-        releaseAllCaptured()
-        for i=1,#conns do
-            local c = conns[i]
-            if c and c.Disconnect then pcall(function() c:Disconnect() end) end
-        end
-        conns = {}
-        pcall(function()
-            local playerGui = lp:FindFirstChildOfClass("PlayerGui")
-            local edgeGui = playerGui and playerGui:FindFirstChild("EdgeButtons")
-            local s = edgeGui and edgeGui:FindFirstChild("EdgeStack")
-            if s then
-                local oldAuto = s:FindFirstChild("AutoChestEdge")
-                if oldAuto then oldAuto:Destroy() end
-            end
-            if placeBtn then placeBtn.Visible = false end
-        end)
+    local function stopAuto()
+        if not autoOn then return end
+        autoOn = false
     end
 
-    _G.__AutoChestStandalone = api
+    local function resetOpenedMarks()
+        local items = itemsFolder()
+        if not items then return end
+        for _,m in ipairs(items:GetChildren()) do
+            if m and m.Parent and m:IsA("Model") and isChestName(m.Name) then
+                markChestOpened(m, false)
+            end
+        end
+    end
 
     ExtraTab:Toggle({
         Title = "Auto Chest",
         Value = C.State.Toggles.AutoChest,
         Callback = function(on)
             C.State.Toggles.AutoChest = on
-            setAuto(on)
+            if on then startAuto() else stopAuto() end
         end
     })
 
+    ExtraTab:Toggle({
+        Title = "Capture Drops Only (ignore existing nearby)",
+        Value = C.State.Toggles.AutoChestCaptureDropsOnly,
+        Callback = function(on)
+            C.State.Toggles.AutoChestCaptureDropsOnly = on
+        end
+    })
+
+    ExtraTab:Button({
+        Title = "Place Captured Items",
+        Callback = function()
+            releaseAllCaptured()
+        end
+    })
+
+    ExtraTab:Button({
+        Title = "Reset Opened Marks (Items)",
+        Callback = function()
+            resetOpenedMarks()
+        end
+    })
+
+    bind(lp.CharacterAdded:Connect(function()
+        task.wait(0.15)
+        releaseAllCaptured()
+    end))
+
     if C.State.Toggles.AutoChest then
-        setAuto(true)
+        startAuto()
     end
+
+    local api = {}
+    function api.Destroy()
+        alive = false
+        stopAuto()
+        releaseAllCaptured()
+        for i=1,#conns do
+            local c = conns[i]
+            if c and c.Disconnect then pcall(function() c:Disconnect() end) end
+        end
+        conns = {}
+    end
+    _G.__ExtraAutoChest = api
 end
