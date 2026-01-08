@@ -273,13 +273,11 @@ return function(C, R, UI)
         C.State.Toggles.AutoChest = false
     end
 
-    -- Static chest timing knobs (edit here later if needed)
     local CHEST_POST_OPEN_DELAY = 0
     local CHEST_NOT_OPEN_WAIT = 4
     local CHEST_OPEN_CONFIRM_TIMEOUT = 4
     local CHEST_CAPTURE_WINDOW = 0.5
 
-    -- Keep state in sync (but logic uses the static variables above)
     C.State.ChestPostOpenDelay = CHEST_POST_OPEN_DELAY
     C.State.ChestNotOpenWait = CHEST_NOT_OPEN_WAIT
     C.State.ChestOpenConfirmTimeout = CHEST_OPEN_CONFIRM_TIMEOUT
@@ -535,9 +533,47 @@ return function(C, R, UI)
         return ok and v == true
     end
 
-    local function chestPrompt(chestModel)
+    local function findChestPromptPreferred(chestModel)
         if not (chestModel and chestModel.Parent) then return nil end
+
+        local main = chestModel:FindFirstChild("Main", true)
+        if main and main.Parent then
+            local proxAtt = main:FindFirstChild("ProximityAttachment")
+            if proxAtt and proxAtt.Parent then
+                local p = proxAtt:FindFirstChildWhichIsA("ProximityPrompt", true)
+                if p then return p end
+                local maybe = proxAtt:FindFirstChild("ProximityInteraction")
+                if maybe and maybe:IsA("ProximityPrompt") then return maybe end
+            end
+        end
+
         return chestModel:FindFirstChildWhichIsA("ProximityPrompt", true)
+    end
+
+    local function promptWorldPos(prompt)
+        if not (prompt and prompt.Parent) then return nil end
+
+        local okA, adornee = pcall(function() return prompt.Adornee end)
+        if okA and adornee and adornee:IsA("BasePart") then
+            return adornee.Position
+        end
+
+        local parent = prompt.Parent
+        if parent:IsA("Attachment") then
+            local ok, wp = pcall(function() return parent.WorldPosition end)
+            if ok and wp then return wp end
+        end
+
+        if parent:IsA("BasePart") then
+            return parent.Position
+        end
+        if parent:IsA("Model") then
+            local mp = mainPart(parent)
+            return mp and mp.Position or nil
+        end
+
+        local mp = mainPart(parent)
+        return mp and mp.Position or nil
     end
 
     local function triggerPrompt(prompt)
@@ -644,11 +680,16 @@ return function(C, R, UI)
         if EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name) then
             return false
         end
+
         local mp = mainPart(m)
         if not mp then return false end
 
         local chestCenter = mp.Position
         local chestTopY = mp.Position.Y + (mp.Size.Y * 0.5)
+
+        local prompt = findChestPromptPreferred(m)
+        local ppos = prompt and promptWorldPos(prompt) or nil
+
         local root = hrp()
         local hingePos = hingeBackCenter(m)
 
@@ -659,12 +700,18 @@ return function(C, R, UI)
             dirs[#dirs+1] = v.Unit
         end
 
-        if root then addDir(root.Position - chestCenter) end
+        if ppos then
+            addDir(ppos - chestCenter)
+            addDir(chestCenter - ppos)
+        end
+
         if hingePos then
             local v = (chestCenter - hingePos)
             if v.Magnitude < 1e-3 then v = -mp.CFrame.LookVector end
             addDir(v)
         end
+
+        if root then addDir(root.Position - chestCenter) end
 
         addDir(mp.CFrame.LookVector)
         addDir(-mp.CFrame.LookVector)
@@ -679,6 +726,13 @@ return function(C, R, UI)
         for i=1,#dirs do
             local dir = dirs[i]
             local desired = chestCenter + dir * FRONT_DIST
+            if ppos then
+                local towardPrompt = (ppos - chestCenter)
+                if towardPrompt.Magnitude > 1e-3 and dir:Dot(towardPrompt.Unit) > 0.90 then
+                    desired = Vector3.new(ppos.X, chestCenter.Y, ppos.Z) + dir * 2.25
+                end
+            end
+
             local floorPos = floorAtFromChestTop(m, chestTopY, desired)
             local standY = floorPos and (floorPos.Y + STAND_UP) or (chestCenter.Y + STAND_UP)
             local standPos = Vector3.new(desired.X, standY, desired.Z)
@@ -814,7 +868,7 @@ return function(C, R, UI)
                     break
                 end
             end
-            local p = chestPrompt(chest)
+            local p = findChestPromptPreferred(chest)
             if not (p and p.Parent) then
                 opened = true
                 break
@@ -853,7 +907,7 @@ return function(C, R, UI)
 
         local preSet = snapshotNearChest(pos, math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, 10.0) + 8.0)
 
-        local prompt = chestPrompt(chest)
+        local prompt = findChestPromptPreferred(chest)
         if not prompt then
             return false
         end
