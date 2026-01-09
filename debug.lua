@@ -364,12 +364,9 @@ return function(C, R, UI)
         end
 
         local cf = CFrame.new(dest, dest + look.Unit)
-        pcall(function()
-            (lp.Character or {}).PrimaryPart.CFrame = cf
-        end)
-        pcall(function()
-            root.CFrame = cf
-        end)
+        local ch = lp.Character
+        if ch and ch.Parent then pcall(function() ch:PivotTo(cf) end) end
+        pcall(function() root.CFrame = cf end)
         zeroAssembly(root)
     end
 
@@ -806,13 +803,6 @@ return function(C, R, UI)
         end)
 
         corpseGui = gui
-    end
-
-    local function destroyCorpseGui()
-        if corpseGui then pcall(function() corpseGui:Destroy() end) end
-        corpseGui = nil
-        corpseForward, corpseBack, corpseLeft, corpseRight = false,false,false,false
-        corpseJumpQueued = 0
     end
 
     local function hideCorpseGui()
@@ -1376,7 +1366,7 @@ return function(C, R, UI)
     end
 
     --=====================================================
-    -- Quick Revive (append-only)
+    -- Quick Revive (fixed)
     --=====================================================
     local PPS = game:GetService("ProximityPromptService")
 
@@ -1474,16 +1464,50 @@ return function(C, R, UI)
         return false
     end
 
+    local function promptWorldPos(prompt)
+        if not (prompt and prompt.Parent) then return nil end
+        local a = nil
+        pcall(function() a = prompt.Adornee end)
+        if a and a:IsA("BasePart") then
+            return a.Position
+        end
+        local parent = prompt.Parent
+        if parent:IsA("Attachment") then
+            return parent.WorldPosition
+        end
+        if parent:IsA("BasePart") then
+            return parent.Position
+        end
+        local bp = parent:FindFirstAncestorWhichIsA("BasePart")
+        if bp then return bp.Position end
+        return nil
+    end
+
     local function findRevivePrompt(body)
         if not (body and body.Parent) then return nil end
-        local p = body:FindFirstChildWhichIsA("ProximityPrompt", true)
-        if not p then return nil end
-        local a = tostring(p.ActionText or ""):lower()
-        local o = tostring(p.ObjectText or ""):lower()
-        if a:find("revive", 1, true) or o:find("revive", 1, true) then
-            return p
+        local best = nil
+        local bestScore = -1
+
+        for _,d in ipairs(body:GetDescendants()) do
+            if d:IsA("ProximityPrompt") then
+                local a = tostring(d.ActionText or ""):lower()
+                local o = tostring(d.ObjectText or ""):lower()
+                local n = tostring(d.Name or ""):lower()
+
+                local score = 0
+                if a:find("revive", 1, true) then score += 3 end
+                if o:find("revive", 1, true) then score += 2 end
+                if n:find("revive", 1, true) then score += 1 end
+
+                if score > bestScore then
+                    bestScore = score
+                    best = d
+                end
+            end
         end
-        return p
+
+        if best then return best end
+        return body:FindFirstChildWhichIsA("ProximityPrompt", true)
     end
 
     local function teleportToCF(cf)
@@ -1496,21 +1520,35 @@ return function(C, R, UI)
         return ok
     end
 
-    local function teleportNearBody(body)
-        local p = mainPart(body); if not p then return false end
-        local g = groundBelow(p.Position)
-        local dest = Vector3.new(p.Position.X, g.Y + 2.5, p.Position.Z)
-        local root = hrp(); if not root then return false end
-        local look = (p.Position - root.Position)
-        if look.Magnitude < 1e-3 then look = root.CFrame.LookVector end
-        return teleportToCF(CFrame.new(dest, dest + look.Unit))
+    local function teleportNearPrompt(prompt)
+        local root = hrp()
+        if not root then return false end
+        local pos = promptWorldPos(prompt)
+        if not pos then return false end
+
+        local g = groundBelow(pos)
+        local baseXZ = Vector3.new(pos.X, 0, pos.Z)
+        local rootXZ = Vector3.new(root.Position.X, 0, root.Position.Z)
+        local away = (rootXZ - baseXZ)
+        if away.Magnitude < 1e-3 then
+            local cam = workspace.CurrentCamera
+            local look = cam and cam.CFrame.LookVector or root.CFrame.LookVector
+            away = Vector3.new(-look.X, 0, -look.Z)
+        end
+        if away.Magnitude < 1e-3 then away = Vector3.new(1, 0, 0) end
+        away = away.Unit
+
+        local standOff = 2.1
+        local destXZ = baseXZ + away * standOff
+        local dest = Vector3.new(destXZ.X, g.Y + 2.5, destXZ.Z)
+
+        return teleportToCF(CFrame.new(dest, Vector3.new(pos.X, dest.Y, pos.Z)))
     end
 
     local function triggerPromptFast(prompt)
         if not (prompt and prompt.Parent) then return false end
-        pcall(function() prompt.RequiresLineOfSight = false end)
         pcall(function() prompt.Enabled = true end)
-        pcall(function() prompt.HoldDuration = math.min(tonumber(prompt.HoldDuration) or 0, 0.12) end)
+        pcall(function() prompt.RequiresLineOfSight = false end)
         pcall(function() prompt.MaxActivationDistance = math.max(tonumber(prompt.MaxActivationDistance) or 0, 50) end)
 
         local ok = pcall(function() PPS:TriggerPrompt(prompt) end)
@@ -1518,8 +1556,9 @@ return function(C, R, UI)
 
         local ok2 = pcall(function() prompt:InputHoldBegin() end)
         if not ok2 then return false end
+
         local hold = tonumber(prompt.HoldDuration) or 0
-        local waitTime = (hold > 0) and (hold + 0.05) or 0.05
+        local waitTime = (hold > 0) and (hold + 0.10) or 0.10
         task.delay(waitTime, function()
             if prompt and prompt.Parent then
                 pcall(function() prompt:InputHoldEnd() end)
@@ -1531,14 +1570,22 @@ return function(C, R, UI)
     local function quickReviveBody(body)
         if not QR_Enable then return end
         if not (body and body.Parent and body:IsA("Model")) then return end
-        if QR_SeenBodies[body] then return end
-        QR_SeenBodies[body] = true
-
         if not bodyIsForSelectedPlayer(body) then return end
+        if QR_SeenBodies[body] then return end
+
         if QR_Busy then
-            task.delay(0.35, function()
-                if body and body.Parent then
-                    QR_SeenBodies[body] = nil
+            task.delay(0.25, function()
+                if QR_Enable and body and body.Parent then
+                    quickReviveBody(body)
+                end
+            end)
+            return
+        end
+
+        local prompt = findRevivePrompt(body)
+        if not (prompt and prompt.Parent) then
+            task.delay(0.25, function()
+                if QR_Enable and body and body.Parent then
                     quickReviveBody(body)
                 end
             end)
@@ -1546,26 +1593,40 @@ return function(C, R, UI)
         end
 
         QR_Busy = true
+        QR_SeenBodies[body] = true
+
         task.spawn(function()
             local root = hrp()
-            if not root then QR_Busy = false return end
+            if not root then QR_Busy = false; QR_SeenBodies[body] = nil; return end
             local startCF = root.CFrame
 
-            pcall(function() teleportNearBody(body) end)
-            task.wait(0.05)
+            pcall(function() teleportNearPrompt(prompt) end)
+            task.wait(0.06)
 
-            local prompt = findRevivePrompt(body)
-            for _ = 1, 10 do
-                if prompt and prompt.Parent then
-                    pcall(function() triggerPromptFast(prompt) end)
+            for _ = 1, 12 do
+                if not (QR_Enable and body and body.Parent) then break end
+                local p2 = (prompt and prompt.Parent) and prompt or findRevivePrompt(body)
+                if p2 and p2.Parent then
+                    pcall(function() teleportNearPrompt(p2) end)
+                    task.wait(0.03)
+                    pcall(function() triggerPromptFast(p2) end)
                 end
-                task.wait(0.08)
-                if not (body and body.Parent) then break end
+                task.wait(0.10)
             end
 
             task.wait(0.05)
             pcall(function() teleportToCF(startCF) end)
+
             QR_Busy = false
+            if QR_Enable and body and body.Parent then
+                task.delay(2.0, function()
+                    if body and body.Parent then
+                        QR_SeenBodies[body] = nil
+                    end
+                end)
+            else
+                QR_SeenBodies[body] = nil
+            end
         end)
     end
 
@@ -1587,6 +1648,10 @@ return function(C, R, UI)
             Multi = true,
             Callback = function(v)
                 setSelectedFromDropdown(v)
+                if QR_Enable then
+                    QR_SeenBodies = setmetatable({}, { __mode = "k" })
+                    scanExistingBodiesOnce()
+                end
             end
         })
     else
@@ -1602,6 +1667,7 @@ return function(C, R, UI)
             Default = false,
             Callback = function(v)
                 QR_Enable = v and true or false
+                QR_SeenBodies = setmetatable({}, { __mode = "k" })
                 if QR_Enable then
                     scanExistingBodiesOnce()
                 end
@@ -1612,6 +1678,7 @@ return function(C, R, UI)
             Title = "Quick Revive: OFF",
             Callback = function(btn)
                 QR_Enable = not QR_Enable
+                QR_SeenBodies = setmetatable({}, { __mode = "k" })
                 if btn and btn.SetTitle then
                     btn:SetTitle("Quick Revive: " .. (QR_Enable and "ON" or "OFF"))
                 end
@@ -1635,13 +1702,45 @@ return function(C, R, UI)
 
         local conns = {}
 
+        local function tryFromDescendant(inst)
+            if not (QR_Enable and inst and inst.Parent) then return end
+            local m = nil
+            if inst:IsA("Model") then
+                m = inst
+            elseif inst:IsA("ProximityPrompt") then
+                m = inst:FindFirstAncestorOfClass("Model")
+            else
+                m = inst:FindFirstAncestorOfClass("Model")
+            end
+            if m and m:IsA("Model") and tostring(m.Name or ""):match("%sBody$") then
+                task.defer(function()
+                    quickReviveBody(m)
+                end)
+            end
+        end
+
         local function bindContainer(container)
             if not container then return end
+
             conns[#conns+1] = container.ChildAdded:Connect(function(ch)
                 if QR_Enable and ch and ch:IsA("Model") and tostring(ch.Name or ""):match("%sBody$") then
                     task.defer(function()
                         quickReviveBody(ch)
                     end)
+                end
+            end)
+
+            conns[#conns+1] = container.DescendantAdded:Connect(function(d)
+                if not QR_Enable then return end
+                if d:IsA("ProximityPrompt") then
+                    local a = tostring(d.ActionText or ""):lower()
+                    local o = tostring(d.ObjectText or ""):lower()
+                    local n = tostring(d.Name or ""):lower()
+                    if a:find("revive", 1, true) or o:find("revive", 1, true) or n:find("revive", 1, true) then
+                        tryFromDescendant(d)
+                    end
+                elseif d:IsA("Model") and tostring(d.Name or ""):match("%sBody$") then
+                    tryFromDescendant(d)
                 end
             end)
         end
