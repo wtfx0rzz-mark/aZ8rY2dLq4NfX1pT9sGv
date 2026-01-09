@@ -100,8 +100,8 @@ return function(C, R, UI)
     local ORB_HEIGHT              = 10
     local GROUND_ORB_DROP_HEIGHT  = 6
     local MAX_CONCURRENT          = 80
-    local START_STAGGER           = 0.005
-    local STEP_WAIT               = 0.016
+    local SCAN_INTERVAL           = 0.20
+    local MOVE_HZ                 = 30
 
     local LAND_MIN                = 0.35
     local LAND_MAX                = 0.85
@@ -132,6 +132,10 @@ return function(C, R, UI)
     local SPIRAL_MAX_RADIUS       = 8.0
     local GOLDEN_ANGLE            = 2.399963229728653
 
+    local OUTSIDE_LOGS_ENABLED    = true
+    local OUTSIDE_LOG_SCAN_INT    = 0.85
+    local OUTSIDE_LOG_MAX_DIST    = 260
+
     local INFLT_ATTR = "OrbInFlightAt"
     local JOB_ATTR   = "OrbJob"
     local DONE_ATTR  = "OrbDelivered"
@@ -149,7 +153,6 @@ return function(C, R, UI)
     local activeCount  = 0
     local unstickConn  = nil
     local preclaimConn = nil
-    local waveAcc      = 0.0
     local finalized    = {}
     local fruitNudged  = {}
     local dropStacks   = {}
@@ -307,7 +310,15 @@ return function(C, R, UI)
 
     local ALLOW_OUTSIDE_ITEMS = { ["Log"] = true }
 
+    local function isDirectItemChild(m)
+        local itemsFolder = itemsRootOrNil()
+        if not itemsFolder then return true end
+        if not (m and m.Parent) then return false end
+        return m.Parent == itemsFolder
+    end
+
     local function nameMatches(selectedSet, m)
+        if not (selectedSet and m) then return false end
         local itemsFolder = itemsRootOrNil()
         if itemsFolder and not m:IsDescendantOf(itemsFolder) then
             local nm0 = m and m.Name or ""
@@ -354,22 +365,27 @@ return function(C, R, UI)
         return nm == "Apple" or nm == "Berry"
     end
 
-    local function topModelUnderItems(part, itemsFolder)
-        local cur = part
-        local lastModel = nil
-        while cur and cur ~= WS and cur ~= itemsFolder do
-            if cur:IsA("Model") then lastModel = cur end
+    local function rootItemUnderItems(inst)
+        local itemsFolder = itemsRootOrNil()
+        if not (itemsFolder and inst) then return nil end
+        local cur = inst
+        while cur and cur.Parent and cur.Parent ~= itemsFolder and cur ~= itemsFolder do
             cur = cur.Parent
         end
-        if lastModel and itemsFolder and lastModel.Parent == itemsFolder then return lastModel end
-        return lastModel
+        if cur and cur.Parent == itemsFolder and (cur:IsA("Model") or cur:IsA("BasePart")) then
+            return cur
+        end
+        return nil
     end
 
     local function nearestSelectedModelFromPart(part, selectedSet)
-        if not part or not part:IsA("BasePart") then return nil end
+        if not (part and part:IsA("BasePart")) then return nil end
         local itemsFolder = itemsRootOrNil()
-        local m = topModelUnderItems(part, itemsFolder) or part:FindFirstAncestorOfClass("Model")
-        if m and nameMatches(selectedSet, m) then return m end
+        if itemsFolder then
+            local root = rootItemUnderItems(part)
+            if root and isDirectItemChild(root) and nameMatches(selectedSet, root) then return root end
+            return nil
+        end
         if nameMatches(selectedSet, part) then return part end
         return nil
     end
@@ -394,29 +410,21 @@ return function(C, R, UI)
         if not (m and m.Parent) then return end
         if fruitNudged[m] then return end
         if inflight[m] and inflight[m].dragging then return end
-
         local mp = mainPart(m)
         if not mp then return end
         fruitNudged[m] = true
-
         task.spawn(function()
             local tmp = { dragging = false, stopped = false }
             tryStartDrag(m, tmp)
-
             for _,p in ipairs(allParts(m)) do
                 pcall(function() p:SetNetworkOwner(lp) end)
                 p.AssemblyLinearVelocity  = Vector3.new()
                 p.AssemblyAngularVelocity = Vector3.new()
             end
-
             local mass = math.max(mp:GetMass(), 1)
             local dir = Vector3.new((math.random() - 0.5) * 2, 0, (math.random() - 0.5) * 2)
             if dir.Magnitude < 0.2 then dir = Vector3.new(1, 0, 0) else dir = dir.Unit end
-
-            pcall(function()
-                mp:ApplyImpulse(dir * (120 * mass) + Vector3.new(0, 80 * mass, 0))
-            end)
-
+            pcall(function() mp:ApplyImpulse(dir * (120 * mass) + Vector3.new(0, 80 * mass, 0)) end)
             pcall(function()
                 mp:ApplyAngularImpulse(Vector3.new(
                     (math.random() - 0.5) * 300,
@@ -424,11 +432,7 @@ return function(C, R, UI)
                     (math.random() - 0.5) * 300
                 ) * mass)
             end)
-
-            task.delay(0.18, function()
-                tryStopDrag(m, tmp)
-            end)
-
+            task.delay(0.18, function() tryStopDrag(m, tmp) end)
             task.delay(0.9, function()
                 for _,p in ipairs(allParts(m)) do
                     pcall(function() p:SetNetworkOwner(nil) end)
@@ -457,6 +461,10 @@ return function(C, R, UI)
         if finalized[m] then return false end
 
         local itemsFolder = itemsRootOrNil()
+        if itemsFolder and m:IsDescendantOf(itemsFolder) and not isDirectItemChild(m) then
+            return false
+        end
+
         if itemsFolder and not m:IsDescendantOf(itemsFolder) then
             local nm0 = m.Name or ""
             if not (ALLOW_OUTSIDE_ITEMS[nm0] and selectedSet and selectedSet[nm0]) then
@@ -497,10 +505,8 @@ return function(C, R, UI)
     local function computeOrbGroundBase(index)
         local base = CUSTOM_ORB_BASES[index]
         if not base then return nil end
-
         local origin = base + Vector3.new(0, 80, 0)
         local dir    = Vector3.new(0, -300, 0)
-
         local rp = RaycastParams.new()
         rp.FilterType = Enum.RaycastFilterType.Exclude
         local ignore = {}
@@ -510,7 +516,6 @@ return function(C, R, UI)
         if ch then ignore[#ignore+1] = ch end
         rp.FilterDescendantsInstances = ignore
         rp.IgnoreWater = true
-
         local result = WS:Raycast(origin, dir, rp)
         if result and result.Position then return result.Position end
         return base
@@ -554,13 +559,11 @@ return function(C, R, UI)
     }
 
     local overlapParams = OverlapParams.new()
-    overlapParams.MaxParts = 1000
+    overlapParams.MaxParts = 1200
 
-    local function refreshOverlapFilter(selectedSet)
+    local function refreshOverlapFilter()
         local itemsFolder = itemsRootOrNil()
-        local allowOutside = (selectedSet and selectedSet["Log"]) and true or false
-
-        if itemsFolder and not allowOutside then
+        if itemsFolder then
             overlapParams.FilterType = Enum.RaycastFilterType.Include
             overlapParams.FilterDescendantsInstances = { itemsFolder }
         else
@@ -575,67 +578,39 @@ return function(C, R, UI)
         local root = hrp()
         if not root then return {} end
         local rootPos = root.Position
-
         local uniq, out = {}, {}
-
         if itemsFolder then
-            for _,d in ipairs(itemsFolder:GetDescendants()) do
-                local m = nil
-                if d:IsA("Model") then
-                    if nameMatches(selectedSet, d) then m = d end
-                elseif d:IsA("BasePart") then
-                    m = nearestSelectedModelFromPart(d, selectedSet)
-                end
-                if m and not uniq[m] and canPick(m, selectedSet, jobId) then
-                    local mp = mainPart(m)
+            for _,d in ipairs(itemsFolder:GetChildren()) do
+                if (d:IsA("Model") or d:IsA("BasePart")) and canPick(d, selectedSet, jobId) then
+                    local mp = mainPart(d)
                     if mp then
                         local dist = (mp.Position - rootPos).Magnitude
                         if (not maxDist) or dist <= maxDist then
-                            uniq[m] = true
-                            out[#out+1] = m
+                            uniq[d] = true
+                            out[#out+1] = d
                         end
                     end
                 end
             end
         end
-
-        if selectedSet["Log"] then
-            for _,d in ipairs(WS:GetDescendants()) do
-                if d:IsA("BasePart") and d.Name == "Log" then
-                    local m = nearestSelectedModelFromPart(d, selectedSet) or d
-                    if m and not uniq[m] and canPick(m, selectedSet, jobId) then
-                        local mp = mainPart(m)
-                        if mp then
-                            local dist = (mp.Position - rootPos).Magnitude
-                            if (not maxDist) or dist <= maxDist then
-                                uniq[m] = true
-                                out[#out+1] = m
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
         return out
     end
 
     local function collectCandidatesFromSet(selectedSet, jobId, maxDist)
         if not selectedSet then return {} end
         local itemsFolder = itemsRootOrNil()
-        if not itemsFolder and not selectedSet["Log"] then return {} end
+        if not itemsFolder then return {} end
 
         local root = hrp()
         if not root then return {} end
         local origin = root.Position
         local rad = maxDist or MAX_DIST_DEFAULT
 
-        refreshOverlapFilter(selectedSet)
+        refreshOverlapFilter()
 
         local ok, parts = pcall(function()
             return WS:GetPartBoundsInRadius(origin, rad, overlapParams)
         end)
-
         if not ok or type(parts) ~= "table" then
             return collectCandidatesFromSet_FullScan(selectedSet, jobId, maxDist)
         end
@@ -649,10 +624,6 @@ return function(C, R, UI)
                     out[#out+1] = m
                 end
             end
-        end
-
-        if selectedSet["Log"] and #out == 0 then
-            return collectCandidatesFromSet_FullScan(selectedSet, jobId, maxDist)
         end
 
         return out
@@ -741,7 +712,6 @@ return function(C, R, UI)
             end
         end
         if not board then return nil end
-
         local mp = mainPart(board)
         if not mp then
             local cf = board:GetPivot()
@@ -759,7 +729,6 @@ return function(C, R, UI)
         local ch = lp.Character
         local origin = Vector3.new(xz.X, SKY_RAY_START_Y, xz.Z)
         local dir = Vector3.new(0, -SKY_RAY_LEN, 0)
-
         local rp = RaycastParams.new()
         rp.FilterType = Enum.RaycastFilterType.Exclude
         local ignore = {}
@@ -768,7 +737,6 @@ return function(C, R, UI)
         if ch then ignore[#ignore+1] = ch end
         rp.FilterDescendantsInstances = ignore
         rp.IgnoreWater = true
-
         local res = WS:Raycast(origin, dir, rp)
         if res and res.Position then return res.Position end
         return Vector3.new(xz.X, 0, xz.Z)
@@ -781,9 +749,7 @@ return function(C, R, UI)
             p.AssemblyLinearVelocity  = Vector3.new()
             p.AssemblyAngularVelocity = Vector3.new()
         end
-        if tgt then
-            setPivot(m, CFrame.new(tgt))
-        end
+        if tgt then setPivot(m, CFrame.new(tgt)) end
         local info = inflight[m]
         if info then
             info.staged = true
@@ -903,61 +869,10 @@ return function(C, R, UI)
         zeroAssembly(m)
 
         local centerXZ = Vector3.new(destBaseVec.X, 0, destBaseVec.Z)
-        local rec = { snap = snap, conn = nil, lastD = math.huge, lastT = os.clock(), staged = false, dragging = false, stopped = false, counted = true, destKey = destKey or "default", off = off, centerXZ = centerXZ, dropKind = dropKind or "ground" }
+        local rec = { snap = snap, lastD = math.huge, lastT = os.clock(), staged = false, dragging = false, stopped = false, counted = true, destKey = destKey or "default", off = off, centerXZ = centerXZ, dropKind = dropKind or "ground", targetFn = target }
         inflight[m] = rec
         activeCount = activeCount + 1
-
         tryStartDrag(m, rec)
-
-        rec.conn = Run.Heartbeat:Connect(function(dt)
-            if not (running and m and m.Parent) then
-                if rec.conn then rec.conn:Disconnect() end
-                abortRestore(m, rec)
-                return
-            end
-            if rec.staged then return end
-
-            local pivot = m.GetPivot and m:GetPivot() or nil
-            local pos = (pivot and pivot.Position) or (mainPart(m) and mainPart(m).Position) or nil
-            if not pos then
-                if rec.conn then rec.conn:Disconnect() end
-                abortRestore(m, rec)
-                return
-            end
-
-            local tgt = target()
-            local flatDelta = Vector3.new(tgt.X - pos.X, 0, tgt.Z - pos.Z)
-            local distH = flatDelta.Magnitude
-
-            if distH <= ARRIVE_EPS_H and math.abs(tgt.Y - pos.Y) <= 1.2 then
-                tryStopDrag(m, rec)
-                if rec.counted then
-                    rec.counted = false
-                    activeCount = math.max(0, activeCount - 1)
-                end
-                stageForRelease(m, snap, tgt, rec.destKey, rec.centerXZ, rec.dropKind)
-                if rec.conn then rec.conn:Disconnect() end
-                return
-            end
-
-            if distH >= rec.lastD - 0.02 then
-                if os.clock() - rec.lastT >= STALL_SEC then
-                    off = landingOffset(m, tostring(jobId) .. tostring(os.clock()))
-                    rec.off = off
-                    rec.lastT = os.clock()
-                end
-            else
-                rec.lastT = os.clock()
-            end
-            rec.lastD = distH
-
-            local step = math.min(DRAG_SPEED * dt, math.max(0, distH))
-            local dir  = distH > 1e-3 and (flatDelta / math.max(distH,1e-3)) or Vector3.new()
-            local vy   = math.clamp((tgt.Y - pos.Y), -7, 7)
-            local newPos = Vector3.new(pos.X, pos.Y + vy * dt * 10, pos.Z) + dir * step
-            local look = (dir.Magnitude > 0 and dir) or Vector3.new(0,0,1)
-            setPivot(m, CFrame.new(newPos, newPos + look))
-        end)
     end
 
     local function flushStaleStaged()
@@ -1015,7 +930,7 @@ return function(C, R, UI)
 
                 local function handleHit(result)
                     if not result or not result.Instance then return end
-                    local m = result.Instance:FindFirstAncestorOfClass("Model") or result.Instance
+                    local m = rootItemUnderItems(result.Instance)
                     if not m or seen[m] then return end
                     seen[m] = true
 
@@ -1060,9 +975,46 @@ return function(C, R, UI)
         end
     end
 
-    local function wave()
+    local outsideLogAcc = 0
+    local outsideLogCache = {}
+
+    local function collectOutsideLogs(jobId)
+        if not OUTSIDE_LOGS_ENABLED then return {} end
+        local root = hrp()
+        if not root then return {} end
+        local origin = root.Position
+        local itemsFolder = itemsRootOrNil()
+        local uniq, out = {}, {}
+        for _,d in ipairs(WS:GetDescendants()) do
+            if d:IsA("BasePart") and d.Name == "Log" then
+                if itemsFolder and d:IsDescendantOf(itemsFolder) then
+                else
+                    if not isUnderLogWall(d) then
+                        local dist = (d.Position - origin).Magnitude
+                        if dist <= OUTSIDE_LOG_MAX_DIST then
+                            local m = d:FindFirstAncestorOfClass("Model") or d
+                            if m and not uniq[m] then
+                                uniq[m] = true
+                                out[#out+1] = m
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        local filtered = {}
+        local selectedSet = currentSelectedSet()
+        for i = 1, #out do
+            local m = out[i]
+            if canPick(m, selectedSet, jobId) then
+                filtered[#filtered+1] = m
+            end
+        end
+        return filtered
+    end
+
+    local function wave(jobId)
         if not CURRENT_MODE then return end
-        local jobId = tostring(os.clock())
 
         if CURRENT_MODE == "orbs" then
             local list = getCandidatesForOrbs(jobId)
@@ -1070,7 +1022,6 @@ return function(C, R, UI)
                 if not running then break end
                 if #releaseQueue >= MAX_LINED_ITEMS then break end
                 if activeCount >= MAX_CONCURRENT then break end
-
                 local m = list[i]
                 if m and m.Parent and not inflight[m] then
                     local idx = orbIndexForModel(m)
@@ -1078,7 +1029,6 @@ return function(C, R, UI)
                         local base = getOrbBasePosition(idx)
                         if base then
                             startConveyor(m, jobId, base, "orb"..tostring(idx), "ground")
-                            task.wait(START_STAGGER)
                         end
                     end
                 end
@@ -1091,14 +1041,81 @@ return function(C, R, UI)
             if not running then break end
             if #releaseQueue >= MAX_LINED_ITEMS then break end
             if activeCount >= MAX_CONCURRENT then break end
-
             local m = list[i]
             if m and m.Parent and not inflight[m] then
                 local dest = orbPosVec
                 if dest then
                     local kind = (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap") and "air" or "ground"
                     startConveyor(m, jobId, dest, "main", kind)
-                    task.wait(START_STAGGER)
+                end
+            end
+        end
+
+        local sel = currentSelectedSet()
+        if sel and sel["Log"] then
+            if activeCount < MAX_CONCURRENT and #releaseQueue < MAX_LINED_ITEMS then
+                for i = 1, #outsideLogCache do
+                    if not running then break end
+                    if #releaseQueue >= MAX_LINED_ITEMS then break end
+                    if activeCount >= MAX_CONCURRENT then break end
+                    local m = outsideLogCache[i]
+                    if m and m.Parent and not inflight[m] then
+                        local dest = orbPosVec
+                        if dest then
+                            local kind = (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap") and "air" or "ground"
+                            startConveyor(m, jobId, dest, "main", kind)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local function updateInflight(dt)
+        for m,rec in pairs(inflight) do
+            if not (m and m.Parent and running) then
+                abortRestore(m, rec)
+            else
+                if not rec.staged then
+                    local pivot = m.GetPivot and m:GetPivot() or nil
+                    local pos = (pivot and pivot.Position) or (mainPart(m) and mainPart(m).Position) or nil
+                    if not pos then
+                        abortRestore(m, rec)
+                    else
+                        local tgt = rec.targetFn and rec.targetFn() or nil
+                        if not tgt then
+                            abortRestore(m, rec)
+                        else
+                            local flatDelta = Vector3.new(tgt.X - pos.X, 0, tgt.Z - pos.Z)
+                            local distH = flatDelta.Magnitude
+
+                            if distH <= ARRIVE_EPS_H and math.abs(tgt.Y - pos.Y) <= 1.2 then
+                                tryStopDrag(m, rec)
+                                if rec.counted then
+                                    rec.counted = false
+                                    activeCount = math.max(0, activeCount - 1)
+                                end
+                                stageForRelease(m, rec.snap, tgt, rec.destKey, rec.centerXZ, rec.dropKind)
+                            else
+                                if distH >= rec.lastD - 0.02 then
+                                    if os.clock() - rec.lastT >= STALL_SEC then
+                                        rec.off = landingOffset(m, tostring(rec.destKey) .. tostring(os.clock()))
+                                        rec.lastT = os.clock()
+                                    end
+                                else
+                                    rec.lastT = os.clock()
+                                end
+                                rec.lastD = distH
+
+                                local step = math.min(DRAG_SPEED * dt, math.max(0, distH))
+                                local dir  = distH > 1e-3 and (flatDelta / math.max(distH,1e-3)) or Vector3.new()
+                                local vy   = math.clamp((tgt.Y - pos.Y), -7, 7)
+                                local newPos = Vector3.new(pos.X, pos.Y + vy * dt * 10, pos.Z) + dir * step
+                                local look = (dir.Magnitude > 0 and dir) or Vector3.new(0,0,1)
+                                setPivot(m, CFrame.new(newPos, newPos + look))
+                            end
+                        end
+                    end
                 end
             end
         end
@@ -1118,7 +1135,6 @@ return function(C, R, UI)
         releaseQueue = {}
 
         for m,rec in pairs(inflight) do
-            if rec and rec.conn then rec.conn:Disconnect() end
             abortRestore(m, rec)
         end
 
@@ -1171,7 +1187,7 @@ return function(C, R, UI)
 
                 local function handleHit(result)
                     if not result or not result.Instance then return end
-                    local m = result.Instance:FindFirstAncestorOfClass("Model")
+                    local m = rootItemUnderItems(result.Instance)
                     if not m or seen[m] then return end
                     seen[m] = true
                     if not m.Parent then return end
@@ -1219,6 +1235,8 @@ return function(C, R, UI)
         finalized      = {}
         fruitNudged    = {}
         dropStacks     = {}
+        outsideLogCache = {}
+        outsideLogAcc = 0
 
         if mode == "fuel" or mode == "scrap" or mode == "all" then
             local pos, color
@@ -1253,17 +1271,34 @@ return function(C, R, UI)
         running = true
         releaseQueue = {}
         releaseAcc   = 0
-        waveAcc      = 0
         activeCount  = 0
+
+        local scanAcc = 0
+        local moveAcc = 0
+        local moveInterval = 1 / MOVE_HZ
 
         if hb then hb:Disconnect() hb = nil end
         hb = Run.Heartbeat:Connect(function(dt)
             if not running then return end
 
-            waveAcc = waveAcc + dt
-            if waveAcc >= STEP_WAIT then
-                waveAcc = waveAcc - STEP_WAIT
-                wave()
+            scanAcc = scanAcc + dt
+            if scanAcc >= SCAN_INTERVAL then
+                scanAcc = scanAcc - SCAN_INTERVAL
+                local jobId = tostring(os.clock())
+                outsideLogAcc = outsideLogAcc + SCAN_INTERVAL
+                local sel = currentSelectedSet()
+                if sel and sel["Log"] and OUTSIDE_LOGS_ENABLED and outsideLogAcc >= OUTSIDE_LOG_SCAN_INT then
+                    outsideLogAcc = 0
+                    outsideLogCache = collectOutsideLogs(jobId)
+                end
+                wave(jobId)
+            end
+
+            moveAcc = moveAcc + dt
+            if moveAcc >= moveInterval then
+                local step = moveAcc
+                moveAcc = 0
+                updateInflight(step)
             end
 
             releaseAcc = releaseAcc + dt
@@ -1277,6 +1312,7 @@ return function(C, R, UI)
                     releaseOne(rec)
                 end
             end
+
             flushStaleStaged()
         end)
     end
@@ -1322,7 +1358,7 @@ return function(C, R, UI)
     local function makeOrbDropdown(index)
         return tab:Dropdown({
             Title = ("Orb %d Items"):format(index),
-            Values = orbDropdownValues[index],
+            Values = { unpack(orbDropdownValues[index]) },
             Multi = true,
             AllowNone = true,
             Callback = function(selection)
