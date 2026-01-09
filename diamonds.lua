@@ -197,6 +197,7 @@ return function(C, R, UI)
         end
     end
 
+    -- IMPORTANT: integrate with your existing EdgeButtons -> EdgeStack
     local function getOrCreateEdgeStack()
         local playerGui = lp:WaitForChild("PlayerGui")
 
@@ -315,9 +316,10 @@ return function(C, R, UI)
         end)
     end
 
+    -- Fire Prompts (fixed: PromptShown second arg is inputType, not player)
     local firePromptsConn = nil
     local firePromptLastAt = setmetatable({}, { __mode = "k" })
-    local FIRE_PROMPT_COOLDOWN = 0.35
+    local FIRE_PROMPT_COOLDOWN = 0.25
 
     local function triggerPrompt(prompt)
         if not (prompt and prompt.Parent and prompt.Enabled) then return false end
@@ -326,20 +328,33 @@ return function(C, R, UI)
         if t and (now() - t) < FIRE_PROMPT_COOLDOWN then return false end
         firePromptLastAt[prompt] = now()
 
+        pcall(function() prompt.RequiresLineOfSight = false end)
+        pcall(function()
+            if typeof(prompt.HoldDuration) == "number" and prompt.HoldDuration > 0.12 then
+                prompt.HoldDuration = 0.12
+            end
+        end)
+
+        -- sometimes TriggerPrompt needs a frame after shown
+        Run.Heartbeat:Wait()
+
         local ok = pcall(function()
             PPS:TriggerPrompt(prompt)
         end)
         if ok then return true end
 
+        local ok2 = pcall(function()
+            PPS:TriggerPrompt(prompt, lp)
+        end)
+        if ok2 then return true end
+
         local hold = 0
         pcall(function() hold = tonumber(prompt.HoldDuration) or 0 end)
 
-        local ok2 = pcall(function()
-            prompt:InputHoldBegin()
-        end)
-        if not ok2 then return false end
+        local ok3 = pcall(function() prompt:InputHoldBegin() end)
+        if not ok3 then return false end
 
-        task.delay(math.max(0.05, hold + 0.05), function()
+        task.delay(math.max(0.03, hold + 0.03), function()
             if prompt and prompt.Parent then
                 pcall(function() prompt:InputHoldEnd() end)
             end
@@ -350,11 +365,10 @@ return function(C, R, UI)
 
     local function enableFirePrompts()
         if firePromptsConn then return end
-        firePromptsConn = PPS.PromptShown:Connect(function(prompt, player)
+        firePromptsConn = PPS.PromptShown:Connect(function(prompt, _inputType)
             if not (C.State and C.State.DiamondsFirePrompts) then return end
-            if player ~= lp then return end
             if not (prompt and prompt:IsA("ProximityPrompt")) then return end
-            triggerPrompt(prompt)
+            task.defer(function() triggerPrompt(prompt) end)
         end)
     end
 
