@@ -80,7 +80,7 @@ return function(C, R, UI)
         local PLACE_USE_NUDGE_DOWN     = false
         local PLACE_NUDGE_DOWN_STUDS   = 16
 
-        local RELEASE_ZERO_FRAMES = 4
+        local RELEASE_DAMP_FRAMES = 6
 
         local function waitIf(v)
             v = tonumber(v)
@@ -194,6 +194,16 @@ return function(C, R, UI)
         local function setAnchoredModel(m, on)
             for _,d in ipairs(m:GetDescendants()) do
                 if d:IsA("BasePart") then d.Anchored = on end
+            end
+        end
+
+        local function dampHorizontalMomentum(m)
+            for _,d in ipairs(m:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    local v = d.AssemblyLinearVelocity
+                    d.AssemblyLinearVelocity  = Vector3.new(0, v.Y, 0)
+                    d.AssemblyAngularVelocity = Vector3.new()
+                end
             end
         end
 
@@ -461,7 +471,6 @@ return function(C, R, UI)
                     pcall(function() mp:SetNetworkOwner(lp) end)
                     setNoCollideModel(m, true)
                     setAnchoredModel(m, true)
-                    zeroAllMomentum(m)
                     addGather(m)
                     dragKeepAlive(m)
                 until true
@@ -500,7 +509,6 @@ return function(C, R, UI)
                     pcall(function() mp:SetNetworkOwner(lp) end)
                     setNoCollideModel(m, true)
                     setAnchoredModel(m, true)
-                    zeroAllMomentum(m)
                     addGather(m)
                     dragKeepAlive(m)
                 until true
@@ -529,7 +537,6 @@ return function(C, R, UI)
                 pcall(function() mp2:SetNetworkOwner(lp) end)
                 setNoCollideModel(child, true)
                 setAnchoredModel(child, true)
-                zeroAllMomentum(child)
                 addGather(child)
                 dragKeepAlive(child)
             end)
@@ -572,11 +579,12 @@ return function(C, R, UI)
         end
 
         local dropCounter = 0
-        local function ringOffset()
+        local function ringOffset(extraR)
             dropCounter += 1
             local i = dropCounter
             local a = i * 2.399963229728653
-            local r = math.min(CLUSTER_RADIUS_MIN + CLUSTER_RADIUS_STEP * (i - 1), CLUSTER_RADIUS_MAX)
+            local baseR = math.min(CLUSTER_RADIUS_MIN + CLUSTER_RADIUS_STEP * (i - 1), CLUSTER_RADIUS_MAX)
+            local r = math.clamp(baseR + (tonumber(extraR) or 0), CLUSTER_RADIUS_MIN, CLUSTER_RADIUS_MAX + 3.0)
             return Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
         end
 
@@ -587,8 +595,16 @@ return function(C, R, UI)
             return forward, basePos
         end
 
-        local function sprinkleCF(baseForward, basePos)
-            local off = ringOffset()
+        local function modelRadiusBoost(m)
+            if not (m and m:IsA("Model")) then return 0 end
+            local ok, sz = pcall(function() return m:GetExtentsSize() end)
+            if not ok or typeof(sz) ~= "Vector3" then return 0 end
+            local xz = math.max(sz.X, sz.Z)
+            return math.clamp((xz * 0.18), 0, 3.0)
+        end
+
+        local function sprinkleCF(baseForward, basePos, m)
+            local off = ringOffset(modelRadiusBoost(m))
             local jitterX = (math.random() - 0.5) * 0.14
             local jitterZ = (math.random() - 0.5) * 0.14
             local waveY = math.sin(dropCounter * AIR_DROP_WAVE_FREQUENCY) * AIR_DROP_WAVE_AMPLITUDE
@@ -608,7 +624,7 @@ return function(C, R, UI)
             setAnchoredModel(m, true)
             zeroAllMomentum(m)
 
-            local cf = sprinkleCF(baseForward, basePos)
+            local cf = sprinkleCF(baseForward, basePos, m)
             pivotModel(m, cf)
             zeroAllMomentum(m)
 
@@ -626,9 +642,9 @@ return function(C, R, UI)
                 end
             end
 
-            for _ = 1, RELEASE_ZERO_FRAMES do
+            for _ = 1, RELEASE_DAMP_FRAMES do
                 if not (m and m.Parent) then break end
-                zeroAllMomentum(m)
+                dampHorizontalMomentum(m)
                 Run.Heartbeat:Wait()
             end
 
