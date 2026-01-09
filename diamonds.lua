@@ -9,6 +9,7 @@ return function(C, R, UI)
     local RS       = Services.RS      or game:GetService("ReplicatedStorage")
     local WS       = Services.WS      or game:GetService("Workspace")
     local Run      = Services.Run     or game:GetService("RunService")
+    local PPS      = game:GetService("ProximityPromptService")
 
     local lp  = C.LocalPlayer or Players.LocalPlayer
     local tab = UI.Tabs.Diamonds
@@ -17,9 +18,10 @@ return function(C, R, UI)
     if C.State.DiamondsAutoTake == nil then C.State.DiamondsAutoTake = false end
     if C.State.DiamondsCycle == nil then C.State.DiamondsCycle = false end
     if C.State.DiamondsSetLocations == nil then C.State.DiamondsSetLocations = false end
-    if C.State.DiamondsCycleInterval == nil then C.State.DiamondsCycleInterval = 3 end
+    if C.State.DiamondsCycleInterval == nil then C.State.DiamondsCycleInterval = 3 end -- minutes
     if C.State.DiamondsLocations == nil then C.State.DiamondsLocations = {} end
     if C.State.DiamondsCycleIndex == nil then C.State.DiamondsCycleIndex = 1 end
+    if C.State.DiamondsFirePrompts == nil then C.State.DiamondsFirePrompts = false end
 
     local RADIUS             = 75
     local SCAN_INTERVAL      = 0.15
@@ -195,7 +197,6 @@ return function(C, R, UI)
         end
     end
 
-    -- IMPORTANT: integrate with your existing EdgeButtons -> EdgeStack
     local function getOrCreateEdgeStack()
         local playerGui = lp:WaitForChild("PlayerGui")
 
@@ -231,7 +232,7 @@ return function(C, R, UI)
         return stack
     end
 
-    local SET_LOC_ORDER = 6 -- same style/stack as auto.lua; adjust if you want it higher/lower
+    local SET_LOC_ORDER = 6
 
     local function getOrCreateSetLocationEdgeButton()
         local stack = getOrCreateEdgeStack()
@@ -314,6 +315,54 @@ return function(C, R, UI)
         end)
     end
 
+    local firePromptsConn = nil
+    local firePromptLastAt = setmetatable({}, { __mode = "k" })
+    local FIRE_PROMPT_COOLDOWN = 0.35
+
+    local function triggerPrompt(prompt)
+        if not (prompt and prompt.Parent and prompt.Enabled) then return false end
+
+        local t = firePromptLastAt[prompt]
+        if t and (now() - t) < FIRE_PROMPT_COOLDOWN then return false end
+        firePromptLastAt[prompt] = now()
+
+        local ok = pcall(function()
+            PPS:TriggerPrompt(prompt)
+        end)
+        if ok then return true end
+
+        local hold = 0
+        pcall(function() hold = tonumber(prompt.HoldDuration) or 0 end)
+
+        local ok2 = pcall(function()
+            prompt:InputHoldBegin()
+        end)
+        if not ok2 then return false end
+
+        task.delay(math.max(0.05, hold + 0.05), function()
+            if prompt and prompt.Parent then
+                pcall(function() prompt:InputHoldEnd() end)
+            end
+        end)
+
+        return true
+    end
+
+    local function enableFirePrompts()
+        if firePromptsConn then return end
+        firePromptsConn = PPS.PromptShown:Connect(function(prompt, player)
+            if not (C.State and C.State.DiamondsFirePrompts) then return end
+            if player ~= lp then return end
+            if not (prompt and prompt:IsA("ProximityPrompt")) then return end
+            triggerPrompt(prompt)
+        end)
+    end
+
+    local function disableFirePrompts()
+        if firePromptsConn then firePromptsConn:Disconnect() firePromptsConn = nil end
+        firePromptLastAt = setmetatable({}, { __mode = "k" })
+    end
+
     tab:Section({ Title = "Teleport" })
 
     tab:Toggle({
@@ -341,7 +390,7 @@ return function(C, R, UI)
     })
 
     tab:Slider({
-        Title = "Cycle Interval (sec)",
+        Title = "Cycle Interval (min)",
         Value = { Min = 1, Max = 10, Default = math.clamp(tonumber(C.State.DiamondsCycleInterval) or 3, 1, 10) },
         Callback = function(v)
             local nv = v
@@ -396,11 +445,11 @@ return function(C, R, UI)
 
         task.spawn(function()
             while true do
-                local interval = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 3, 1, 10)
+                local minutes = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 3, 1, 10)
                 if C.State and C.State.DiamondsCycle then
                     pcall(cycleStep)
                 end
-                task.wait(interval)
+                task.wait(minutes * 60)
             end
         end)
     end
@@ -414,5 +463,24 @@ return function(C, R, UI)
     else
         showSetLocationButton(false)
         ensureOrbsVisible(false)
+    end
+
+    tab:Section({ Title = "Prompts" })
+
+    tab:Toggle({
+        Title = "Fire Prompts",
+        Default = C.State.DiamondsFirePrompts and true or false,
+        Callback = function(on)
+            C.State.DiamondsFirePrompts = on and true or false
+            if C.State.DiamondsFirePrompts then
+                enableFirePrompts()
+            else
+                disableFirePrompts()
+            end
+        end
+    })
+
+    if C.State.DiamondsFirePrompts then
+        enableFirePrompts()
     end
 end
