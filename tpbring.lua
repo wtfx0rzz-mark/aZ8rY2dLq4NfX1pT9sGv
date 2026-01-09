@@ -109,8 +109,11 @@ return function(C, R, UI)
     local STALL_SEC               = 0.6
 
     local HOVER_ABOVE_ORB         = 1.2
-    local RELEASE_RATE_HZ         = 18
-    local MAX_RELEASE_PER_TICK    = 2
+
+    local RELEASE_RATE_HZ_DEFAULT      = 18
+    local MAX_RELEASE_PER_TICK_DEFAULT = 2
+    local releaseRateHz               = RELEASE_RATE_HZ_DEFAULT
+    local maxReleasePerTick           = MAX_RELEASE_PER_TICK_DEFAULT
 
     local STAGE_TIMEOUT_S         = 1.5
     local ORB_UNSTICK_RAD         = 2.0
@@ -128,13 +131,15 @@ return function(C, R, UI)
     local PLACE_UP                = 1.6
 
     local AIR_RELEASE_UP          = 0.6
-    local SPIRAL_STEP             = 0.8
-    local SPIRAL_MAX_RADIUS       = 8.0
-    local GOLDEN_ANGLE            = 2.399963229728653
 
     local OUTSIDE_LOGS_ENABLED    = true
     local OUTSIDE_LOG_SCAN_INT    = 0.85
     local OUTSIDE_LOG_MAX_DIST    = 260
+
+    local AIR_TOUCH_DROP_OFFSET_Y = 10
+    local AIR_TOUCH_ORB_SIZE      = 6.0
+    local AIR_RELEASE_RATE_HZ     = 160
+    local AIR_MAX_RELEASE_PER_TICK= 30
 
     local INFLT_ATTR = "OrbInFlightAt"
     local JOB_ATTR   = "OrbJob"
@@ -146,6 +151,8 @@ return function(C, R, UI)
     local running      = false
     local hb           = nil
     local orb          = nil
+    local orbTouch     = nil
+    local touchConn    = nil
     local orbPosVec    = nil
     local inflight     = {}
     local releaseQueue = {}
@@ -637,51 +644,14 @@ return function(C, R, UI)
         return collectCandidatesFromSet(orbUnionSet, jobId, maxDistOrbs)
     end
 
-    local function spawnOrbAt(pos, color)
-        if orb then pcall(function() orb:Destroy() end) end
-        local o = Instance.new("Part")
-        o.Name = "tp_orb_fixed"
-        o.Shape = Enum.PartType.Ball
-        o.Size = Vector3.new(1.5,1.5,1.5)
-        o.Material = Enum.Material.Neon
-        o.Color = color or Color3.fromRGB(80,180,255)
-        o.Anchored, o.CanCollide, o.CanTouch, o.CanQuery = true,false,false,false
-        o.CFrame = CFrame.new(pos)
-        o.Parent = WS
-        local l = Instance.new("PointLight")
-        l.Range = 16
-        l.Brightness = 2.5
-        l.Parent = o
-        orb = o
-        orbPosVec = orb.Position
-    end
-
     local function destroyOrb()
+        if touchConn then pcall(function() touchConn:Disconnect() end) end
+        touchConn = nil
         if orb then pcall(function() orb:Destroy() end) end
+        if orbTouch then pcall(function() orbTouch:Destroy() end) end
         orb = nil
+        orbTouch = nil
         orbPosVec = nil
-    end
-
-    local function hash01(s)
-        local h = 131071
-        for i = 1, #s do h = (h * 131 + string.byte(s, i)) % 1000003 end
-        return (h % 100000) / 100000
-    end
-
-    local function landingOffset(m, jobId)
-        local key = (typeof(m.GetDebugId)=="function" and m:GetDebugId() or (m.Name or "")) .. tostring(jobId)
-        local r1 = hash01(key .. "a")
-        local r2 = hash01(key .. "b")
-        local ang = r1 * math.pi * 2
-        local rad = LAND_MIN + (LAND_MAX - LAND_MIN) * r2
-        return Vector3.new(math.cos(ang)*rad, 0, math.sin(ang)*rad)
-    end
-
-    local function spiralOffset(destKey, idx)
-        local phase = hash01(tostring(destKey or "k")) * (math.pi * 2)
-        local ang = idx * GOLDEN_ANGLE + phase
-        local rad = math.min(SPIRAL_MAX_RADIUS, SPIRAL_STEP * math.sqrt(math.max(idx, 1)))
-        return Vector3.new(math.cos(ang) * rad, 0, math.sin(ang) * rad)
     end
 
     local function campfireOrbPos()
@@ -722,6 +692,83 @@ return function(C, R, UI)
         local edgeOffset = (mp.Size.Z * 0.5) + 1.0
         local pos = cf.Position + forward * edgeOffset
         return pos + Vector3.new(0, ORB_HEIGHT + 1, 0)
+    end
+
+    local function spawnOrbAt(pos, color, withTouchOrb)
+        destroyOrb()
+
+        local o = Instance.new("Part")
+        o.Name = "tp_orb_fixed"
+        o.Shape = Enum.PartType.Ball
+        o.Size = Vector3.new(1.5,1.5,1.5)
+        o.Material = Enum.Material.Neon
+        o.Color = color or Color3.fromRGB(80,180,255)
+        o.Anchored, o.CanCollide, o.CanTouch, o.CanQuery = true,false,false,false
+        o.CFrame = CFrame.new(pos)
+        o.Parent = WS
+
+        local l = Instance.new("PointLight")
+        l.Range = 16
+        l.Brightness = 2.5
+        l.Parent = o
+
+        orb = o
+        orbPosVec = orb.Position
+
+        if withTouchOrb then
+            local t = Instance.new("Part")
+            t.Name = "tp_orb_touch"
+            t.Shape = Enum.PartType.Ball
+            t.Size = Vector3.new(AIR_TOUCH_ORB_SIZE, AIR_TOUCH_ORB_SIZE, AIR_TOUCH_ORB_SIZE)
+            t.Material = Enum.Material.Neon
+            t.Color = Color3.fromRGB(255, 90, 90)
+            t.Transparency = 0.25
+            t.Anchored = true
+            t.CanCollide = false
+            t.CanQuery = false
+            t.CanTouch = true
+            t.CFrame = CFrame.new(pos - Vector3.new(0, AIR_TOUCH_DROP_OFFSET_Y, 0))
+            t.Parent = WS
+            orbTouch = t
+
+            touchConn = t.Touched:Connect(function(hit)
+                if not (running and (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap")) then return end
+                if not hit or not hit.Parent then return end
+                local m = rootItemUnderItems(hit)
+                if not m then return end
+                local rec = inflight[m]
+                if not rec then return end
+                if rec.dropKind ~= "air" then return end
+                if not rec.dropping then return end
+
+                rec.dropping = false
+
+                setAnchored(m, false)
+                setCollideFromSnapshot(rec.snap)
+                for _,p in ipairs(allParts(m)) do
+                    pcall(function() p:SetNetworkOwner(nil) end)
+                    pcall(function()
+                        if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end
+                    end)
+                end
+                markDoneThisRun(m)
+            end)
+        end
+    end
+
+    local function hash01(s)
+        local h = 131071
+        for i = 1, #s do h = (h * 131 + string.byte(s, i)) % 1000003 end
+        return (h % 100000) / 100000
+    end
+
+    local function landingOffset(m, jobId)
+        local key = (typeof(m.GetDebugId)=="function" and m:GetDebugId() or (m.Name or "")) .. tostring(jobId)
+        local r1 = hash01(key .. "a")
+        local r2 = hash01(key .. "b")
+        local ang = r1 * math.pi * 2
+        local rad = LAND_MIN + (LAND_MAX - LAND_MIN) * r2
+        return Vector3.new(math.cos(ang)*rad, 0, math.sin(ang)*rad)
     end
 
     local function raycastDownAtXZ(xz, ignoreModel)
@@ -767,26 +814,25 @@ return function(C, R, UI)
         local snap = (rec and rec.snap) or (info and info.snap) or snapshotCollide(m)
         if info then tryStopDrag(m, info) end
 
-        local key = rec and rec.destKey or "default"
-        dropStacks[key] = (dropStacks[key] or 0) + 1
-        local idx = dropStacks[key]
-        local off2d = spiralOffset(key, idx)
-
         if rec and rec.dropKind == "air" and orbPosVec then
-            local pos = orbPosVec + off2d + Vector3.new(0, AIR_RELEASE_UP, 0)
+            local pos = orbPosVec + Vector3.new(0, AIR_RELEASE_UP, 0)
             setPivot(m, CFrame.new(pos))
             setAnchored(m, false)
             zeroAssembly(m)
-            setCollideFromSnapshot(snap)
+
             for _,p in ipairs(allParts(m)) do
-                p.AssemblyAngularVelocity = Vector3.new()
-                p.AssemblyLinearVelocity  = Vector3.new()
+                p.CanCollide = false
                 pcall(function() p:SetNetworkOwner(nil) end)
                 pcall(function()
                     if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end
                 end)
             end
-            markDoneThisRun(m)
+
+            if info then
+                info.released = true
+                info.dropping = true
+                info.snap = snap
+            end
             return
         end
 
@@ -796,6 +842,12 @@ return function(C, R, UI)
             local p = (mp and mp.Position) or Vector3.new()
             center = Vector3.new(p.X, 0, p.Z)
         end
+
+        dropStacks[rec.destKey or "default"] = (dropStacks[rec.destKey or "default"] or 0) + 1
+        local idx = dropStacks[rec.destKey or "default"]
+        local ang = idx * 2.399963229728653
+        local rad = math.min(8.0, 0.8 * math.sqrt(math.max(idx, 1)))
+        local off2d = Vector3.new(math.cos(ang) * rad, 0, math.sin(ang) * rad)
 
         local xz = Vector3.new(center.X + off2d.X, 0, center.Z + off2d.Z)
         local hit = raycastDownAtXZ(xz, m)
@@ -869,7 +921,22 @@ return function(C, R, UI)
         zeroAssembly(m)
 
         local centerXZ = Vector3.new(destBaseVec.X, 0, destBaseVec.Z)
-        local rec = { snap = snap, lastD = math.huge, lastT = os.clock(), staged = false, dragging = false, stopped = false, counted = true, destKey = destKey or "default", off = off, centerXZ = centerXZ, dropKind = dropKind or "ground", targetFn = target }
+        local rec = {
+            snap = snap,
+            lastD = math.huge,
+            lastT = os.clock(),
+            staged = false,
+            released = false,
+            dropping = false,
+            dragging = false,
+            stopped = false,
+            counted = true,
+            destKey = destKey or "default",
+            off = off,
+            centerXZ = centerXZ,
+            dropKind = dropKind or "ground",
+            targetFn = target
+        }
         inflight[m] = rec
         activeCount = activeCount + 1
         tryStartDrag(m, rec)
@@ -878,13 +945,19 @@ return function(C, R, UI)
     local function flushStaleStaged()
         local now = os.clock()
         for m,info in pairs(inflight) do
-            if info and info.staged and (now - (info.stagedAt or now)) >= STAGE_TIMEOUT_S then
+            if info and info.staged and not info.released and (now - (info.stagedAt or now)) >= STAGE_TIMEOUT_S then
                 local queued = false
                 for _,rec in ipairs(releaseQueue) do
                     if rec.model == m then queued = true break end
                 end
                 if not queued then
-                    releaseQueue[#releaseQueue+1] = { model = m, snap = info.snap or snapshotCollide(m), destKey = info.destKey or "default", centerXZ = info.centerXZ, dropKind = info.dropKind or "ground" }
+                    releaseQueue[#releaseQueue+1] = {
+                        model = m,
+                        snap = info.snap or snapshotCollide(m),
+                        destKey = info.destKey or "default",
+                        centerXZ = info.centerXZ,
+                        dropKind = info.dropKind or "ground"
+                    }
                 end
             end
         end
@@ -1238,21 +1311,35 @@ return function(C, R, UI)
         outsideLogCache = {}
         outsideLogAcc = 0
 
+        releaseRateHz = RELEASE_RATE_HZ_DEFAULT
+        maxReleasePerTick = MAX_RELEASE_PER_TICK_DEFAULT
+
         if mode == "fuel" or mode == "scrap" or mode == "all" then
-            local pos, color
+            local pos, color, touch
             if mode == "fuel" then
                 pos   = campfireOrbPos()
                 color = Color3.fromRGB(255,200,50)
+                touch = true
+                releaseRateHz = AIR_RELEASE_RATE_HZ
+                maxReleasePerTick = AIR_MAX_RELEASE_PER_TICK
             elseif mode == "scrap" then
                 pos   = scrapperOrbPos()
                 color = Color3.fromRGB(120,255,160)
+                touch = true
+                releaseRateHz = AIR_RELEASE_RATE_HZ
+                maxReleasePerTick = AIR_MAX_RELEASE_PER_TICK
             elseif mode == "all" then
                 pos   = noticeOrbPos()
                 color = Color3.fromRGB(100,200,255)
+                touch = false
             end
             if not pos then CURRENT_MODE = nil return end
-            spawnOrbAt(pos, color)
-            setUnstickEnabled(true)
+            spawnOrbAt(pos, color, touch)
+            if mode == "all" then
+                setUnstickEnabled(true)
+            else
+                setUnstickEnabled(false)
+            end
         elseif mode == "orbs" then
             local any = false
             for i = 1, 4 do
@@ -1302,8 +1389,8 @@ return function(C, R, UI)
             end
 
             releaseAcc = releaseAcc + dt
-            local interval = 1 / RELEASE_RATE_HZ
-            local toRelease = math.min(MAX_RELEASE_PER_TICK, math.floor(releaseAcc / interval))
+            local interval = 1 / math.max(1, releaseRateHz)
+            local toRelease = math.min(maxReleasePerTick, math.floor(releaseAcc / interval))
             if toRelease > 0 then
                 releaseAcc = releaseAcc - toRelease * interval
                 for i = 1, toRelease do
@@ -1429,7 +1516,8 @@ return function(C, R, UI)
                     local color = (CURRENT_MODE == "fuel" and Color3.fromRGB(255,200,50))
                         or (CURRENT_MODE == "scrap" and Color3.fromRGB(120,255,160))
                         or Color3.fromRGB(100,200,255)
-                    spawnOrbAt(pos, color)
+                    local touch = (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap")
+                    spawnOrbAt(pos, color, touch)
                 end
             elseif CURRENT_MODE == "orbs" then
                 destroyOrb()
