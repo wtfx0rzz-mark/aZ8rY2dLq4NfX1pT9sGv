@@ -1366,121 +1366,102 @@ return function(C, R, UI)
     end
 
     --=====================================================
-    -- Quick Revive (fixed)
+    -- Auto Revive (Bandage/MedKit only)  [PATCHED IN]
     --=====================================================
     local PPS = game:GetService("ProximityPromptService")
 
-    local QR_Enable = false
-    local QR_SelectedSet = {}
-    local QR_SeenBodies = setmetatable({}, { __mode = "k" })
-    local QR_Busy = false
+    local AR_Enable = false
+    local AR_Running = false
+    local AR_Busy = false
+    local AR_InProgress = {}
+    local AR_HealingAvailable = false
 
-    local function buildPlayerDropdownValues()
-        local vals = {}
-        for _,p in ipairs(Players:GetPlayers()) do
-            if p ~= lp then
-                vals[#vals+1] = tostring(p.Name) .. "#" .. tostring(p.UserId)
-            end
-        end
-        table.sort(vals, function(a,b) return a:lower() < b:lower() end)
-        return vals
-    end
+    local AR_SCAN_INTERVAL = 0.8
+    local AR_MAX_ATTEMPTS = 3
+    local AR_CONFIRM_WAIT = 2.2
+    local AR_CONFIRM_STEP = 0.12
+    local AR_STAY_SEC = 5.0
 
-    local function setSelectedFromDropdown(v)
-        for k,_ in pairs(QR_SelectedSet) do QR_SelectedSet[k] = nil end
+    local AR_STAND_DIST = 3.0
+    local AR_STAND_UP   = 2.0
 
-        local function addTok(tok)
-            if type(tok) ~= "string" then return end
-            local uid = tok:match("#(%d+)$")
-            if uid then
-                local n = tonumber(uid)
-                if n then QR_SelectedSet[n] = true end
-            end
-        end
+    local invConnA, invConnR
+    local bpConnA, bpConnR
+    local chConnA, chConnR, chConnC
 
-        if type(v) == "string" then
-            addTok(v)
-            return
-        end
-
-        if type(v) == "table" then
-            local t = v
-            if type(t.Value) == "table" then t = t.Value
-            elseif type(t.Value) == "string" then addTok(t.Value); return end
-
-            if type(t.Values) == "table" then t = t.Values end
-            if type(t.Selected) == "table" then t = t.Selected end
-
-            if type(t) == "table" and rawget(t, 1) ~= nil then
-                for i=1,#t do addTok(t[i]) end
-            else
-                for k,val in pairs(t) do
-                    if val == true and type(k) == "string" then
-                        addTok(k)
-                    elseif type(val) == "string" then
-                        addTok(val)
-                    end
-                end
-            end
-        end
-    end
-
-    local function isTargetUid(uid)
-        return uid and QR_SelectedSet[uid] == true
-    end
-
-    local function bodyOwnerNameLower(body)
-        local n = tostring((body and body.Name) or "")
-        if not n:match("%sBody$") then return nil end
-        local base = n:gsub("%sBody$", "")
-        base = tostring(base or ""):lower()
-        if #base == 0 then return nil end
-        return base
-    end
-
-    local function bodyIsForSelectedPlayer(body)
-        if not (body and body.Parent and body:IsA("Model")) then return false end
-        if not (body.Name and tostring(body.Name):match("%sBody$")) then return false end
-        if not mainPart(body) then return false end
-
-        local owner = body:GetAttribute("Owner")
-        local last  = body:GetAttribute("LastOwner")
-        local uid = tonumber(owner) or tonumber(last)
-        if uid and isTargetUid(uid) then
-            return true
-        end
-
-        local base = bodyOwnerNameLower(body)
-        if not base then return false end
-
-        for _,p in ipairs(Players:GetPlayers()) do
-            if p and p.Parent and p ~= lp and isTargetUid(p.UserId) then
-                if tostring(p.Name or ""):lower() == base or tostring(p.DisplayName or ""):lower() == base then
-                    return true
-                end
-            end
-        end
-
+    local function hasItemNamed(name)
+        if not name then return false end
+        local inv = lp:FindFirstChild("Inventory")
+        if inv and inv:FindFirstChild(name) then return true end
+        local bp = lp:FindFirstChild("Backpack")
+        if bp and bp:FindFirstChild(name) then return true end
+        local ch = lp.Character
+        if ch and ch:FindFirstChild(name) then return true end
         return false
     end
 
-    local function promptWorldPos(prompt)
-        if not (prompt and prompt.Parent) then return nil end
-        local a = nil
-        pcall(function() a = prompt.Adornee end)
-        if a and a:IsA("BasePart") then
-            return a.Position
+    local function recomputeHealingAvailable()
+        AR_HealingAvailable = hasItemNamed("Bandage") or hasItemNamed("MedKit")
+        return AR_HealingAvailable
+    end
+
+    local function disconnectConn(c)
+        if c then pcall(function() c:Disconnect() end) end
+    end
+
+    local function startHealingWatch()
+        disconnectConn(invConnA); disconnectConn(invConnR)
+        disconnectConn(bpConnA);  disconnectConn(bpConnR)
+        disconnectConn(chConnA);  disconnectConn(chConnR); disconnectConn(chConnC)
+
+        local function bind(container)
+            if not container then return nil, nil end
+            local a = container.ChildAdded:Connect(function() recomputeHealingAvailable() end)
+            local r = container.ChildRemoved:Connect(function() recomputeHealingAvailable() end)
+            return a, r
         end
-        local parent = prompt.Parent
-        if parent:IsA("Attachment") then
-            return parent.WorldPosition
+
+        task.spawn(function()
+            local inv = lp:WaitForChild("Inventory", 10)
+            if inv then invConnA, invConnR = bind(inv) end
+
+            local bp = lp:FindFirstChild("Backpack") or lp:WaitForChild("Backpack", 10)
+            if bp then bpConnA, bpConnR = bind(bp) end
+
+            local function bindChar(ch)
+                disconnectConn(chConnA); disconnectConn(chConnR)
+                if ch then chConnA, chConnR = bind(ch) end
+            end
+
+            bindChar(lp.Character)
+            chConnC = lp.CharacterAdded:Connect(function(ch)
+                task.defer(function() bindChar(ch) end)
+            end)
+
+            recomputeHealingAvailable()
+        end)
+    end
+
+    local function bodyNameMatchesPlayer(bodyName, plr)
+        if type(bodyName) ~= "string" or not plr then return false end
+        local n1 = tostring(plr.Name or "") .. " Body"
+        local n2 = tostring(plr.DisplayName or "") .. " Body"
+        return bodyName == n1 or bodyName == n2
+    end
+
+    local function findPlayerBodyModel(plr)
+        local chars = WS:FindFirstChild("Characters") or WS
+        for _,child in ipairs(chars:GetChildren()) do
+            if child and child:IsA("Model") and bodyNameMatchesPlayer(child.Name, plr) then
+                return child
+            end
         end
-        if parent:IsA("BasePart") then
-            return parent.Position
-        end
-        local bp = parent:FindFirstAncestorWhichIsA("BasePart")
-        if bp then return bp.Position end
         return nil
+    end
+
+    local function bodyGoneForPlayer(plr, originalBody)
+        if originalBody and (not originalBody.Parent) then return true end
+        return findPlayerBodyModel(plr) == nil
     end
 
     local function findRevivePrompt(body)
@@ -1510,252 +1491,261 @@ return function(C, R, UI)
         return body:FindFirstChildWhichIsA("ProximityPrompt", true)
     end
 
+    local function triggerPrompt(prompt)
+        if not (prompt and prompt.Parent) then return false end
+        pcall(function() prompt.Enabled = true end)
+        pcall(function() prompt.RequiresLineOfSight = false end)
+        pcall(function()
+            if typeof(prompt.HoldDuration) == "number" and prompt.HoldDuration > 0.12 then
+                prompt.HoldDuration = 0.12
+            end
+        end)
+
+        local ok = pcall(function()
+            PPS:TriggerPrompt(prompt)
+        end)
+        if ok then return true end
+
+        local hd = 0.08
+        pcall(function()
+            if typeof(prompt.HoldDuration) == "number" then
+                hd = math.clamp(prompt.HoldDuration, 0.02, 0.12)
+            end
+        end)
+
+        local ok2 = pcall(function()
+            prompt:InputHoldBegin()
+            task.wait(hd)
+            prompt:InputHoldEnd()
+        end)
+        return ok2
+    end
+
     local function teleportToCF(cf)
         local root = hrp()
         if not root then return false end
         local ch = lp.Character
-        if ch then pcall(function() ch:PivotTo(cf) end) end
+        if ch and ch.Parent then pcall(function() ch:PivotTo(cf) end) end
         local ok = pcall(function() root.CFrame = cf end)
         if ok then pcall(function() zeroAssembly(root) end) end
         return ok
     end
 
-    local function teleportNearPrompt(prompt)
+    local function teleportNearBody(body)
         local root = hrp()
-        if not root then return false end
-        local pos = promptWorldPos(prompt)
-        if not pos then return false end
+        local bp = mainPart(body)
+        if not (root and bp) then return false end
 
-        local g = groundBelow(pos)
-        local baseXZ = Vector3.new(pos.X, 0, pos.Z)
-        local rootXZ = Vector3.new(root.Position.X, 0, root.Position.Z)
-        local away = (rootXZ - baseXZ)
-        if away.Magnitude < 1e-3 then
-            local cam = workspace.CurrentCamera
-            local look = cam and cam.CFrame.LookVector or root.CFrame.LookVector
-            away = Vector3.new(-look.X, 0, -look.Z)
-        end
-        if away.Magnitude < 1e-3 then away = Vector3.new(1, 0, 0) end
-        away = away.Unit
-
-        local standOff = 2.1
-        local destXZ = baseXZ + away * standOff
-        local dest = Vector3.new(destXZ.X, g.Y + 2.5, destXZ.Z)
-
-        return teleportToCF(CFrame.new(dest, Vector3.new(pos.X, dest.Y, pos.Z)))
-    end
-
-    local function triggerPromptFast(prompt)
-        if not (prompt and prompt.Parent) then return false end
-        pcall(function() prompt.Enabled = true end)
-        pcall(function() prompt.RequiresLineOfSight = false end)
-        pcall(function() prompt.MaxActivationDistance = math.max(tonumber(prompt.MaxActivationDistance) or 0, 50) end)
-
-        local ok = pcall(function() PPS:TriggerPrompt(prompt) end)
-        if ok then return true end
-
-        local ok2 = pcall(function() prompt:InputHoldBegin() end)
-        if not ok2 then return false end
-
-        local hold = tonumber(prompt.HoldDuration) or 0
-        local waitTime = (hold > 0) and (hold + 0.10) or 0.10
-        task.delay(waitTime, function()
-            if prompt and prompt.Parent then
-                pcall(function() prompt:InputHoldEnd() end)
-            end
-        end)
-        return true
-    end
-
-    local function quickReviveBody(body)
-        if not QR_Enable then return end
-        if not (body and body.Parent and body:IsA("Model")) then return end
-        if not bodyIsForSelectedPlayer(body) then return end
-        if QR_SeenBodies[body] then return end
-
-        if QR_Busy then
-            task.delay(0.25, function()
-                if QR_Enable and body and body.Parent then
-                    quickReviveBody(body)
-                end
-            end)
-            return
+        local bodyPos = bp.Position
+        local rootPos = root.Position
+        local dir = (rootPos - bodyPos)
+        if dir.Magnitude < 0.5 then
+            dir = -bp.CFrame.LookVector
+        else
+            dir = dir.Unit
         end
 
-        local prompt = findRevivePrompt(body)
-        if not (prompt and prompt.Parent) then
-            task.delay(0.25, function()
-                if QR_Enable and body and body.Parent then
-                    quickReviveBody(body)
-                end
-            end)
-            return
-        end
+        local standPos = bodyPos + dir * AR_STAND_DIST + Vector3.new(0, AR_STAND_UP, 0)
+        local g = groundBelow(standPos)
+        standPos = Vector3.new(standPos.X, g.Y + AR_STAND_UP, standPos.Z)
 
-        QR_Busy = true
-        QR_SeenBodies[body] = true
-
-        task.spawn(function()
-            local root = hrp()
-            if not root then QR_Busy = false; QR_SeenBodies[body] = nil; return end
-            local startCF = root.CFrame
-
-            pcall(function() teleportNearPrompt(prompt) end)
-            task.wait(0.06)
-
-            for _ = 1, 12 do
-                if not (QR_Enable and body and body.Parent) then break end
-                local p2 = (prompt and prompt.Parent) and prompt or findRevivePrompt(body)
-                if p2 and p2.Parent then
-                    pcall(function() teleportNearPrompt(p2) end)
-                    task.wait(0.03)
-                    pcall(function() triggerPromptFast(p2) end)
-                end
-                task.wait(0.10)
-            end
-
-            task.wait(0.05)
-            pcall(function() teleportToCF(startCF) end)
-
-            QR_Busy = false
-            if QR_Enable and body and body.Parent then
-                task.delay(2.0, function()
-                    if body and body.Parent then
-                        QR_SeenBodies[body] = nil
-                    end
-                end)
-            else
-                QR_SeenBodies[body] = nil
-            end
-        end)
+        return teleportToCF(CFrame.new(standPos, bodyPos))
     end
 
-    local function scanExistingBodiesOnce()
+    local function collectDownedQueue()
         local chars = WS:FindFirstChild("Characters") or WS
+        local out = {}
+
+        local root = hrp()
+        local origin = root and root.Position or Vector3.new(0,0,0)
+
+        local players = Players:GetPlayers()
+
         for _,m in ipairs(chars:GetChildren()) do
-            if m:IsA("Model") and tostring(m.Name or ""):match("%sBody$") then
-                quickReviveBody(m)
-            end
-        end
-    end
-
-    tab:Section({ Title = "Quick Revive" })
-
-    if tab.Dropdown then
-        tab:Dropdown({
-            Title = "Players",
-            Values = buildPlayerDropdownValues(),
-            Multi = true,
-            Callback = function(v)
-                setSelectedFromDropdown(v)
-                if QR_Enable then
-                    QR_SeenBodies = setmetatable({}, { __mode = "k" })
-                    scanExistingBodiesOnce()
+            if m:IsA("Model") then
+                local nm = tostring(m.Name or "")
+                if nm:match("%sBody$") then
+                    local owner = nil
+                    for _,p in ipairs(players) do
+                        if p ~= lp and bodyNameMatchesPlayer(nm, p) then
+                            owner = p
+                            break
+                        end
+                    end
+                    if owner and not AR_InProgress[owner.UserId] and mainPart(m) then
+                        local ppart = mainPart(m)
+                        local dist = ppart and (ppart.Position - origin).Magnitude or math.huge
+                        out[#out+1] = { plr = owner, body = m, dist = dist }
+                    end
                 end
             end
-        })
-    else
-        tab:Button({
-            Title = "Quick Revive Players Dropdown: (tab.Dropdown missing)",
-            Callback = function() end
-        })
+        end
+
+        table.sort(out, function(a,b)
+            if a.dist == b.dist then
+                return tostring(a.plr.Name or "") < tostring(b.plr.Name or "")
+            end
+            return a.dist < b.dist
+        end)
+
+        return out
     end
+
+    local function tryReviveOne(plr, body, startCF)
+        if not (plr and body and startCF) then return false end
+        if AR_InProgress[plr.UserId] then return false end
+        AR_InProgress[plr.UserId] = true
+
+        local ok = false
+
+        local function finally()
+            pcall(function() teleportToCF(startCF) end)
+            AR_InProgress[plr.UserId] = nil
+        end
+
+        local success = xpcall(function()
+            if not recomputeHealingAvailable() then return end
+
+            local prompt = findRevivePrompt(body)
+            if not prompt then return end
+
+            local attempt = 0
+            while attempt < AR_MAX_ATTEMPTS do
+                attempt += 1
+                if not (body and body.Parent) then break end
+                if bodyGoneForPlayer(plr, body) then ok = true break end
+
+                teleportNearBody(body)
+                task.wait(0.06)
+                triggerPrompt(prompt)
+
+                local t0 = os.clock()
+                while os.clock() - t0 < AR_CONFIRM_WAIT do
+                    if bodyGoneForPlayer(plr, body) then ok = true break end
+                    task.wait(AR_CONFIRM_STEP)
+                end
+                if ok then break end
+
+                task.wait(0.18)
+                prompt = findRevivePrompt(body) or prompt
+            end
+
+            if ok then
+                local stayUntil = os.clock() + AR_STAY_SEC
+                while os.clock() < stayUntil do
+                    task.wait(0.2)
+                end
+
+                if not bodyGoneForPlayer(plr, body) then
+                    local extra = 0
+                    while extra < AR_MAX_ATTEMPTS do
+                        extra += 1
+                        if bodyGoneForPlayer(plr, body) then break end
+                        prompt = findRevivePrompt(body) or prompt
+                        if prompt then triggerPrompt(prompt) end
+
+                        local t1 = os.clock()
+                        while os.clock() - t1 < AR_CONFIRM_WAIT do
+                            if bodyGoneForPlayer(plr, body) then break end
+                            task.wait(AR_CONFIRM_STEP)
+                        end
+                        if bodyGoneForPlayer(plr, body) then break end
+                        task.wait(0.15)
+                    end
+                    ok = bodyGoneForPlayer(plr, body)
+                end
+            end
+        end, debug.traceback)
+
+        finally()
+        return success and ok
+    end
+
+    local function runRevivePass()
+        if AR_Busy then return end
+        if not recomputeHealingAvailable() then return end
+
+        local root = hrp()
+        if not root then return end
+
+        AR_Busy = true
+        local startCF = root.CFrame
+
+        local queue = collectDownedQueue()
+        for _,it in ipairs(queue) do
+            if not recomputeHealingAvailable() then break end
+            if it and it.plr and it.body and it.body.Parent then
+                tryReviveOne(it.plr, it.body, startCF)
+                task.wait(0.08)
+                local r2 = hrp()
+                if r2 then startCF = r2.CFrame end
+            end
+        end
+
+        AR_Busy = false
+    end
+
+    local function startAutoRevive()
+        if AR_Running then return end
+        AR_Running = true
+
+        local key = "__AutoRevive_Loop__"
+        local prev = _G[key]
+        if prev and typeof(prev) == "thread" then
+            _G[key] = nil
+        end
+
+        _G[key] = task.spawn(function()
+            while AR_Running do
+                task.wait(AR_SCAN_INTERVAL)
+                if not (AR_Running and AR_Enable) then continue end
+                if AR_Busy then continue end
+                if not recomputeHealingAvailable() then continue end
+                local q = collectDownedQueue()
+                if #q > 0 then
+                    runRevivePass()
+                end
+            end
+        end)
+    end
+
+    local function stopAutoRevive()
+        AR_Running = false
+    end
+
+    tab:Section({ Title = "Auto Revive" })
 
     if tab.Toggle then
         tab:Toggle({
-            Title = "Quick Revive",
+            Title = "Auto Revive (Bandage/MedKit only)",
             Default = false,
             Callback = function(v)
-                QR_Enable = v and true or false
-                QR_SeenBodies = setmetatable({}, { __mode = "k" })
-                if QR_Enable then
-                    scanExistingBodiesOnce()
-                end
+                AR_Enable = v and true or false
+                if AR_Enable then startAutoRevive() else stopAutoRevive() end
             end
         })
     else
         tab:Button({
-            Title = "Quick Revive: OFF",
+            Title = "Auto Revive: OFF",
             Callback = function(btn)
-                QR_Enable = not QR_Enable
-                QR_SeenBodies = setmetatable({}, { __mode = "k" })
+                AR_Enable = not AR_Enable
                 if btn and btn.SetTitle then
-                    btn:SetTitle("Quick Revive: " .. (QR_Enable and "ON" or "OFF"))
+                    btn:SetTitle("Auto Revive: " .. (AR_Enable and "ON" or "OFF"))
                 end
-                if QR_Enable then
-                    scanExistingBodiesOnce()
-                end
+                if AR_Enable then startAutoRevive() else stopAutoRevive() end
             end
         })
     end
 
-    do
-        local key = "__QuickRevive_BodyWatch__"
-        local prev = _G[key]
-        if type(prev) == "table" then
-            for _,c in ipairs(prev) do
-                if typeof(c) == "RBXScriptConnection" then
-                    pcall(function() c:Disconnect() end)
-                end
-            end
-        end
-
-        local conns = {}
-
-        local function tryFromDescendant(inst)
-            if not (QR_Enable and inst and inst.Parent) then return end
-            local m = nil
-            if inst:IsA("Model") then
-                m = inst
-            elseif inst:IsA("ProximityPrompt") then
-                m = inst:FindFirstAncestorOfClass("Model")
-            else
-                m = inst:FindFirstAncestorOfClass("Model")
-            end
-            if m and m:IsA("Model") and tostring(m.Name or ""):match("%sBody$") then
-                task.defer(function()
-                    quickReviveBody(m)
-                end)
-            end
-        end
-
-        local function bindContainer(container)
-            if not container then return end
-
-            conns[#conns+1] = container.ChildAdded:Connect(function(ch)
-                if QR_Enable and ch and ch:IsA("Model") and tostring(ch.Name or ""):match("%sBody$") then
-                    task.defer(function()
-                        quickReviveBody(ch)
-                    end)
-                end
-            end)
-
-            conns[#conns+1] = container.DescendantAdded:Connect(function(d)
-                if not QR_Enable then return end
-                if d:IsA("ProximityPrompt") then
-                    local a = tostring(d.ActionText or ""):lower()
-                    local o = tostring(d.ObjectText or ""):lower()
-                    local n = tostring(d.Name or ""):lower()
-                    if a:find("revive", 1, true) or o:find("revive", 1, true) or n:find("revive", 1, true) then
-                        tryFromDescendant(d)
-                    end
-                elseif d:IsA("Model") and tostring(d.Name or ""):match("%sBody$") then
-                    tryFromDescendant(d)
-                end
+    tab:Button({
+        Title = "Revive Now",
+        Callback = function()
+            task.spawn(function()
+                runRevivePass()
             end)
         end
+    })
 
-        bindContainer(WS:FindFirstChild("Characters") or WS)
-
-        conns[#conns+1] = WS.ChildAdded:Connect(function(ch)
-            if ch and ch.Name == "Characters" then
-                task.defer(function()
-                    bindContainer(ch)
-                    if QR_Enable then scanExistingBodiesOnce() end
-                end)
-            end
-        end)
-
-        _G[key] = conns
-    end
+    startHealingWatch()
+    recomputeHealingAvailable()
 end
