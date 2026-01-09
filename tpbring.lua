@@ -17,7 +17,7 @@ return function(C, R, UI)
         if not m then return nil end
         if m:IsA("BasePart") then return m end
         if m:IsA("Model") then
-            return m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart")
+            return m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart", true)
         end
         return nil
     end
@@ -502,7 +502,7 @@ return function(C, R, UI)
         local dir    = Vector3.new(0, -300, 0)
 
         local rp = RaycastParams.new()
-        rp.FilterType = Enum.RaycastFilterType.Blacklist
+        rp.FilterType = Enum.RaycastFilterType.Exclude
         local ignore = {}
         local itemsFolder = itemsRootOrNil()
         if itemsFolder then ignore[#ignore+1] = itemsFolder end
@@ -761,7 +761,7 @@ return function(C, R, UI)
         local dir = Vector3.new(0, -SKY_RAY_LEN, 0)
 
         local rp = RaycastParams.new()
-        rp.FilterType = Enum.RaycastFilterType.Blacklist
+        rp.FilterType = Enum.RaycastFilterType.Exclude
         local ignore = {}
         if ignoreModel then ignore[#ignore+1] = ignoreModel end
         if itemsFolder then ignore[#ignore+1] = itemsFolder end
@@ -917,7 +917,7 @@ return function(C, R, UI)
             end
             if rec.staged then return end
 
-            local pivot = m:GetPivot and m:GetPivot() or nil
+            local pivot = m.GetPivot and m:GetPivot() or nil
             local pos = (pivot and pivot.Position) or (mainPart(m) and mainPart(m).Position) or nil
             if not pos then
                 if rec.conn then rec.conn:Disconnect() end
@@ -1001,7 +1001,7 @@ return function(C, R, UI)
 
                 local originBase = root.Position + Vector3.new(0, 5, 0)
                 local rp = RaycastParams.new()
-                rp.FilterType = Enum.RaycastFilterType.Whitelist
+                rp.FilterType = Enum.RaycastFilterType.Include
                 rp.FilterDescendantsInstances = {itemsFolder}
                 rp.IgnoreWater = true
 
@@ -1157,7 +1157,7 @@ return function(C, R, UI)
 
                 local originBase = root.Position + Vector3.new(0, 5, 0)
                 local rp = RaycastParams.new()
-                rp.FilterType = Enum.RaycastFilterType.Whitelist
+                rp.FilterType = Enum.RaycastFilterType.Include
                 rp.FilterDescendantsInstances = {itemsFolder}
                 rp.IgnoreWater = true
 
@@ -1285,7 +1285,11 @@ return function(C, R, UI)
         Title = "Send Fuel to Campfire",
         Value = false,
         Callback = function(state)
-            if state then startMode("fuel") else if CURRENT_MODE == "fuel" then startMode(nil) end end
+            if state then
+                startMode("fuel")
+            elseif CURRENT_MODE == "fuel" then
+                startMode(nil)
+            end
         end
     })
 
@@ -1293,7 +1297,11 @@ return function(C, R, UI)
         Title = "Send Scrap to Scrapper",
         Value = false,
         Callback = function(state)
-            if state then startMode("scrap") else if CURRENT_MODE == "scrap" then startMode(nil) end end
+            if state then
+                startMode("scrap")
+            elseif CURRENT_MODE == "scrap" then
+                startMode(nil)
+            end
         end
     })
 
@@ -1301,7 +1309,11 @@ return function(C, R, UI)
         Title = "Send All Items to NoticeBoard",
         Value = false,
         Callback = function(state)
-            if state then startMode("all") else if CURRENT_MODE == "all" then startMode(nil) end end
+            if state then
+                startMode("all")
+            elseif CURRENT_MODE == "all" then
+                startMode(nil)
+            end
         end
     })
 
@@ -1352,7 +1364,11 @@ return function(C, R, UI)
         Title = "Bring Selected Items to Orbs",
         Value = false,
         Callback = function(state)
-            if state then startMode("orbs") else if CURRENT_MODE == "orbs" then startMode(nil) end end
+            if state then
+                startMode("orbs")
+            elseif CURRENT_MODE == "orbs" then
+                startMode(nil)
+            end
         end
     })
 
