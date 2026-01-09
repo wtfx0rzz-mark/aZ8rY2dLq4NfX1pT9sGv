@@ -195,85 +195,68 @@ return function(C, R, UI)
         end
     end
 
-    local function findExistingEdgeStack(playerGui)
-        local wanted = {
-            ["EdgeButtons"] = true,
-            ["EdgeButtonsStack"] = true,
-            ["EdgeStack"] = true,
-            ["EdgeButtonStack"] = true,
-            ["EdgeButtonContainer"] = true,
-        }
-
-        for _,d in ipairs(playerGui:GetDescendants()) do
-            if d:IsA("Frame") and wanted[d.Name] then
-                return d
-            end
-        end
-        return nil
-    end
-
+    -- IMPORTANT: integrate with your existing EdgeButtons -> EdgeStack
     local function getOrCreateEdgeStack()
         local playerGui = lp:WaitForChild("PlayerGui")
-        local existing = findExistingEdgeStack(playerGui)
-        if existing then return existing end
 
-        local sg = playerGui:FindFirstChild("EdgeButtonsGui")
-        if not (sg and sg:IsA("ScreenGui")) then
-            sg = Instance.new("ScreenGui")
-            sg.Name = "EdgeButtonsGui"
-            sg.ResetOnSpawn = false
-            sg.Parent = playerGui
+        local edgeGui = playerGui:FindFirstChild("EdgeButtons")
+        if not edgeGui then
+            edgeGui = Instance.new("ScreenGui")
+            edgeGui.Name = "EdgeButtons"
+            edgeGui.ResetOnSpawn = false
+            pcall(function() edgeGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling end)
+            edgeGui.Parent = playerGui
         end
 
-        local frame = sg:FindFirstChild("EdgeButtonsStack")
-        if not (frame and frame:IsA("Frame")) then
-            frame = Instance.new("Frame")
-            frame.Name = "EdgeButtonsStack"
-            frame.Size = UDim2.new(0, 170, 0, 320)
-            frame.Position = UDim2.new(1, -8, 0.5, 0)
-            frame.AnchorPoint = Vector2.new(1, 0.5)
-            frame.BackgroundTransparency = 1
-            frame.BorderSizePixel = 0
-            frame.Parent = sg
+        local stack = edgeGui:FindFirstChild("EdgeStack")
+        if not stack then
+            stack = Instance.new("Frame")
+            stack.Name = "EdgeStack"
+            stack.AnchorPoint = Vector2.new(1, 0)
+            stack.Position = UDim2.new(1, -6, 0, 6)
+            stack.Size = UDim2.new(0, 130, 1, -12)
+            stack.BackgroundTransparency = 1
+            stack.BorderSizePixel = 0
+            stack.Parent = edgeGui
 
-            local layout = Instance.new("UIListLayout")
-            layout.FillDirection = Enum.FillDirection.Vertical
-            layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
-            layout.VerticalAlignment = Enum.VerticalAlignment.Top
-            layout.SortOrder = Enum.SortOrder.LayoutOrder
-            layout.Padding = UDim.new(0, 6)
-            layout.Parent = frame
+            local list = Instance.new("UIListLayout")
+            list.Name = "VList"
+            list.FillDirection = Enum.FillDirection.Vertical
+            list.SortOrder = Enum.SortOrder.LayoutOrder
+            list.Padding = UDim.new(0, 6)
+            list.HorizontalAlignment = Enum.HorizontalAlignment.Right
+            list.Parent = stack
         end
 
-        return frame
+        return stack
     end
+
+    local SET_LOC_ORDER = 6 -- same style/stack as auto.lua; adjust if you want it higher/lower
 
     local function getOrCreateSetLocationEdgeButton()
         local stack = getOrCreateEdgeStack()
         local btn = stack:FindFirstChild("Diamonds_SetLocation")
-        if btn and btn:IsA("TextButton") then return btn end
+        if btn and btn:IsA("TextButton") then
+            btn.LayoutOrder = SET_LOC_ORDER
+            return btn
+        end
 
         btn = Instance.new("TextButton")
         btn.Name = "Diamonds_SetLocation"
-        btn.Size = UDim2.new(0, 160, 0, 36)
-        btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-        btn.BorderSizePixel = 0
-        btn.AutoButtonColor = true
-        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.Font = Enum.Font.SourceSansBold
-        btn.TextSize = 14
+        btn.Size = UDim2.new(1, 0, 0, 30)
         btn.Text = "Set Location"
-        btn.LayoutOrder = 50
+        btn.TextSize = 12
+        btn.Font = Enum.Font.GothamBold
+        btn.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+        btn.TextColor3 = Color3.new(1, 1, 1)
+        btn.BorderSizePixel = 0
+        btn.Visible = false
+        btn.LayoutOrder = SET_LOC_ORDER
         btn.Parent = stack
 
         local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 10)
+        corner.CornerRadius = UDim.new(0, 8)
         corner.Parent = btn
-
-        local stroke = Instance.new("UIStroke")
-        stroke.Thickness = 1
-        stroke.Color = Color3.fromRGB(70, 70, 70)
-        stroke.Parent = btn
 
         btn.MouseButton1Click:Connect(function()
             if C.State and C.State.DiamondsSetLocations then
