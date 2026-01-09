@@ -1217,6 +1217,7 @@ return function(C, R, UI)
     ExtraTab:Button({
         Title = "Drop All Captured Items",
         Callback = function()
+            stopGrabNearby()
             releaseAllCaptured()
         end
     })
