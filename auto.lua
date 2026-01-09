@@ -706,7 +706,7 @@ return function(C, R, UI)
         })
         task.defer(enableGod)
 
-        local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.1, 0.2
+        local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.01, 0.0
         local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
         local EXCLUDE_ANCESTOR_SUBSTR = { "closetdoors", "closet", "door", "landmarks" }
         local function strfindAny(s, list)
@@ -756,7 +756,7 @@ return function(C, R, UI)
             if not prompt or not prompt:IsA("ProximityPrompt") then return end
             if shouldSkipPrompt(prompt) then return end
             if promptDurations[prompt] == nil then promptDurations[prompt] = prompt.HoldDuration end
-            task.defer(function() if prompt and prompt.Parent and not shouldSkipPrompt(prompt) then pcall(function() prompt.HoldDuration = INSTANT_HOLD end) end end)
+            if prompt and prompt.Parent and not shouldSkipPrompt(prompt) then pcall(function() prompt.HoldDuration = INSTANT_HOLD end) end
         end
         local function enableInstantInteract()
             if shownConn then return end
@@ -764,8 +764,10 @@ return function(C, R, UI)
             trigConn   = PPS.PromptTriggered:Connect(function(prompt, player)
                 if player ~= lp or shouldSkipPrompt(prompt) then return end
                 tagChestFromPrompt(prompt)
-                pcall(function() prompt.Enabled = false end)
-                task.delay(TRIGGER_COOLDOWN, function() if prompt and prompt.Parent then pcall(function() prompt.Enabled = true end) end end)
+                if TRIGGER_COOLDOWN and TRIGGER_COOLDOWN > 0 then
+                    pcall(function() prompt.Enabled = false end)
+                    task.delay(TRIGGER_COOLDOWN, function() if prompt and prompt.Parent then pcall(function() prompt.Enabled = true end) end end)
+                end
                 restorePrompt(prompt)
             end)
             hiddenConn = PPS.PromptHidden:Connect(function(prompt) if shouldSkipPrompt(prompt) then return end; restorePrompt(prompt) end)
