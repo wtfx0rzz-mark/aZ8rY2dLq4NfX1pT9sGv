@@ -10,6 +10,7 @@ return function(C, R, UI)
     local WS       = Services.WS      or game:GetService("Workspace")
     local Run      = Services.Run     or game:GetService("RunService")
     local PPS      = game:GetService("ProximityPromptService")
+    local VIM      = game:GetService("VirtualInputManager")
 
     local lp  = C.LocalPlayer or Players.LocalPlayer
     local tab = UI.Tabs.Diamonds
@@ -21,6 +22,12 @@ return function(C, R, UI)
     if C.State.DiamondsLocations == nil then C.State.DiamondsLocations = {} end
     if C.State.DiamondsCycleIndex == nil then C.State.DiamondsCycleIndex = 1 end
     if C.State.DiamondsFirePrompts == nil then C.State.DiamondsFirePrompts = false end
+
+    if C.State.DiamondsJumpInput == nil then C.State.DiamondsJumpInput = false end
+    if C.State._DiamondsJumpConn ~= nil then
+        pcall(function() C.State._DiamondsJumpConn:Disconnect() end)
+        C.State._DiamondsJumpConn = nil
+    end
 
     -- Cycle interval is stored in seconds (1 .. 1200)
     do
@@ -449,6 +456,34 @@ return function(C, R, UI)
         firePromptLastAt = setmetatable({}, { __mode = "k" })
     end
 
+    local function diamondsJumpSendSpaceTap()
+        local ok, err = pcall(function()
+            VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+            task.wait(0.05)
+            VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+        end)
+        return ok, err
+    end
+
+    local function diamondsJumpStart()
+        if C.State._DiamondsJumpConn then return end
+        local lastSend = 0
+        C.State._DiamondsJumpConn = Run.Heartbeat:Connect(function()
+            if not (C.State and C.State.DiamondsJumpInput) then return end
+            local t = os.clock()
+            if (t - lastSend) < 0.25 then return end
+            lastSend = t
+            diamondsJumpSendSpaceTap()
+        end)
+    end
+
+    local function diamondsJumpStop()
+        if C.State._DiamondsJumpConn then
+            pcall(function() C.State._DiamondsJumpConn:Disconnect() end)
+            C.State._DiamondsJumpConn = nil
+        end
+    end
+
     tab:Section({ Title = "Teleport" })
 
     tab:Toggle({
@@ -579,5 +614,26 @@ return function(C, R, UI)
 
     if C.State.DiamondsFirePrompts then
         enableFirePrompts()
+    end
+
+    tab:Section({ Title = "Jump Debug" })
+
+    tab:Toggle({
+        Title = "Input Jump (simulate Space)",
+        Default = C.State.DiamondsJumpInput and true or false,
+        Callback = function(on)
+            C.State.DiamondsJumpInput = on and true or false
+            if C.State.DiamondsJumpInput then
+                diamondsJumpStart()
+            else
+                diamondsJumpStop()
+            end
+        end
+    })
+
+    if C.State.DiamondsJumpInput then
+        diamondsJumpStart()
+    else
+        diamondsJumpStop()
     end
 end
