@@ -18,10 +18,24 @@ return function(C, R, UI)
     if C.State.DiamondsAutoTake == nil then C.State.DiamondsAutoTake = false end
     if C.State.DiamondsCycle == nil then C.State.DiamondsCycle = false end
     if C.State.DiamondsSetLocations == nil then C.State.DiamondsSetLocations = false end
-    if C.State.DiamondsCycleInterval == nil then C.State.DiamondsCycleInterval = 3 end -- minutes
     if C.State.DiamondsLocations == nil then C.State.DiamondsLocations = {} end
     if C.State.DiamondsCycleIndex == nil then C.State.DiamondsCycleIndex = 1 end
     if C.State.DiamondsFirePrompts == nil then C.State.DiamondsFirePrompts = false end
+
+    -- Cycle interval is now stored in seconds (1 .. 1200)
+    do
+        local v = tonumber(C.State.DiamondsCycleInterval)
+        if not v then
+            C.State.DiamondsCycleInterval = 180 -- 3 minutes default
+        else
+            -- migrate legacy minutes-based values (old range 1..10) to seconds
+            if v >= 1 and v <= 10 then
+                C.State.DiamondsCycleInterval = math.clamp(v * 60, 1, 1200)
+            else
+                C.State.DiamondsCycleInterval = math.clamp(v, 1, 1200)
+            end
+        end
+    end
 
     local RADIUS             = 75
     local SCAN_INTERVAL      = 0.15
@@ -182,6 +196,33 @@ return function(C, R, UI)
         end
     end
 
+    local function destroyAllDiamondOrbsEverywhere()
+        -- 1) destroy orbs referenced in state (even if unparented)
+        local list = C.State.DiamondsLocations or {}
+        for i = 1, #list do
+            local rec = list[i]
+            if type(rec) == "table" and rec.orb then
+                pcall(function() rec.orb:Destroy() end)
+                rec.orb = nil
+            end
+        end
+        -- 2) destroy any stray workspace orbs matching our naming scheme
+        for _, inst in ipairs(WS:GetChildren()) do
+            if inst and inst:IsA("BasePart") then
+                if tostring(inst.Name):match("^DiamondsLoc_%d+$") then
+                    pcall(function() inst:Destroy() end)
+                end
+            end
+        end
+    end
+
+    local function clearDiamondLocationsAndOrbs()
+        ensureOrbsVisible(false)
+        destroyAllDiamondOrbsEverywhere()
+        C.State.DiamondsLocations = {}
+        C.State.DiamondsCycleIndex = 1
+    end
+
     local function addLocationFromPlayer()
         local root = hrp()
         if not root then return end
@@ -197,7 +238,6 @@ return function(C, R, UI)
         end
     end
 
-    -- IMPORTANT: integrate with your existing EdgeButtons -> EdgeStack
     local function getOrCreateEdgeStack()
         local playerGui = lp:WaitForChild("PlayerGui")
 
@@ -316,7 +356,6 @@ return function(C, R, UI)
         end)
     end
 
-    -- Fire Prompts (fixed: PromptShown second arg is inputType, not player)
     local firePromptsConn = nil
     local firePromptLastAt = setmetatable({}, { __mode = "k" })
     local FIRE_PROMPT_COOLDOWN = 0.25
@@ -335,7 +374,6 @@ return function(C, R, UI)
             end
         end)
 
-        -- sometimes TriggerPrompt needs a frame after shown
         Run.Heartbeat:Wait()
 
         local ok = pcall(function()
@@ -403,9 +441,20 @@ return function(C, R, UI)
         end
     })
 
+    tab:Button({
+        Title = "Clear Locations (Delete Orbs)",
+        Callback = function()
+            clearDiamondLocationsAndOrbs()
+            if C.State and C.State.DiamondsSetLocations then
+                ensureOrbsVisible(true)
+                rebuildOrbNamesAndPositions()
+            end
+        end
+    })
+
     tab:Slider({
-        Title = "Cycle Interval (min)",
-        Value = { Min = 1, Max = 10, Default = math.clamp(tonumber(C.State.DiamondsCycleInterval) or 3, 1, 10) },
+        Title = "Cycle Interval (sec)",
+        Value = { Min = 1, Max = 1200, Default = math.clamp(tonumber(C.State.DiamondsCycleInterval) or 180, 1, 1200) },
         Callback = function(v)
             local nv = v
             if type(v) == "table" then
@@ -413,7 +462,7 @@ return function(C, R, UI)
             end
             nv = tonumber(nv)
             if nv then
-                C.State.DiamondsCycleInterval = math.clamp(nv, 1, 10)
+                C.State.DiamondsCycleInterval = math.clamp(nv, 1, 1200)
             end
         end
     })
@@ -459,11 +508,11 @@ return function(C, R, UI)
 
         task.spawn(function()
             while true do
-                local minutes = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 3, 1, 10)
+                local seconds = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 180, 1, 1200)
                 if C.State and C.State.DiamondsCycle then
                     pcall(cycleStep)
                 end
-                task.wait(minutes * 60)
+                task.wait(seconds)
             end
         end)
     end
