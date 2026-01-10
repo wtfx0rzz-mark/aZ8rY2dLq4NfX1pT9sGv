@@ -22,11 +22,11 @@ return function(C, R, UI)
     if C.State.DiamondsCycleIndex == nil then C.State.DiamondsCycleIndex = 1 end
     if C.State.DiamondsFirePrompts == nil then C.State.DiamondsFirePrompts = false end
 
-    -- Cycle interval is now stored in seconds (1 .. 1200)
+    -- Cycle interval is stored in seconds (1 .. 1200)
     do
         local v = tonumber(C.State.DiamondsCycleInterval)
         if not v then
-            C.State.DiamondsCycleInterval = 180 -- 3 minutes default
+            C.State.DiamondsCycleInterval = 180 -- default 3 minutes
         else
             -- migrate legacy minutes-based values (old range 1..10) to seconds
             if v >= 1 and v <= 10 then
@@ -47,6 +47,39 @@ return function(C, R, UI)
     local function hrp()
         local ch = lp.Character or lp.CharacterAdded:Wait()
         return ch and ch:WaitForChild("HumanoidRootPart", 10)
+    end
+
+    local function hum()
+        local ch = lp.Character
+        return ch and ch:FindFirstChildOfClass("Humanoid")
+    end
+
+    -- Camera snap: behind player, facing forward (aligned to HRP look)
+    local CAM_BACK       = 12
+    local CAM_UP         = 4.5
+    local CAM_LOOK_AHEAD = 60
+    local CAM_HOLD_S     = 0.12
+
+    local function snapCameraBehindPlayer()
+        local cam = WS.CurrentCamera
+        if not cam then return end
+        local root = hrp()
+        if not root then return end
+
+        local look = root.CFrame.LookVector
+        local camPos = root.Position - (look * CAM_BACK) + Vector3.new(0, CAM_UP, 0)
+        local focus = root.Position + (look * CAM_LOOK_AHEAD)
+
+        local prevType = cam.CameraType
+        cam.CameraType = Enum.CameraType.Scriptable
+        cam.CFrame = CFrame.new(camPos, focus)
+
+        task.delay(CAM_HOLD_S, function()
+            if not cam then return end
+            cam.CameraType = prevType or Enum.CameraType.Custom
+            local h = hum()
+            if h then pcall(function() cam.CameraSubject = h end) end
+        end)
     end
 
     local function itemsFolder()
@@ -135,6 +168,9 @@ return function(C, R, UI)
         local ok = pcall(function()
             ch:PivotTo(cf)
         end)
+        if ok then
+            task.defer(snapCameraBehindPlayer)
+        end
         return ok
     end
 
@@ -197,7 +233,6 @@ return function(C, R, UI)
     end
 
     local function destroyAllDiamondOrbsEverywhere()
-        -- 1) destroy orbs referenced in state (even if unparented)
         local list = C.State.DiamondsLocations or {}
         for i = 1, #list do
             local rec = list[i]
@@ -206,7 +241,6 @@ return function(C, R, UI)
                 rec.orb = nil
             end
         end
-        -- 2) destroy any stray workspace orbs matching our naming scheme
         for _, inst in ipairs(WS:GetChildren()) do
             if inst and inst:IsA("BasePart") then
                 if tostring(inst.Name):match("^DiamondsLoc_%d+$") then
