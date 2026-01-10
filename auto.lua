@@ -706,7 +706,7 @@ return function(C, R, UI)
         })
         task.defer(enableGod)
 
-        local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.01, 0.0
+        local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.2
         local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
         local EXCLUDE_ANCESTOR_SUBSTR = { "closetdoors", "closet", "door", "landmarks" }
         local function strfindAny(s, list)
