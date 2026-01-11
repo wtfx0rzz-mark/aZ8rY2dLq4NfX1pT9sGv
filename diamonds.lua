@@ -10,7 +10,6 @@ return function(C, R, UI)
     local WS       = Services.WS      or game:GetService("Workspace")
     local Run      = Services.Run     or game:GetService("RunService")
     local PPS      = game:GetService("ProximityPromptService")
-    local VIM      = game:GetService("VirtualInputManager")
 
     local lp  = C.LocalPlayer or Players.LocalPlayer
     local tab = UI.Tabs.Diamonds
@@ -23,24 +22,12 @@ return function(C, R, UI)
     if C.State.DiamondsCycleIndex == nil then C.State.DiamondsCycleIndex = 1 end
     if C.State.DiamondsFirePrompts == nil then C.State.DiamondsFirePrompts = false end
 
-    if C.State.DiamondsJumpInput == nil then C.State.DiamondsJumpInput = false end
-    if C.State._DiamondsJumpConn ~= nil then
-        pcall(function() C.State._DiamondsJumpConn:Disconnect() end)
-        C.State._DiamondsJumpConn = nil
-    end
-
-    -- Cycle interval is stored in seconds (1 .. 1200)
-    do
-        local v = tonumber(C.State.DiamondsCycleInterval)
-        if not v then
-            C.State.DiamondsCycleInterval = 180 -- default 3 minutes
+    if C.State.DiamondsCycleIntervalSec == nil then
+        local oldMin = tonumber(C.State.DiamondsCycleInterval)
+        if oldMin then
+            C.State.DiamondsCycleIntervalSec = math.clamp(math.floor(oldMin * 60), 1, 1200)
         else
-            -- migrate legacy minutes-based values (old range 1..10) to seconds
-            if v >= 1 and v <= 10 then
-                C.State.DiamondsCycleInterval = math.clamp(v * 60, 1, 1200)
-            else
-                C.State.DiamondsCycleInterval = math.clamp(v, 1, 1200)
-            end
+            C.State.DiamondsCycleIntervalSec = 180
         end
     end
 
@@ -54,39 +41,6 @@ return function(C, R, UI)
     local function hrp()
         local ch = lp.Character or lp.CharacterAdded:Wait()
         return ch and ch:WaitForChild("HumanoidRootPart", 10)
-    end
-
-    local function hum()
-        local ch = lp.Character
-        return ch and ch:FindFirstChildOfClass("Humanoid")
-    end
-
-    -- Camera snap: behind player, facing forward (aligned to HRP look)
-    local CAM_BACK       = 12
-    local CAM_UP         = 4.5
-    local CAM_LOOK_AHEAD = 60
-    local CAM_HOLD_S     = 0.12
-
-    local function snapCameraBehindPlayer()
-        local cam = WS.CurrentCamera
-        if not cam then return end
-        local root = hrp()
-        if not root then return end
-
-        local look = root.CFrame.LookVector
-        local camPos = root.Position - (look * CAM_BACK) + Vector3.new(0, CAM_UP, 0)
-        local focus = root.Position + (look * CAM_LOOK_AHEAD)
-
-        local prevType = cam.CameraType
-        cam.CameraType = Enum.CameraType.Scriptable
-        cam.CFrame = CFrame.new(camPos, focus)
-
-        task.delay(CAM_HOLD_S, function()
-            if not cam then return end
-            cam.CameraType = prevType or Enum.CameraType.Custom
-            local h = hum()
-            if h then pcall(function() cam.CameraSubject = h end) end
-        end)
     end
 
     local function itemsFolder()
@@ -169,6 +123,19 @@ return function(C, R, UI)
         end
     end
 
+    local function alignCameraBehindPlayer()
+        local cam = WS.CurrentCamera
+        local root = hrp()
+        if not (cam and root) then return end
+        local look = root.CFrame.LookVector
+        local pos  = root.Position - look * 10 + Vector3.new(0, 3, 0)
+        local aim  = root.Position + look * 20 + Vector3.new(0, 2, 0)
+        pcall(function()
+            cam.CameraType = Enum.CameraType.Custom
+            cam.CFrame = CFrame.new(pos, aim)
+        end)
+    end
+
     local function pivotCharacterTo(cf)
         local ch = lp.Character or lp.CharacterAdded:Wait()
         if not ch then return false end
@@ -176,7 +143,7 @@ return function(C, R, UI)
             ch:PivotTo(cf)
         end)
         if ok then
-            task.defer(snapCameraBehindPlayer)
+            task.defer(alignCameraBehindPlayer)
         end
         return ok
     end
@@ -239,7 +206,7 @@ return function(C, R, UI)
         end
     end
 
-    local function destroyAllDiamondOrbsEverywhere()
+    local function clearLocationsAndOrbs()
         local list = C.State.DiamondsLocations or {}
         for i = 1, #list do
             local rec = list[i]
@@ -248,18 +215,6 @@ return function(C, R, UI)
                 rec.orb = nil
             end
         end
-        for _, inst in ipairs(WS:GetChildren()) do
-            if inst and inst:IsA("BasePart") then
-                if tostring(inst.Name):match("^DiamondsLoc_%d+$") then
-                    pcall(function() inst:Destroy() end)
-                end
-            end
-        end
-    end
-
-    local function clearDiamondLocationsAndOrbs()
-        ensureOrbsVisible(false)
-        destroyAllDiamondOrbsEverywhere()
         C.State.DiamondsLocations = {}
         C.State.DiamondsCycleIndex = 1
     end
@@ -456,32 +411,23 @@ return function(C, R, UI)
         firePromptLastAt = setmetatable({}, { __mode = "k" })
     end
 
-    local function diamondsJumpSendSpaceTap()
-        local ok, err = pcall(function()
-            VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-            task.wait(0.05)
-            VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-        end)
-        return ok, err
-    end
-
-    local function diamondsJumpStart()
-        if C.State._DiamondsJumpConn then return end
-        local lastSend = 0
-        C.State._DiamondsJumpConn = Run.Heartbeat:Connect(function()
-            if not (C.State and C.State.DiamondsJumpInput) then return end
-            local t = os.clock()
-            if (t - lastSend) < 0.25 then return end
-            lastSend = t
-            diamondsJumpSendSpaceTap()
-        end)
-    end
-
-    local function diamondsJumpStop()
-        if C.State._DiamondsJumpConn then
-            pcall(function() C.State._DiamondsJumpConn:Disconnect() end)
-            C.State._DiamondsJumpConn = nil
+    local cycleThread = nil
+    local function stopCycleThread()
+        if cycleThread then
+            task.cancel(cycleThread)
+            cycleThread = nil
         end
+    end
+    local function startCycleThreadUsingCurrentSliderValue()
+        stopCycleThread()
+        local intervalSec = math.clamp(tonumber(C.State and C.State.DiamondsCycleIntervalSec) or 180, 1, 1200)
+        cycleThread = task.spawn(function()
+            while C.State and C.State.DiamondsCycle do
+                task.wait(intervalSec)
+                if not (C.State and C.State.DiamondsCycle) then break end
+                pcall(cycleStep)
+            end
+        end)
     end
 
     tab:Section({ Title = "Teleport" })
@@ -491,6 +437,11 @@ return function(C, R, UI)
         Default = C.State.DiamondsCycle and true or false,
         Callback = function(on)
             C.State.DiamondsCycle = on and true or false
+            if C.State.DiamondsCycle then
+                startCycleThreadUsingCurrentSliderValue()
+            else
+                stopCycleThread()
+            end
         end
     })
 
@@ -511,10 +462,11 @@ return function(C, R, UI)
     })
 
     tab:Button({
-        Title = "Clear Locations (Delete Orbs)",
+        Title = "Delete Orbs / Clear Locations",
         Callback = function()
-            clearDiamondLocationsAndOrbs()
-            if C.State and C.State.DiamondsSetLocations then
+            clearLocationsAndOrbs()
+            ensureOrbsVisible(false)
+            if C.State.DiamondsSetLocations then
                 ensureOrbsVisible(true)
                 rebuildOrbNamesAndPositions()
             end
@@ -523,7 +475,7 @@ return function(C, R, UI)
 
     tab:Slider({
         Title = "Cycle Interval (sec)",
-        Value = { Min = 1, Max = 1200, Default = math.clamp(tonumber(C.State.DiamondsCycleInterval) or 180, 1, 1200) },
+        Value = { Min = 1, Max = 1200, Default = math.clamp(tonumber(C.State.DiamondsCycleIntervalSec) or 180, 1, 1200) },
         Callback = function(v)
             local nv = v
             if type(v) == "table" then
@@ -531,7 +483,7 @@ return function(C, R, UI)
             end
             nv = tonumber(nv)
             if nv then
-                C.State.DiamondsCycleInterval = math.clamp(nv, 1, 1200)
+                C.State.DiamondsCycleIntervalSec = math.clamp(nv, 1, 1200)
             end
         end
     })
@@ -574,16 +526,6 @@ return function(C, R, UI)
                 task.wait(SCAN_INTERVAL)
             end
         end)
-
-        task.spawn(function()
-            while true do
-                local seconds = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 180, 1, 1200)
-                if C.State and C.State.DiamondsCycle then
-                    pcall(cycleStep)
-                end
-                task.wait(seconds)
-            end
-        end)
     end
 
     startLoopsOnce()
@@ -595,6 +537,10 @@ return function(C, R, UI)
     else
         showSetLocationButton(false)
         ensureOrbsVisible(false)
+    end
+
+    if C.State.DiamondsCycle then
+        startCycleThreadUsingCurrentSliderValue()
     end
 
     tab:Section({ Title = "Prompts" })
@@ -614,26 +560,5 @@ return function(C, R, UI)
 
     if C.State.DiamondsFirePrompts then
         enableFirePrompts()
-    end
-
-    tab:Section({ Title = "Jump Debug" })
-
-    tab:Toggle({
-        Title = "Input Jump (simulate Space)",
-        Default = C.State.DiamondsJumpInput and true or false,
-        Callback = function(on)
-            C.State.DiamondsJumpInput = on and true or false
-            if C.State.DiamondsJumpInput then
-                diamondsJumpStart()
-            else
-                diamondsJumpStop()
-            end
-        end
-    })
-
-    if C.State.DiamondsJumpInput then
-        diamondsJumpStart()
-    else
-        diamondsJumpStop()
     end
 end
