@@ -145,11 +145,10 @@ return function(C, R, UI)
     local JOB_ATTR   = "OrbJob"
     local DONE_ATTR  = "OrbDelivered"
 
-    -- NEW: per-item send markers + retry tracking (fuel/scrap)
-    local SENT_MODE_ATTR    = "TPBringSentMode"      -- "fuel" / "scrap"
-    local SENT_TRIES_ATTR   = "TPBringSentTries"     -- number
-    local SENT_LAST_ATTR    = "TPBringSentAt"        -- number (os.clock)
-    local SENT_DELIV_ATTR   = "TPBringDeliveredAt"   -- number (os.clock)
+    local SENT_MODE_ATTR    = "TPBringSentMode"
+    local SENT_TRIES_ATTR   = "TPBringSentTries"
+    local SENT_LAST_ATTR    = "TPBringSentAt"
+    local SENT_DELIV_ATTR   = "TPBringDeliveredAt"
     local RETRY_AFTER_S     = 3.0
     local RETRY_PUSH_BACK   = 10.0
     local RETRY_MAX_TRIES   = 6
@@ -173,7 +172,6 @@ return function(C, R, UI)
     local fruitNudged  = {}
     local dropStacks   = {}
 
-    -- NEW: items that touched the input orb but still exist; retry push-in if not consumed
     local pendingRetry = {}
 
     local junkItems = {
@@ -671,7 +669,6 @@ return function(C, R, UI)
         if not fire then return nil end
         local mp = mainPart(fire)
         local cf = (mp and mp.CFrame) or fire:GetPivot()
-        -- NEW: down by 5 studs
         return cf.Position + Vector3.new(0, ORB_HEIGHT + 3, 0)
     end
 
@@ -680,7 +677,6 @@ return function(C, R, UI)
         if not scr then return nil end
         local mp = mainPart(scr)
         local cf = (mp and mp.CFrame) or scr:GetPivot()
-        -- NEW: down by 5 studs
         return cf.Position + Vector3.new(0, ORB_HEIGHT + 3, 0)
     end
 
@@ -717,14 +713,10 @@ return function(C, R, UI)
         o.Size = Vector3.new(1.5,1.5,1.5)
         o.Material = Enum.Material.Neon
         o.Color = color or Color3.fromRGB(80,180,255)
+        o.Transparency = 1
         o.Anchored, o.CanCollide, o.CanTouch, o.CanQuery = true,false,false,false
         o.CFrame = CFrame.new(pos)
         o.Parent = WS
-
-        local l = Instance.new("PointLight")
-        l.Range = 16
-        l.Brightness = 2.5
-        l.Parent = o
 
         orb = o
         orbPosVec = orb.Position
@@ -736,7 +728,7 @@ return function(C, R, UI)
             t.Size = Vector3.new(AIR_TOUCH_ORB_SIZE, AIR_TOUCH_ORB_SIZE, AIR_TOUCH_ORB_SIZE)
             t.Material = Enum.Material.Neon
             t.Color = Color3.fromRGB(255, 90, 90)
-            t.Transparency = 0.25
+            t.Transparency = 1
             t.Anchored = true
             t.CanCollide = false
             t.CanQuery = false
@@ -766,7 +758,6 @@ return function(C, R, UI)
                     end)
                 end
 
-                -- NEW: mark delivered-to-input moment; track for retry if not consumed
                 local now = os.clock()
                 pcall(function()
                     m:SetAttribute(SENT_DELIV_ATTR, now)
@@ -952,7 +943,6 @@ return function(C, R, UI)
             m:SetAttribute(JOB_ATTR, jobId)
         end)
 
-        -- NEW: mark attempts when sending to campfire/scrapper (air mode)
         if dropKind == "air" and (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap") then
             markSentAttempt(m)
         end
