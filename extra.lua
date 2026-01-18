@@ -312,9 +312,11 @@ return function(C, R, UI)
 
     local RF_Start = nil
     local RF_Stop = nil
+    local RF_Hotbar = nil
     local function refreshDragRemotes()
-        RF_Start = getRemote("RequestStartDraggingItem","StartDraggingItem")
-        RF_Stop  = getRemote("RequestStopDraggingItem","StopDraggingItem","StopDraggingItemRemote")
+        RF_Start  = getRemote("RequestStartDraggingItem","StartDraggingItem")
+        RF_Stop   = getRemote("RequestStopDraggingItem","StopDraggingItem","StopDraggingItemRemote")
+        RF_Hotbar = getRemote("RequestHotbarItem")
     end
     refreshDragRemotes()
 
@@ -331,6 +333,11 @@ return function(C, R, UI)
     local function safeStopDrag(m)
         if not (m and RF_Stop) then return false end
         return pcall(function() RF_Stop:FireServer(m) end)
+    end
+
+    local function safeStopDragNoArgs()
+        if not RF_Stop then return false end
+        return pcall(function() RF_Stop:FireServer() end)
     end
 
     local function finallyStopDrag(m)
@@ -513,6 +520,97 @@ return function(C, R, UI)
         setAnchoredAny(inst, true)
         addCaptured(inst)
         return true
+    end
+
+    local function invRoot()
+        return lp and (lp:FindFirstChild("Inventory") or lp:FindFirstChild("Backpack"))
+    end
+
+    local function wantedKeyForName(nm)
+        if type(nm) ~= "string" or nm == "" then return nil end
+        if nm == "Strong Axe" then return "Strong Axe" end
+        if nm == "Strong Flashlight" then return "Strong Flashlight" end
+        if nm == "Giant Sack" then return "Giant Sack" end
+        if nm == "Tactical Shotgun" then return "Tactical Shotgun" end
+        if nm == "Morningstar" then return "Morningstar" end
+        if nm == "Thorn Body" then return "Thorn Body" end
+        if nm:lower():find("sword", 1, true) then return "Sword" end
+        return nil
+    end
+
+    local function hasWantedInInventory(key)
+        if not key then return false end
+        local inv = invRoot()
+        if not inv then return false end
+        if key == "Sword" then
+            for _,d in ipairs(inv:GetDescendants()) do
+                if d and d.Name and tostring(d.Name):lower():find("sword", 1, true) then
+                    return true
+                end
+            end
+            return false
+        end
+        for _,d in ipairs(inv:GetDescendants()) do
+            if d and d.Name == key then return true end
+        end
+        return false
+    end
+
+    local function resolveTempStorageModelByName(nm, timeout)
+        local t0 = os.clock()
+        local ts = RS:FindFirstChild("TempStorage")
+        while (not ts) and (os.clock() - t0) < (timeout or 0.6) do
+            RunService.Heartbeat:Wait()
+            ts = RS:FindFirstChild("TempStorage")
+        end
+        if not ts then return nil end
+
+        local best = ts:FindFirstChild(nm)
+        if best and best:IsA("Model") then return best end
+        if best and best:IsA("BasePart") then return best end
+
+        local prefix = tostring(nm)
+        for _,ch in ipairs(ts:GetChildren()) do
+            if ch and ch.Name == prefix then return ch end
+        end
+        for _,ch in ipairs(ts:GetChildren()) do
+            if ch and type(ch.Name) == "string" and ch.Name:sub(1, #prefix) == prefix then
+                return ch
+            end
+        end
+        return nil
+    end
+
+    local function tryHotbarOne(inst)
+        if not (inst and inst.Parent) then return false end
+        if not inst:IsA("Model") then return false end
+
+        local key = wantedKeyForName(inst.Name)
+        if not key then return false end
+        if hasWantedInInventory(key) then return false end
+
+        refreshDragRemotes()
+        if not (RF_Start and RF_Stop and RF_Hotbar and RF_Hotbar.InvokeServer) then return false end
+
+        if not dragStart(inst) then return false end
+        task.wait(0.05)
+
+        local temp = resolveTempStorageModelByName(inst.Name, 0.75)
+        if not temp then
+            pcall(function() finallyStopDrag(inst) end)
+            dragUntrack(inst)
+            return false
+        end
+
+        local okInvoke = false
+        pcall(function()
+            RF_Hotbar:InvokeServer(temp)
+            okInvoke = true
+        end)
+
+        pcall(safeStopDragNoArgs)
+        dragUntrack(inst)
+        return okInvoke
     end
 
     local function getCandidatesNear(pos, rad)
@@ -871,9 +969,16 @@ return function(C, R, UI)
         for i=1,#cands do
             local inst = cands[i]
             if inst and inst.Parent and (not isChestInst(inst)) and (not CapturedSet[inst]) then
-                if captureInst(inst) then
-                    cap += 1
-                    if maxCount and cap >= maxCount then break end
+                local didHotbar = false
+                local key = wantedKeyForName(inst.Name)
+                if key and not hasWantedInInventory(key) then
+                    didHotbar = tryHotbarOne(inst)
+                end
+                if not didHotbar then
+                    if captureInst(inst) then
+                        cap += 1
+                        if maxCount and cap >= maxCount then break end
+                    end
                 end
             end
         end
