@@ -145,6 +145,15 @@ return function(C, R, UI)
     local JOB_ATTR   = "OrbJob"
     local DONE_ATTR  = "OrbDelivered"
 
+    -- NEW: per-item send markers + retry tracking (fuel/scrap)
+    local SENT_MODE_ATTR    = "TPBringSentMode"      -- "fuel" / "scrap"
+    local SENT_TRIES_ATTR   = "TPBringSentTries"     -- number
+    local SENT_LAST_ATTR    = "TPBringSentAt"        -- number (os.clock)
+    local SENT_DELIV_ATTR   = "TPBringDeliveredAt"   -- number (os.clock)
+    local RETRY_AFTER_S     = 3.0
+    local RETRY_PUSH_BACK   = 10.0
+    local RETRY_MAX_TRIES   = 6
+
     local CURRENT_RUN_ID   = nil
     local CURRENT_MODE     = nil
 
@@ -163,6 +172,9 @@ return function(C, R, UI)
     local finalized    = {}
     local fruitNudged  = {}
     local dropStacks   = {}
+
+    -- NEW: items that touched the input orb but still exist; retry push-in if not consumed
+    local pendingRetry = {}
 
     local junkItems = {
         "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
@@ -659,7 +671,8 @@ return function(C, R, UI)
         if not fire then return nil end
         local mp = mainPart(fire)
         local cf = (mp and mp.CFrame) or fire:GetPivot()
-        return cf.Position + Vector3.new(0, ORB_HEIGHT + 8, 0)
+        -- NEW: down by 5 studs
+        return cf.Position + Vector3.new(0, ORB_HEIGHT + 3, 0)
     end
 
     local function scrapperOrbPos()
@@ -667,7 +680,8 @@ return function(C, R, UI)
         if not scr then return nil end
         local mp = mainPart(scr)
         local cf = (mp and mp.CFrame) or scr:GetPivot()
-        return cf.Position + Vector3.new(0, ORB_HEIGHT + 8, 0)
+        -- NEW: down by 5 studs
+        return cf.Position + Vector3.new(0, ORB_HEIGHT + 3, 0)
     end
 
     local function noticeOrbPos()
@@ -751,6 +765,15 @@ return function(C, R, UI)
                         if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end
                     end)
                 end
+
+                -- NEW: mark delivered-to-input moment; track for retry if not consumed
+                local now = os.clock()
+                pcall(function()
+                    m:SetAttribute(SENT_DELIV_ATTR, now)
+                end)
+                local tries = tonumber(m:GetAttribute(SENT_TRIES_ATTR)) or 1
+                pendingRetry[m] = { mode = CURRENT_MODE, at = now, tries = tries }
+
                 markDoneThisRun(m)
             end)
         end
@@ -898,6 +921,19 @@ return function(C, R, UI)
         inflight[m] = nil
     end
 
+    local function markSentAttempt(m)
+        if not (m and m.Parent) then return end
+        if not (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap") then return end
+        local now = os.clock()
+        local tries = tonumber(m:GetAttribute(SENT_TRIES_ATTR)) or 0
+        tries = tries + 1
+        pcall(function()
+            m:SetAttribute(SENT_MODE_ATTR, CURRENT_MODE)
+            m:SetAttribute(SENT_TRIES_ATTR, tries)
+            m:SetAttribute(SENT_LAST_ATTR, now)
+        end)
+    end
+
     local function startConveyor(m, jobId, destBaseVec, destKey, dropKind)
         if not (running and m and m.Parent) then return end
         local mp = mainPart(m)
@@ -915,6 +951,11 @@ return function(C, R, UI)
             m:SetAttribute(INFLT_ATTR, os.clock())
             m:SetAttribute(JOB_ATTR, jobId)
         end)
+
+        -- NEW: mark attempts when sending to campfire/scrapper (air mode)
+        if dropKind == "air" and (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap") then
+            markSentAttempt(m)
+        end
 
         local snap = setNoCollide(m)
         setAnchored(m, true)
@@ -1194,10 +1235,59 @@ return function(C, R, UI)
         end
     end
 
+    local function processPendingRetries()
+        if not (running and orbPosVec and (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap")) then
+            pendingRetry = {}
+            return
+        end
+
+        local now = os.clock()
+        for m,info in pairs(pendingRetry) do
+            if not (m and m.Parent) then
+                pendingRetry[m] = nil
+            else
+                if not info or info.mode ~= CURRENT_MODE then
+                    pendingRetry[m] = nil
+                else
+                    local at = info.at or now
+                    if (now - at) >= RETRY_AFTER_S then
+                        local tries = tonumber(m:GetAttribute(SENT_TRIES_ATTR)) or (info.tries or 1)
+                        if tries >= RETRY_MAX_TRIES then
+                            pendingRetry[m] = nil
+                        else
+                            local mp = mainPart(m)
+                            if not mp then
+                                pendingRetry[m] = nil
+                            else
+                                local base = orbPosVec
+                                local v = Vector3.new(mp.Position.X - base.X, 0, mp.Position.Z - base.Z)
+                                if v.Magnitude < 0.2 then v = Vector3.new(1,0,0) else v = v.Unit end
+                                local away = base + v * RETRY_PUSH_BACK + Vector3.new(0, AIR_RELEASE_UP, 0)
+
+                                pcall(function()
+                                    setAnchored(m, true)
+                                    setPivot(m, CFrame.new(away))
+                                    zeroAssembly(m)
+                                    setAnchored(m, false)
+                                end)
+
+                                local jobId = tostring(os.clock())
+                                startConveyor(m, jobId, base, "main", "air")
+
+                                pendingRetry[m] = { mode = CURRENT_MODE, at = now, tries = (tries + 1) }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     local function stopAll()
         running = false
         if hb then hb:Disconnect() hb = nil end
         setUnstickEnabled(false)
+        pendingRetry = {}
 
         for i = 1, #releaseQueue do
             local rec = releaseQueue[i]
@@ -1310,6 +1400,7 @@ return function(C, R, UI)
         dropStacks     = {}
         outsideLogCache = {}
         outsideLogAcc = 0
+        pendingRetry = {}
 
         releaseRateHz = RELEASE_RATE_HZ_DEFAULT
         maxReleasePerTick = MAX_RELEASE_PER_TICK_DEFAULT
@@ -1401,6 +1492,7 @@ return function(C, R, UI)
             end
 
             flushStaleStaged()
+            processPendingRetries()
         end)
     end
 
