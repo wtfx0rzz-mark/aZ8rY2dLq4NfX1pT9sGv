@@ -472,7 +472,7 @@ return function(C, R, UI)
         C.State._DiamondsJumpConn = Run.Heartbeat:Connect(function()
             if not (C.State and C.State.DiamondsJumpInput) then return end
             local t = os.clock()
-            if (t - lastSend) < 0.25 then return end
+            if (t - lastSend) < 5 then return end
             lastSend = t
             diamondsJumpSendSpaceTap()
         end)
