@@ -625,12 +625,12 @@ return function(C, R, UI)
         end
         tab:Toggle({
             Title = "Teleport to Missing Kids",
-            Value = false,
+            Value = true,
             Callback = function(state)
                 if state then enableLostChild() else disableLostChild() end
             end
         })
-
+        task.defer(enableLostChild)
         local godOn = false
         local godHB = nil
         local godLastHealth = nil
