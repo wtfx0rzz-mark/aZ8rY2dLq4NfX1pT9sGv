@@ -260,6 +260,7 @@ return function(C, R, UI)
         local characterHitSeq = 0
 
         local CHAR_WEAPON_PREF = {
+            { "Admin Axe",         0.5 },
             { "Cultist King Mace", 1.0 },
             { "Morningstar",       1.0 },
             { "Obsidiron Hammer",  1.0 },
@@ -580,6 +581,7 @@ return function(C, R, UI)
 
         local TreeImpactCF = setmetatable({}, { __mode = "k" })
         local TreeHitSeed  = setmetatable({}, { __mode = "k" })
+        local TreeLastHitAt = setmetatable({}, { __mode = "k" })
 
         local function st_findItem(name)
             if not (lp and name) then return nil end
@@ -780,15 +782,21 @@ return function(C, R, UI)
             return out
         end
 
-        local function st_chopWaveTrees(targetModels, swingDelay)
-            local toolName
+        local function st_pickToolName()
+            if st_findItem("Admin Axe") then return "Admin Axe" end
+            if st_findItem("Strong Axe") then return "Strong Axe" end
             for _, n in ipairs(TUNE.ChopPrefer) do
-                if st_findItem(n) then
-                    toolName = n
-                    break
+                if n ~= "Admin Axe" and n ~= "Strong Axe" then
+                    if st_findItem(n) then return n end
                 end
             end
+            return nil
+        end
 
+        local function st_chopWaveTrees(targetModels, swingDelay)
+            swingDelay = tonumber(swingDelay) or 0.5
+
+            local toolName = st_pickToolName()
             if not toolName then
                 task.wait(0.35)
                 return
@@ -800,21 +808,48 @@ return function(C, R, UI)
                 return
             end
 
+            local now = os.clock()
+            local anySent = false
+            local soonest = math.huge
+
             for _, mdl in ipairs(targetModels) do
-                task.spawn(function()
-                    if not (mdl and mdl.Parent) then return end
-                    local hitPart = st_bestTreeHitPart(mdl)
-                    if not hitPart then return end
-                    local impactCF = st_impactCFForTree(mdl, hitPart)
-                    local hitId = st_nextPerTreeHitId(mdl)
-                    pcall(function()
-                        local bucket = st_attrBucket(mdl)
-                        if bucket then bucket:SetAttribute(hitId, true) end
-                    end)
-                    st_HitTarget(mdl, tool, hitId, impactCF)
-                end)
+                if mdl and mdl.Parent then
+                    local last = TreeLastHitAt[mdl] or 0
+                    local elapsed = now - last
+                    if elapsed >= swingDelay then
+                        TreeLastHitAt[mdl] = now
+                        anySent = true
+
+                        task.spawn(function()
+                            if not (mdl and mdl.Parent) then return end
+                            local hitPart = st_bestTreeHitPart(mdl)
+                            if not hitPart then return end
+                            local impactCF = st_impactCFForTree(mdl, hitPart)
+                            local hitId = st_nextPerTreeHitId(mdl)
+                            pcall(function()
+                                local bucket = st_attrBucket(mdl)
+                                if bucket then bucket:SetAttribute(hitId, true) end
+                            end)
+                            st_HitTarget(mdl, tool, hitId, impactCF)
+                        end)
+                    else
+                        local remain = swingDelay - elapsed
+                        if remain > 0 and remain < soonest then
+                            soonest = remain
+                        end
+                    end
+                end
             end
-            task.wait(swingDelay)
+
+            if anySent then
+                task.wait()
+            else
+                if soonest < math.huge then
+                    task.wait(math.max(0.02, soonest))
+                else
+                    task.wait(0.15)
+                end
+            end
         end
 
         function SmallTreeAura.Start()
@@ -906,8 +941,9 @@ return function(C, R, UI)
         end
 
         local function bt_hasBigTreeTool()
-            if bt_hasChainsaw() then return "Chainsaw" end
+            if bt_findItem("Admin Axe") then return "Admin Axe" end
             if bt_hasStrongAxe() then return "Strong Axe" end
+            if bt_hasChainsaw() then return "Chainsaw" end
             return nil
         end
 
