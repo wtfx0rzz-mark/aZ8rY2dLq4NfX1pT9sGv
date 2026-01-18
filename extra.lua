@@ -631,7 +631,10 @@ return function(C, R, UI)
     local FRONT_DIST = 4.0
     local STAND_UP = 2.5
     local STRONGHOLD_EXCLUDE_RADIUS = 15.0
-    local EXCLUDE_NAMES = { ["Stronghold Diamond Chest"] = true }
+    local EXCLUDE_NAMES = {
+    ["Stronghold Diamond Chest"] = true,
+    ["Mossy Chest"] = true,
+}
 
     local function makeChestRayParams(extras)
         local params = RaycastParams.new()
