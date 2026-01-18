@@ -39,12 +39,13 @@ return function(C, R, UI)
 
         local MAX_TREE_QUEUE = 250
 
+        -- Small-tree dense-patch fix:
+        -- Hit only a small batch per step, round-robin through the list.
         local SMALL_STEP_INTERVAL = 0.05
         local SMALL_HITS_PER_STEP = 10
 
         C.State = C.State or {}
         if C.State.FarmTeleportWaitSec == nil then C.State.FarmTeleportWaitSec = 1 end
-        if type(C.State.FarmOrbPoints) ~= "table" then C.State.FarmOrbPoints = {} end
 
         local function getSwitchTreeSec()
             local v = tonumber(C.State.FarmTeleportWaitSec)
@@ -274,6 +275,11 @@ return function(C, R, UI)
             return h and h.Position or Vector3.new(0, 0, 0)
         end
 
+        local function hrp()
+            local ch = lp.Character
+            return ch and ch:FindFirstChild("HumanoidRootPart")
+        end
+
         local smallRunning = false
         local smallLoopConn = nil
         local smallTreeList = {}
@@ -332,10 +338,8 @@ return function(C, R, UI)
                 if smallAcc < SMALL_STEP_INTERVAL then return end
                 smallAcc = 0
 
-                local char = lp.Character
-                if not char then return end
-                local hrp = char:FindFirstChild("HumanoidRootPart")
-                if not hrp then return end
+                local root = hrp()
+                if not root then return end
 
                 local axe = getPreferredAxe()
                 if not axe then return end
@@ -357,12 +361,13 @@ return function(C, R, UI)
                     local start = smallCursor
                     if start < 1 then start = 1 end
                     if start > n then start = 1 end
+
                     for i = 0, n - 1 do
                         local idx = ((start + i - 1) % n) + 1
                         local t = smallTreeList[idx]
                         if t and t.Parent and isSmallTreeModel(t) then
                             local p = bestTreeHitPart(t)
-                            if p and (p.Position - hrp.Position).Magnitude <= CHOP_RADIUS then
+                            if p and (p.Position - root.Position).Magnitude <= CHOP_RADIUS then
                                 return idx
                             end
                         end
@@ -405,7 +410,7 @@ return function(C, R, UI)
                         continue
                     end
 
-                    local dist = (hitPart.Position - hrp.Position).Magnitude
+                    local dist = (hitPart.Position - root.Position).Magnitude
                     if dist > CHOP_RADIUS then
                         continue
                     end
@@ -520,15 +525,27 @@ return function(C, R, UI)
             return nil
         end
 
+        local function findAnyBigInRange(requiredHits, rootPos)
+            for idx, t in ipairs(bigTreeList) do
+                if t and t.Parent and isBigTreeModel(t) and getCurrentHitCount(t) < requiredHits then
+                    local p = bestTreeHitPart(t)
+                    if p and (p.Position - rootPos).Magnitude <= CHOP_RADIUS then
+                        return t, idx
+                    end
+                end
+            end
+            return nil
+        end
+
         local function stepBigChopper()
             local now = os.clock()
-            local char = lp.Character
-            if not char then return end
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if not hrp then return end
+            local root = hrp()
+            if not root then return end
+
             local tool = getBigTreeTool()
             if not tool then return end
             ensureEquipped(tool)
+
             local requiredHits = REQUIRED_HITS[tool.Name] or 35
             local switchSec = getSwitchTreeSec()
 
@@ -542,9 +559,12 @@ return function(C, R, UI)
             end
 
             if not bigTargetTree then
-                local t = pickNextBigTree(requiredHits)
+                if #bigTreeList == 0 then buildBigTreeList(requiredHits) end
+                local inRangeTree, inRangeIdx = findAnyBigInRange(requiredHits, root.Position)
+                local t = inRangeTree or pickNextBigTree(requiredHits)
                 if not t then return end
                 bigTargetTree = t
+                if inRangeIdx then bigCurrentIndex = inRangeIdx end
                 if switchSec and switchSec > 0 then
                     bigTargetEndAt = now + switchSec
                 else
@@ -591,7 +611,14 @@ return function(C, R, UI)
                 return
             end
 
-            if (hitPart.Position - hrp.Position).Magnitude > CHOP_RADIUS then
+            local dist = (hitPart.Position - root.Position).Magnitude
+            if dist > CHOP_RADIUS then
+                local inRangeTree, inRangeIdx = findAnyBigInRange(requiredHits, root.Position)
+                if inRangeTree then
+                    bigTargetTree = inRangeTree
+                    bigCurrentIndex = inRangeIdx or bigCurrentIndex
+                    return
+                end
                 teleportNearTree(tree)
                 bigNextSwingAt = now + 0.05
                 return
@@ -640,12 +667,6 @@ return function(C, R, UI)
         local circleSmallHitCounts = {}
         local circleNextBigHitAt = 0
 
-        local function getHRP()
-            local ch = lp.Character
-            if not ch then return nil end
-            return ch:FindFirstChild("HumanoidRootPart")
-        end
-
         local function campfireCandidatePos(inst)
             if not inst then return nil end
             if inst:IsA("BasePart") then return inst.Position end
@@ -658,8 +679,8 @@ return function(C, R, UI)
         end
 
         local function findCampfireCenter()
-            local hrp = getHRP()
-            local hrpPos = hrp and hrp.Position or nil
+            local root = hrp()
+            local rootPos = root and root.Position or nil
             local bestPos, bestD
             for _, inst in ipairs(WS:GetDescendants()) do
                 local n = inst.Name
@@ -668,7 +689,7 @@ return function(C, R, UI)
                     if ln:find("campfire", 1, true) then
                         local p = campfireCandidatePos(inst)
                         if p then
-                            local d = hrpPos and (p - hrpPos).Magnitude or (p - Vector3.new(0, 0, 0)).Magnitude
+                            local d = rootPos and (p - rootPos).Magnitude or (p - Vector3.new(0, 0, 0)).Magnitude
                             if (not bestPos) or d < bestD then bestPos, bestD = p, d end
                         end
                     end
@@ -738,12 +759,41 @@ return function(C, R, UI)
             end
         end
 
+        local function findAnyCircleInRangeIndex(rootPos, now)
+            local axe = getPreferredAxe()
+            local axeName = axe and axe.Name or nil
+            local neededSmall = axeName and (AXE_HITS[axeName] or 13) or 13
+            local toolBig = getBigTreeTool()
+            local requiredBig = toolBig and (REQUIRED_HITS[toolBig.Name] or 35) or 35
+
+            for idx, tree in ipairs(circleTreeList) do
+                if tree and tree.Parent then
+                    local isSmall = isSmallTreeModel(tree)
+                    local isBig = isBigTreeModel(tree)
+                    if isSmall or isBig then
+                        local part = bestTreeHitPart(tree)
+                        if part and (part.Position - rootPos).Magnitude <= CHOP_RADIUS then
+                            if isSmall then
+                                local count = circleSmallHitCounts[tree] or 0
+                                if count < neededSmall then
+                                    return idx
+                                end
+                            else
+                                if now >= circleNextBigHitAt and getCurrentHitCount(tree) < requiredBig then
+                                    return idx
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            return nil
+        end
+
         local function stepCircleFarm()
             local now = os.clock()
-            local char = lp.Character
-            if not char then return end
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if not hrp then return end
+            local root = hrp()
+            if not root then return end
 
             local centerPos = findCampfireCenter()
             circleEnsureList(centerPos)
@@ -752,76 +802,88 @@ return function(C, R, UI)
             if circleIndex < 1 then circleIndex = 1 end
             if circleIndex > #circleTreeList then circleIndex = 1 end
 
-            local tree = circleTreeList[circleIndex]
-            if not tree or not tree.Parent then
-                circleRemoveAt(circleIndex)
-                return
-            end
+            for _attempt = 1, 2 do
+                if #circleTreeList == 0 then return end
+                if circleIndex < 1 then circleIndex = 1 end
+                if circleIndex > #circleTreeList then circleIndex = 1 end
 
-            local isSmall = isSmallTreeModel(tree)
-            local isBig = isBigTreeModel(tree)
-            if (not isSmall) and (not isBig) then
-                circleRemoveAt(circleIndex)
-                return
-            end
-
-            local hitPart = bestTreeHitPart(tree)
-            if not hitPart then
-                circleRemoveAt(circleIndex)
-                return
-            end
-
-            if (hitPart.Position - hrp.Position).Magnitude > CHOP_RADIUS then
-                teleportNearTree(tree)
-                return
-            end
-
-            if isSmall then
-                local tool = getPreferredAxe()
-                if not tool then return end
-                ensureEquipped(tool)
-                local needed = AXE_HITS[tool.Name] or 13
-                local count = circleSmallHitCounts[tree] or 0
-                local hitId = nextPerTreeHitId(tree)
-                local impactCF = impactCFForTree(tree, hitPart)
-                HitTreeRemote(tree, tool, hitId, impactCF)
-                count += 1
-                circleSmallHitCounts[tree] = count
-                if count >= needed then
+                local tree = circleTreeList[circleIndex]
+                if not tree or not tree.Parent then
                     circleRemoveAt(circleIndex)
-                else
-                    circleAdvanceIndex()
-                end
-                return
-            end
-
-            if isBig then
-                if now < circleNextBigHitAt then
-                    circleAdvanceIndex()
                     return
                 end
 
-                local tool = getBigTreeTool()
-                if not tool then
-                    circleAdvanceIndex()
-                    return
-                end
-                ensureEquipped(tool)
-
-                local requiredHits = REQUIRED_HITS[tool.Name] or 35
-                if getCurrentHitCount(tree) >= requiredHits then
+                local isSmall = isSmallTreeModel(tree)
+                local isBig = isBigTreeModel(tree)
+                if (not isSmall) and (not isBig) then
                     circleRemoveAt(circleIndex)
-                    circleAdvanceIndex()
                     return
                 end
 
-                local hitId = nextPerTreeHitId(tree)
-                local impactCF = impactCFForTree(tree, hitPart)
-                HitTreeRemote(tree, tool, hitId, impactCF)
+                local hitPart = bestTreeHitPart(tree)
+                if not hitPart then
+                    circleRemoveAt(circleIndex)
+                    return
+                end
 
-                circleNextBigHitAt = now + SWING_COOLDOWN_BIG
-                circleAdvanceIndex()
-                return
+                local dist = (hitPart.Position - root.Position).Magnitude
+                if dist > CHOP_RADIUS then
+                    local inIdx = findAnyCircleInRangeIndex(root.Position, now)
+                    if inIdx then
+                        circleIndex = inIdx
+                        continue
+                    end
+                    teleportNearTree(tree)
+                    return
+                end
+
+                if isSmall then
+                    local tool = getPreferredAxe()
+                    if not tool then return end
+                    ensureEquipped(tool)
+                    local needed = AXE_HITS[tool.Name] or 13
+                    local count = circleSmallHitCounts[tree] or 0
+                    local hitId = nextPerTreeHitId(tree)
+                    local impactCF = impactCFForTree(tree, hitPart)
+                    HitTreeRemote(tree, tool, hitId, impactCF)
+                    count += 1
+                    circleSmallHitCounts[tree] = count
+                    if count >= needed then
+                        circleRemoveAt(circleIndex)
+                    else
+                        circleAdvanceIndex()
+                    end
+                    return
+                end
+
+                if isBig then
+                    if now < circleNextBigHitAt then
+                        circleAdvanceIndex()
+                        return
+                    end
+
+                    local tool = getBigTreeTool()
+                    if not tool then
+                        circleAdvanceIndex()
+                        return
+                    end
+                    ensureEquipped(tool)
+
+                    local requiredHits = REQUIRED_HITS[tool.Name] or 35
+                    if getCurrentHitCount(tree) >= requiredHits then
+                        circleRemoveAt(circleIndex)
+                        circleAdvanceIndex()
+                        return
+                    end
+
+                    local hitId = nextPerTreeHitId(tree)
+                    local impactCF = impactCFForTree(tree, hitPart)
+                    HitTreeRemote(tree, tool, hitId, impactCF)
+
+                    circleNextBigHitAt = now + SWING_COOLDOWN_BIG
+                    circleAdvanceIndex()
+                    return
+                end
             end
         end
 
@@ -850,379 +912,10 @@ return function(C, R, UI)
             circleNextBigHitAt = 0
         end
 
-        local ORB_SPEED = 50
-
-        local orbEdgeEnabled = false
-        local orbRunning = false
-        local orbDir = 1
-        local orbIdx = 1
-        local orbRenderBound = false
-        local orbGui = nil
-        local orbBtnSet = nil
-        local orbBtnStart = nil
-        local orbCountLabel = nil
-        local prevPlatformStand = nil
-        local orbBG = nil
-        local orbBV = nil
-        local orbCharConn = nil
-
-        local overlayRoot = nil
-        local overlayFolder = nil
-        local orbMarkers = {}
-
-        local function clearInstance(x) if x then pcall(function() x:Destroy() end) end end
-
-        local function humanoid()
-            local ch = lp.Character
-            return ch and ch:FindFirstChildOfClass("Humanoid")
-        end
-
-        local function hrp()
-            local ch = lp.Character
-            return ch and ch:FindFirstChild("HumanoidRootPart")
-        end
-
-        local function orbPoints()
-            if type(C.State.FarmOrbPoints) ~= "table" then C.State.FarmOrbPoints = {} end
-            return C.State.FarmOrbPoints
-        end
-
-        local function ensureOverlayFolders()
-            if not overlayRoot or not overlayRoot.Parent then
-                overlayRoot = WS:FindFirstChild("__Local_Overlays__")
-                if not overlayRoot then
-                    overlayRoot = Instance.new("Folder")
-                    overlayRoot.Name = "__Local_Overlays__"
-                    overlayRoot.Parent = WS
-                end
-            end
-            if not overlayFolder or not overlayFolder.Parent then
-                overlayFolder = overlayRoot:FindFirstChild("FarmOrbs")
-                if not overlayFolder then
-                    overlayFolder = Instance.new("Folder")
-                    overlayFolder.Name = "FarmOrbs"
-                    overlayFolder.Parent = overlayRoot
-                end
-            end
-        end
-
-        local function clearOrbMarkers()
-            for _, inst in ipairs(orbMarkers) do
-                clearInstance(inst)
-            end
-            orbMarkers = {}
-        end
-
-        local function rebuildOrbMarkers()
-            ensureOverlayFolders()
-            clearOrbMarkers()
-            local pts = orbPoints()
-            for i = 1, #pts do
-                local p = pts[i]
-                if typeof(p) == "Vector3" then
-                    local part = Instance.new("Part")
-                    part.Name = "Orb_" .. tostring(i)
-                    part.Shape = Enum.PartType.Ball
-                    part.Size = Vector3.new(0.7, 0.7, 0.7)
-                    part.Anchored = true
-                    part.CanCollide = false
-                    part.Transparency = 0.15
-                    part.Material = Enum.Material.Neon
-                    part.CFrame = CFrame.new(p)
-                    part.Parent = overlayFolder
-
-                    local bb = Instance.new("BillboardGui")
-                    bb.Name = "Idx"
-                    bb.AlwaysOnTop = true
-                    bb.Size = UDim2.new(0, 60, 0, 20)
-                    bb.StudsOffset = Vector3.new(0, 1.1, 0)
-                    bb.Parent = part
-
-                    local tl = Instance.new("TextLabel")
-                    tl.Size = UDim2.fromScale(1, 1)
-                    tl.BackgroundTransparency = 1
-                    tl.Text = tostring(i)
-                    tl.TextColor3 = Color3.fromRGB(255, 255, 255)
-                    tl.TextStrokeTransparency = 0.4
-                    tl.Font = Enum.Font.SourceSansBold
-                    tl.TextSize = 16
-                    tl.Parent = bb
-
-                    orbMarkers[#orbMarkers + 1] = part
-                end
-            end
-        end
-
-        local function setStartText(txt)
-            if orbBtnStart and orbBtnStart.Parent then
-                orbBtnStart.Text = txt
-            end
-        end
-
-        local function setCountText()
-            if orbCountLabel and orbCountLabel.Parent then
-                orbCountLabel.Text = "Orbs: " .. tostring(#orbPoints())
-            end
-        end
-
-        local function ensureOrbMovers(root)
-            if not root then return end
-            if not orbBG or not orbBG.Parent or orbBG.Parent ~= root then
-                clearInstance(orbBG); orbBG = nil
-                orbBG = Instance.new("BodyGyro")
-                orbBG.Name = "FarmOrbBG"
-                orbBG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-                orbBG.P = 1000
-                orbBG.D = 50
-                orbBG.Parent = root
-            end
-            if not orbBV or not orbBV.Parent or orbBV.Parent ~= root then
-                clearInstance(orbBV); orbBV = nil
-                orbBV = Instance.new("BodyVelocity")
-                orbBV.Name = "FarmOrbBV"
-                orbBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-                orbBV.Velocity = Vector3.zero
-                orbBV.Parent = root
-            end
-        end
-
-        local function nextOrbIndex()
-            local pts = orbPoints()
-            local n = #pts
-            if n < 2 then return 1 end
-            if orbDir == 1 then
-                if orbIdx >= n then
-                    orbDir = -1
-                    orbIdx = math.max(1, orbIdx - 1)
-                else
-                    orbIdx += 1
-                end
-            else
-                if orbIdx <= 1 then
-                    orbDir = 1
-                    orbIdx = math.min(n, orbIdx + 1)
-                else
-                    orbIdx -= 1
-                end
-            end
-            return orbIdx
-        end
-
-        local function unbindOrbRender()
-            if orbRenderBound then
-                orbRenderBound = false
-                pcall(function()
-                    RunService:UnbindFromRenderStep("FarmOrbPath")
-                end)
-            end
-        end
-
-        local function stopOrbRunner()
-            orbRunning = false
-            unbindOrbRender()
-            if orbBV then orbBV.Velocity = Vector3.zero end
-            clearInstance(orbBV); orbBV = nil
-            clearInstance(orbBG); orbBG = nil
-            local h = humanoid()
-            if h and prevPlatformStand ~= nil then
-                h.PlatformStand = prevPlatformStand
-            end
-            prevPlatformStand = nil
-            setStartText("Start")
-        end
-
-        local function startOrbRunner()
-            if orbRunning then return end
-            local pts = orbPoints()
-            if #pts < 2 then
-                setStartText("Need 2+")
-                task.delay(0.8, function()
-                    if not orbRunning then setStartText("Start") end
-                end)
-                return
-            end
-            local root = hrp()
-            local h = humanoid()
-            if not root or not h then return end
-
-            orbRunning = true
-            orbDir = 1
-            orbIdx = 1
-
-            prevPlatformStand = h.PlatformStand
-            h.PlatformStand = true
-
-            setStartText("Stop")
-
-            unbindOrbRender()
-            orbRenderBound = true
-            RunService:BindToRenderStep("FarmOrbPath", Enum.RenderPriority.Last.Value, function()
-                if not orbRunning then return end
-                local root2 = hrp()
-                local h2 = humanoid()
-                if not root2 or not h2 then return end
-
-                ensureOrbMovers(root2)
-
-                local pts2 = orbPoints()
-                local n = #pts2
-                if n < 2 then
-                    stopOrbRunner()
-                    return
-                end
-                if orbIdx < 1 then orbIdx = 1 end
-                if orbIdx > n then orbIdx = n end
-
-                local target = pts2[orbIdx]
-                if typeof(target) ~= "Vector3" then
-                    stopOrbRunner()
-                    return
-                end
-
-                local pos = root2.Position
-                local delta = target - pos
-                local dist = delta.Magnitude
-
-                if dist <= 2.5 then
-                    nextOrbIndex()
-                    return
-                end
-
-                local dir = (dist > 0.0001) and (delta / dist) or Vector3.zero
-                orbBV.Velocity = dir * ORB_SPEED
-                orbBG.CFrame = CFrame.new(pos, pos + dir)
-            end)
-        end
-
-        local function toggleOrbRunner()
-            if orbRunning then stopOrbRunner() else startOrbRunner() end
-        end
-
-        local function destroyOrbGui()
-            if orbRunning then stopOrbRunner() end
-            orbBtnSet = nil
-            orbBtnStart = nil
-            orbCountLabel = nil
-            clearInstance(orbGui); orbGui = nil
-            clearOrbMarkers()
-        end
-
-        local function createOrbGui()
-            destroyOrbGui()
-
-            local pg = lp:FindFirstChildOfClass("PlayerGui")
-            if not pg then return end
-
-            orbGui = Instance.new("ScreenGui")
-            orbGui.Name = "FarmOrbEdgeGui"
-            orbGui.ResetOnSpawn = false
-            orbGui.Parent = pg
-
-            local frame = Instance.new("Frame")
-            frame.Name = "EdgeFrame"
-            frame.Parent = orbGui
-            frame.AnchorPoint = Vector2.new(1, 0.5)
-            frame.Position = UDim2.new(1, -10, 0.5, 0)
-            frame.Size = UDim2.new(0, 150, 0, 112)
-            frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-            frame.BorderSizePixel = 0
-            frame.Active = true
-
-            local uic = Instance.new("UICorner")
-            uic.CornerRadius = UDim.new(0, 10)
-            uic.Parent = frame
-
-            local list = Instance.new("UIListLayout")
-            list.Parent = frame
-            list.FillDirection = Enum.FillDirection.Vertical
-            list.HorizontalAlignment = Enum.HorizontalAlignment.Center
-            list.VerticalAlignment = Enum.VerticalAlignment.Center
-            list.Padding = UDim.new(0, 8)
-
-            local function mkBtn(name, text)
-                local b = Instance.new("TextButton")
-                b.Name = name
-                b.Size = UDim2.new(1, -16, 0, 32)
-                b.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-                b.BorderSizePixel = 0
-                b.Text = text
-                b.TextColor3 = Color3.fromRGB(235, 235, 235)
-                b.Font = Enum.Font.SourceSansSemibold
-                b.TextSize = 16
-                b.Parent = frame
-                local c = Instance.new("UICorner")
-                c.CornerRadius = UDim.new(0, 10)
-                c.Parent = b
-                return b
-            end
-
-            local function mkLabel()
-                local l = Instance.new("TextLabel")
-                l.Name = "Count"
-                l.Size = UDim2.new(1, -16, 0, 18)
-                l.BackgroundTransparency = 1
-                l.Text = ""
-                l.TextColor3 = Color3.fromRGB(200, 200, 200)
-                l.Font = Enum.Font.SourceSans
-                l.TextSize = 14
-                l.Parent = frame
-                return l
-            end
-
-            orbBtnSet = mkBtn("SetOrb", "Set Orb")
-            orbBtnStart = mkBtn("StartStop", "Start")
-            orbCountLabel = mkLabel()
-
-            setCountText()
-            rebuildOrbMarkers()
-
-            local lastSetAt = 0
-            local lastStartAt = 0
-
-            local function onSetOrb()
-                local now = os.clock()
-                if (now - lastSetAt) < 0.08 then return end
-                lastSetAt = now
-
-                local root = hrp()
-                if not root then return end
-                local pts = orbPoints()
-                pts[#pts + 1] = root.Position
-                setCountText()
-                rebuildOrbMarkers()
-            end
-
-            local function onStartStop()
-                local now = os.clock()
-                if (now - lastStartAt) < 0.12 then return end
-                lastStartAt = now
-                toggleOrbRunner()
-            end
-
-            orbBtnSet.Activated:Connect(onSetOrb)
-            orbBtnStart.Activated:Connect(onStartStop)
-        end
-
-        if orbCharConn then pcall(function() orbCharConn:Disconnect() end) end
-        orbCharConn = lp.CharacterAdded:Connect(function()
-            task.defer(function()
-                if orbRunning then
-                    stopOrbRunner()
-                    startOrbRunner()
-                elseif orbEdgeEnabled then
-                    rebuildOrbMarkers()
-                end
-            end)
-        end)
-
         local function cleanupAll()
             stopCircleFarm()
             stopSmallFarm()
             stopBigFarm()
-            destroyOrbGui()
-            unbindOrbRender()
-            if orbCharConn then pcall(function() orbCharConn:Disconnect() end) end
-            orbCharConn = nil
         end
 
         C.Farm._cleanup = cleanupAll
@@ -1280,23 +973,6 @@ return function(C, R, UI)
                     startBigFarm()
                 else
                     stopBigFarm()
-                end
-            end
-        })
-
-        tab:Divider()
-        tab:Section({ Title = "Orb Path" })
-
-        tab:Toggle({
-            Title = "Orb Path Edge Buttons (Set Orb / Start)",
-            Value = false,
-            Callback = function(state)
-                orbEdgeEnabled = state and true or false
-                if orbEdgeEnabled then
-                    createOrbGui()
-                else
-                    C.State.FarmOrbPoints = {}
-                    destroyOrbGui()
                 end
             end
         })
