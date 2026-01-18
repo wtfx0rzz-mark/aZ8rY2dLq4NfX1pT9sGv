@@ -291,6 +291,11 @@ return function(C, R, UI)
                 local it = bp:FindFirstChild(name)
                 if it then return it end
             end
+            local sg = lp:FindFirstChild("StarterGear")
+            if sg then
+                local it = sg:FindFirstChild(name)
+                if it then return it end
+            end
             local ch = lp.Character
             if ch then
                 local it = ch:FindFirstChild(name)
@@ -593,6 +598,11 @@ return function(C, R, UI)
             local bp = lp:FindFirstChild("Backpack")
             if bp then
                 local it = bp:FindFirstChild(name)
+                if it then return it end
+            end
+            local sg = lp:FindFirstChild("StarterGear")
+            if sg then
+                local it = sg:FindFirstChild(name)
                 if it then return it end
             end
             local ch = lp.Character
@@ -906,6 +916,7 @@ return function(C, R, UI)
 
         local TreeImpactCF = setmetatable({}, { __mode = "k" })
         local TreeHitSeed  = setmetatable({}, { __mode = "k" })
+        local TreeLastHitAt = setmetatable({}, { __mode = "k" })
 
         local function bt_isBigTreeName(n)
             if BIG_TREE_NAMES[n] then return true end
@@ -922,6 +933,11 @@ return function(C, R, UI)
             local bp = lp:FindFirstChild("Backpack")
             if bp then
                 local it = bp:FindFirstChild(name)
+                if it then return it end
+            end
+            local sg = lp:FindFirstChild("StarterGear")
+            if sg then
+                local it = sg:FindFirstChild(name)
                 if it then return it end
             end
             local ch = lp.Character
@@ -1117,6 +1133,8 @@ return function(C, R, UI)
         end
 
         local function bt_chopWaveTrees(targetModels, swingDelay)
+            swingDelay = tonumber(swingDelay) or 0.5
+
             local toolName = bt_hasBigTreeTool()
             if not toolName then
                 task.wait(0.5)
@@ -1129,21 +1147,48 @@ return function(C, R, UI)
                 return
             end
 
+            local now = os.clock()
+            local anySent = false
+            local soonest = math.huge
+
             for _, mdl in ipairs(targetModels) do
-                task.spawn(function()
-                    if not (mdl and mdl.Parent) then return end
-                    local hitPart = bt_bestTreeHitPart(mdl)
-                    if not hitPart then return end
-                    local impactCF = bt_impactCFForTree(mdl, hitPart)
-                    local hitId = bt_nextPerTreeHitId(mdl)
-                    pcall(function()
-                        local bucket = bt_attrBucket(mdl)
-                        if bucket then bucket:SetAttribute(hitId, true) end
-                    end)
-                    bt_HitTarget(mdl, tool, hitId, impactCF)
-                end)
+                if mdl and mdl.Parent then
+                    local last = TreeLastHitAt[mdl] or 0
+                    local elapsed = now - last
+                    if elapsed >= swingDelay then
+                        TreeLastHitAt[mdl] = now
+                        anySent = true
+
+                        task.spawn(function()
+                            if not (mdl and mdl.Parent) then return end
+                            local hitPart = bt_bestTreeHitPart(mdl)
+                            if not hitPart then return end
+                            local impactCF = bt_impactCFForTree(mdl, hitPart)
+                            local hitId = bt_nextPerTreeHitId(mdl)
+                            pcall(function()
+                                local bucket = bt_attrBucket(mdl)
+                                if bucket then bucket:SetAttribute(hitId, true) end
+                            end)
+                            bt_HitTarget(mdl, tool, hitId, impactCF)
+                        end)
+                    else
+                        local remain = swingDelay - elapsed
+                        if remain > 0 and remain < soonest then
+                            soonest = remain
+                        end
+                    end
+                end
             end
-            task.wait(swingDelay)
+
+            if anySent then
+                task.wait()
+            else
+                if soonest < math.huge then
+                    task.wait(math.max(0.02, soonest))
+                else
+                    task.wait(0.15)
+                end
+            end
         end
 
         function BigTreeAura.Start()
