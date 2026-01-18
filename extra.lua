@@ -269,8 +269,9 @@ return function(C, R, UI)
         pcall(function() _G.__AutoChestExtra.Destroy() end)
     end
 
+    -- Defaults (only tracking ON by default)
     if C.State.Toggles.ChestTrack == nil then
-        C.State.Toggles.ChestTrack = false
+        C.State.Toggles.ChestTrack = true
     end
     if C.State.Toggles.ChestRun == nil then
         C.State.Toggles.ChestRun = false
@@ -278,6 +279,7 @@ return function(C, R, UI)
     if C.State.Toggles.GrabNearby == nil then
         C.State.Toggles.GrabNearby = false
     end
+
 
     local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = 0.12
     local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = 4.0
