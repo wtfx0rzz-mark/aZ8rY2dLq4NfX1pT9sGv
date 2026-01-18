@@ -640,7 +640,8 @@ return function(C, R, UI)
         dropFromOrbSmooth(model, orbPos, jobId, snapOrig, H)
     end
 
-    local function runConveyorWave(centerPos, orbPos, targets, jobId)
+    -- CHANGED: added perNameCount that persists across waves for this job
+    local function runConveyorWave(centerPos, orbPos, targets, jobId, perNameCount)
         local picked = getCandidates(centerPos, ORB_PICK_RADIUS, targets, jobId)
         if #picked == 0 then
             return 0
@@ -649,7 +650,8 @@ return function(C, R, UI)
         local limitOn = C.State.BringLimitEnabled and true or false
         local maxPerName = currentLimit()
 
-        local cnt, out = {}, {}
+        local cnt = perNameCount or {}
+        local out = {}
         for _,m in ipairs(picked) do
             local nm = m.Name or ""
             cnt[nm] = (cnt[nm] or 0) + 1
@@ -684,14 +686,17 @@ return function(C, R, UI)
         return #picked
     end
 
+    -- CHANGED: maintain perNameCount across waves
     local function runConveyorJob(centerPos, orbPos, targets, jobId)
         local t0 = now()
         local emptyPasses = 0
+        local perNameCount = {}
+
         while true do
             if now() - t0 >= JOB_HARD_TIMEOUT_S then
                 break
             end
-            local moved = runConveyorWave(centerPos, orbPos, targets, jobId)
+            local moved = runConveyorWave(centerPos, orbPos, targets, jobId, perNameCount)
             if moved == 0 then
                 emptyPasses += 1
                 if emptyPasses >= 2 then break end
@@ -762,8 +767,11 @@ return function(C, R, UI)
             local limitOn = C.State.BringLimitEnabled and true or false
             local maxPerName = currentLimit()
 
+            -- CHANGED: persist per-name counts across all passes of this bring run
+            local perNameCount = {}
+
             local function scanQueue(alreadyMoved)
-                local perNameCount, seenModel, queue = {}, {}, {}
+                local seenModel, queue = {}, {}
                 local desc = itemsFolder:GetDescendants()
                 for _,d in ipairs(desc) do
                     local m = nil
