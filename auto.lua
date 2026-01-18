@@ -495,6 +495,144 @@ return function(C, R, UI)
             end
         })
 
+        C.State = C.State or {}
+        if C.State.AutoHotbarKeyItems == nil then C.State.AutoHotbarKeyItems = true end
+
+        local function itemsFolderHotbar()
+            return WS:FindFirstChild("Items")
+        end
+        local function topModelUnderItems(part, items)
+            local cur = part
+            local lastModel = nil
+            while cur and cur ~= WS and cur ~= items do
+                if cur:IsA("Model") then lastModel = cur end
+                cur = cur.Parent
+            end
+            if lastModel and items and lastModel:IsDescendantOf(items) then
+                return lastModel
+            end
+            return nil
+        end
+        local function wantedKindFromName(n)
+            if not n or n == "" then return nil end
+            if n == "Strong Axe" then return "Strong Axe" end
+            if n == "Strong Flashlight" then return "Strong Flashlight" end
+            if n == "Giant Sack" then return "Giant Sack" end
+            if n == "Tactical Shotgun" then return "Tactical Shotgun" end
+            if n == "Morningstar" then return "Morningstar" end
+            if n == "Thorn Body" then return "Thorn Body" end
+            local l = string.lower(n)
+            if string.find(l, "sword", 1, true) then return "Sword" end
+            return nil
+        end
+        local function takeToHotbar(worldModel)
+            if not (worldModel and worldModel.Parent) then return false end
+            local startDrag = getRemote("RequestStartDraggingItem")
+            local hotbarRF  = getRemote("RequestHotbarItem")
+            local stopDrag  = getRemote("StopDraggingItem")
+            if not (startDrag and hotbarRF and stopDrag) then return false end
+
+            local okStart = pcall(function()
+                startDrag:FireServer(worldModel)
+            end)
+            if not okStart then return false end
+
+            local tempStorage = RS:FindFirstChild("TempStorage")
+            if not tempStorage then
+                pcall(function() stopDrag:FireServer(worldModel) end)
+                return false
+            end
+
+            local t0 = os.clock()
+            local tempModel = nil
+            while os.clock() - t0 < 1.25 do
+                tempModel = tempStorage:FindFirstChild(worldModel.Name)
+                if tempModel and tempModel:IsA("Model") then break end
+                Run.Heartbeat:Wait()
+            end
+            if not (tempModel and tempModel.Parent) then
+                pcall(function() stopDrag:FireServer(worldModel) end)
+                return false
+            end
+
+            local okHot = pcall(function()
+                if hotbarRF:IsA("RemoteFunction") then
+                    return hotbarRF:InvokeServer(tempModel)
+                else
+                    hotbarRF:FireServer(tempModel); return true
+                end
+            end)
+
+            pcall(function()
+                stopDrag:FireServer(worldModel)
+            end)
+
+            return okHot and true or false
+        end
+
+        tab:Section({ Title = "Night / Hotbar" })
+        tab:Button({
+            Title = "Skip Night",
+            Callback = function()
+                local ev = getRemote("RequestActivateNightSkipMachine")
+                if not (ev and ev:IsA("RemoteEvent")) then return end
+                local structures = WS:FindFirstChild("Structures"); if not structures then return end
+                local machine = structures:FindFirstChild("Temporal Accelerometer"); if not machine then return end
+                pcall(function() ev:FireServer(machine) end)
+            end
+        })
+        tab:Toggle({
+            Title = "Auto Take Key Items To Hotbar",
+            Value = C.State.AutoHotbarKeyItems and true or false,
+            Callback = function(state)
+                C.State.AutoHotbarKeyItems = state and true or false
+            end
+        })
+
+        local taken = {
+            ["Strong Axe"] = false,
+            ["Strong Flashlight"] = false,
+            ["Giant Sack"] = false,
+            ["Tactical Shotgun"] = false,
+            ["Morningstar"] = false,
+            ["Thorn Body"] = false,
+            ["Sword"] = false,
+        }
+        local HOTBAR_SCAN_RADIUS = 85
+        local HOTBAR_SCAN_EVERY  = 0.85
+        local hotbarParams = OverlapParams.new()
+        hotbarParams.FilterType = Enum.RaycastFilterType.Exclude
+        hotbarParams.FilterDescendantsInstances = { lp.Character }
+
+        task.spawn(function()
+            while true do
+                if not (C.State and C.State.AutoHotbarKeyItems) then
+                    task.wait(0.35)
+                else
+                    local root = hrp()
+                    local items = itemsFolderHotbar()
+                    if root and items then
+                        local parts = WS:GetPartBoundsInRadius(root.Position, HOTBAR_SCAN_RADIUS, hotbarParams) or {}
+                        local seenModel = {}
+                        for _,p in ipairs(parts) do
+                            if p and p:IsA("BasePart") then
+                                local m = topModelUnderItems(p, items)
+                                if m and not seenModel[m] then
+                                    seenModel[m] = true
+                                    local kind = wantedKindFromName(m.Name)
+                                    if kind and taken[kind] == false then
+                                        local ok = takeToHotbar(m)
+                                        if ok then taken[kind] = true end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    task.wait(HOTBAR_SCAN_EVERY)
+                end
+            end
+        end)
+
         local MAX_TO_SAVE, savedCount = 4, 0
         local autoLostEnabled = false
         local lostEligible  = setmetatable({}, {__mode="k"})
