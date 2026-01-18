@@ -261,18 +261,34 @@ return function(C, R, UI)
             return nil
         end
 
+        local function hrpPosOrZero()
+            local ch = lp.Character
+            local h = ch and ch:FindFirstChild("HumanoidRootPart")
+            return h and h.Position or Vector3.new(0, 0, 0)
+        end
+
         local smallRunning = false
         local smallLoopConn = nil
         local smallTreeList = {}
         local smallHitCounts = {}
+        local smallStartPos = Vector3.new(0, 0, 0)
 
         local function scanForAllSmallTrees()
+            local origin = smallStartPos
             local list = {}
             for _, inst in ipairs(WS:GetDescendants()) do
                 if inst:IsA("Model") and isSmallTreeModel(inst) then
                     list[#list + 1] = inst
                 end
             end
+            table.sort(list, function(a, b)
+                local pa = bestTreeHitPart(a)
+                local pb = bestTreeHitPart(b)
+                local da = pa and (pa.Position - origin).Magnitude or math.huge
+                local db = pb and (pb.Position - origin).Magnitude or math.huge
+                if da == db then return (a.Name or "") < (b.Name or "") end
+                return da < db
+            end)
             if #list > MAX_TREE_QUEUE then
                 local trimmed = {}
                 for i = 1, MAX_TREE_QUEUE do trimmed[i] = list[i] end
@@ -300,19 +316,26 @@ return function(C, R, UI)
                     scanForAllSmallTrees()
                     return
                 end
-                local nearest, nearestDist
+
+                local target = nil
+                local targetDist = nil
                 for _, tree in ipairs(smallTreeList) do
                     local part = bestTreeHitPart(tree)
                     if part then
-                        local d = (part.Position - hrp.Position).Magnitude
-                        if not nearest or d < nearestDist then
-                            nearest = tree
-                            nearestDist = d
-                        end
+                        target = tree
+                        targetDist = (part.Position - hrp.Position).Magnitude
+                        break
                     end
                 end
-                if not nearest then scanForAllSmallTrees() return end
-                if nearestDist > CHOP_RADIUS then teleportNearTree(nearest) return end
+                if not target then
+                    scanForAllSmallTrees()
+                    return
+                end
+                if targetDist and targetDist > CHOP_RADIUS then
+                    teleportNearTree(target)
+                    return
+                end
+
                 local treesInRange = {}
                 for _, tree in ipairs(smallTreeList) do
                     local part = bestTreeHitPart(tree)
@@ -356,6 +379,7 @@ return function(C, R, UI)
         local function startSmallFarm()
             if smallRunning then return end
             smallRunning = true
+            smallStartPos = hrpPosOrZero()
             scanForAllSmallTrees()
             startSmallLoop()
         end
@@ -375,20 +399,33 @@ return function(C, R, UI)
         local bigTargetEndAt = 0
         local bigNextSwingAt = 0
         local bigTargetWaitOnly = false
+        local bigStartPos = Vector3.new(0, 0, 0)
 
         local function buildBigTreeList(requiredHits)
             bigTreeList = {}
             bigCurrentIndex = 1
+            local origin = bigStartPos
             for _, inst in ipairs(WS:GetDescendants()) do
                 if inst:IsA("Model") and isBigTreeModel(inst) then
                     local existing = getCurrentHitCount(inst)
                     if existing < requiredHits then
                         bigTreeList[#bigTreeList + 1] = inst
-                        if #bigTreeList >= MAX_TREE_QUEUE then break end
                     end
                 end
             end
-            table.sort(bigTreeList, function(a, b) return (a.Name or "") < (b.Name or "") end)
+            table.sort(bigTreeList, function(a, b)
+                local pa = bestTreeHitPart(a)
+                local pb = bestTreeHitPart(b)
+                local da = pa and (pa.Position - origin).Magnitude or math.huge
+                local db = pb and (pb.Position - origin).Magnitude or math.huge
+                if da == db then return (a.Name or "") < (b.Name or "") end
+                return da < db
+            end)
+            if #bigTreeList > 10 then
+                local trimmed = {}
+                for i = 1, 10 do trimmed[i] = bigTreeList[i] end
+                bigTreeList = trimmed
+            end
         end
 
         local function removeBigTree(tree)
@@ -508,6 +545,7 @@ return function(C, R, UI)
         local function startBigFarm()
             if bigRunning then return end
             bigRunning = true
+            bigStartPos = hrpPosOrZero()
             if bigLoopConn then bigLoopConn:Disconnect() bigLoopConn = nil end
             bigTreeList = {}
             bigCurrentIndex = 1
@@ -1107,7 +1145,6 @@ return function(C, R, UI)
                 toggleOrbRunner()
             end
 
-            -- IMPORTANT: Activated only (prevents double-firing on some clients)
             orbBtnSet.Activated:Connect(onSetOrb)
             orbBtnStart.Activated:Connect(onStartStop)
         end
