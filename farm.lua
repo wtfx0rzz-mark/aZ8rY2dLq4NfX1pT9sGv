@@ -39,6 +39,11 @@ return function(C, R, UI)
 
         local MAX_TREE_QUEUE = 250
 
+        -- Small-tree dense-patch fix:
+        -- Hit only a small batch per step, round-robin through the list.
+        local SMALL_STEP_INTERVAL = 0.05
+        local SMALL_HITS_PER_STEP = 10
+
         C.State = C.State or {}
         if C.State.FarmTeleportWaitSec == nil then C.State.FarmTeleportWaitSec = 1 end
         if type(C.State.FarmOrbPoints) ~= "table" then C.State.FarmOrbPoints = {} end
@@ -276,6 +281,8 @@ return function(C, R, UI)
         local smallTreeList = {}
         local smallHitCounts = {}
         local smallStartPos = Vector3.new(0, 0, 0)
+        local smallCursor = 1
+        local smallAcc = 0
 
         local function scanForAllSmallTrees()
             local origin = smallStartPos
@@ -301,80 +308,109 @@ return function(C, R, UI)
             smallTreeList = list
             smallHitCounts = {}
             for _, m in ipairs(smallTreeList) do smallHitCounts[m] = 0 end
+            smallCursor = 1
+        end
+
+        local function removeSmallTreeAt(idx)
+            local t = smallTreeList[idx]
+            table.remove(smallTreeList, idx)
+            if t then
+                smallHitCounts[t] = nil
+                TreeImpactCF[t] = nil
+                TreeHitSeed[t] = nil
+            end
+            if smallCursor > #smallTreeList then smallCursor = 1 end
+            if idx < smallCursor then
+                smallCursor = math.max(1, smallCursor - 1)
+            end
         end
 
         local function startSmallLoop()
             if smallLoopConn then smallLoopConn:Disconnect() smallLoopConn = nil end
-            smallLoopConn = RunService.Heartbeat:Connect(function()
+            smallAcc = 0
+            smallLoopConn = RunService.Heartbeat:Connect(function(dt)
                 if not smallRunning then return end
+                smallAcc += (dt or 0)
+                if smallAcc < SMALL_STEP_INTERVAL then return end
+                smallAcc = 0
+
                 local char = lp.Character
                 if not char then return end
                 local hrp = char:FindFirstChild("HumanoidRootPart")
                 if not hrp then return end
+
                 local axe = getPreferredAxe()
                 if not axe then return end
                 ensureEquipped(axe)
                 local axeName = axe.Name
-                local baseNeeded = AXE_HITS[axeName] or 13
+                local neededDefault = AXE_HITS[axeName] or 13
+
                 if #smallTreeList == 0 then
                     scanForAllSmallTrees()
                     return
                 end
 
-                local target = nil
-                local targetDist = nil
-                for _, tree in ipairs(smallTreeList) do
-                    local part = bestTreeHitPart(tree)
+                if smallCursor < 1 then smallCursor = 1 end
+                if smallCursor > #smallTreeList then smallCursor = 1 end
+
+                -- If our next candidate is far, teleport toward it (keeps behavior snappy without scanning everything).
+                local candidate = smallTreeList[smallCursor]
+                if candidate and candidate.Parent then
+                    local part = bestTreeHitPart(candidate)
                     if part then
-                        target = tree
-                        targetDist = (part.Position - hrp.Position).Magnitude
-                        break
+                        local d = (part.Position - hrp.Position).Magnitude
+                        if d > CHOP_RADIUS then
+                            teleportNearTree(candidate)
+                            return
+                        end
                     end
-                end
-                if not target then
-                    scanForAllSmallTrees()
-                    return
-                end
-                if targetDist and targetDist > CHOP_RADIUS then
-                    teleportNearTree(target)
-                    return
                 end
 
-                local treesInRange = {}
-                for _, tree in ipairs(smallTreeList) do
-                    local part = bestTreeHitPart(tree)
-                    if part and (part.Position - hrp.Position).Magnitude <= CHOP_RADIUS then
-                        treesInRange[#treesInRange + 1] = tree
+                local hitsDone = 0
+                local listSize = #smallTreeList
+                if listSize == 0 then return end
+                local steps = math.min(SMALL_HITS_PER_STEP, listSize)
+
+                for _ = 1, steps do
+                    if #smallTreeList == 0 then break end
+                    if smallCursor > #smallTreeList then smallCursor = 1 end
+
+                    local idx = smallCursor
+                    local tree = smallTreeList[idx]
+                    smallCursor = smallCursor + 1
+                    if smallCursor > #smallTreeList then smallCursor = 1 end
+
+                    if not (tree and tree.Parent and isSmallTreeModel(tree)) then
+                        removeSmallTreeAt(idx)
+                        continue
                     end
-                end
-                for _, tree in ipairs(treesInRange) do
-                    if tree.Parent and isSmallTreeModel(tree) then
-                        local needed = AXE_HITS[axeName] or baseNeeded
-                        local count = smallHitCounts[tree] or 0
-                        if count >= needed then
-                            for i = #smallTreeList, 1, -1 do
-                                if smallTreeList[i] == tree then table.remove(smallTreeList, i) end
-                            end
-                            smallHitCounts[tree] = nil
-                        else
-                            local hitPart = bestTreeHitPart(tree)
-                            if hitPart then
-                                local hitId = nextPerTreeHitId(tree)
-                                local impactCF = impactCFForTree(tree, hitPart)
-                                HitTreeRemote(tree, axe, hitId, impactCF)
-                                smallHitCounts[tree] = count + 1
-                            else
-                                for i = #smallTreeList, 1, -1 do
-                                    if smallTreeList[i] == tree then table.remove(smallTreeList, i) end
-                                end
-                                smallHitCounts[tree] = nil
-                            end
-                        end
-                    else
-                        for i = #smallTreeList, 1, -1 do
-                            if smallTreeList[i] == tree then table.remove(smallTreeList, i) end
-                        end
-                        smallHitCounts[tree] = nil
+
+                    local hitPart = bestTreeHitPart(tree)
+                    if not hitPart then
+                        removeSmallTreeAt(idx)
+                        continue
+                    end
+
+                    local dist = (hitPart.Position - hrp.Position).Magnitude
+                    if dist > CHOP_RADIUS then
+                        continue
+                    end
+
+                    local needed = AXE_HITS[axeName] or neededDefault
+                    local count = smallHitCounts[tree] or 0
+                    if count >= needed then
+                        removeSmallTreeAt(idx)
+                        continue
+                    end
+
+                    local hitId = nextPerTreeHitId(tree)
+                    local impactCF = impactCFForTree(tree, hitPart)
+                    HitTreeRemote(tree, axe, hitId, impactCF)
+                    smallHitCounts[tree] = count + 1
+                    hitsDone += 1
+
+                    if (count + 1) >= needed then
+                        removeSmallTreeAt(idx)
                     end
                 end
             end)
@@ -393,6 +429,8 @@ return function(C, R, UI)
             if smallLoopConn then smallLoopConn:Disconnect() smallLoopConn = nil end
             smallTreeList = {}
             smallHitCounts = {}
+            smallCursor = 1
+            smallAcc = 0
         end
 
         local bigRunning = false
@@ -799,13 +837,6 @@ return function(C, R, UI)
             circleNextBigHitAt = 0
         end
 
-        --=====================================================
-        -- Orb Path (Edge Buttons): Set Orb + Start/Stop
-        -- Fixes:
-        -- - Buttons were firing twice (Activated + MouseButton1Click). Now ONLY Activated is used.
-        -- - Speed fixed to "Fly Speed = 1" from your player module (50 studs/sec).
-        -- - Orbs reset when the toggle is turned off.
-        --=====================================================
         local ORB_SPEED = 50
 
         local orbEdgeEnabled = false
