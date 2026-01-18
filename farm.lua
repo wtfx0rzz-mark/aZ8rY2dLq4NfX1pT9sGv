@@ -39,8 +39,6 @@ return function(C, R, UI)
 
         local MAX_TREE_QUEUE = 250
 
-        -- Small-tree dense-patch fix:
-        -- Hit only a small batch per step, round-robin through the list.
         local SMALL_STEP_INTERVAL = 0.05
         local SMALL_HITS_PER_STEP = 10
 
@@ -353,20 +351,36 @@ return function(C, R, UI)
                 if smallCursor < 1 then smallCursor = 1 end
                 if smallCursor > #smallTreeList then smallCursor = 1 end
 
-                -- If our next candidate is far, teleport toward it (keeps behavior snappy without scanning everything).
-                local candidate = smallTreeList[smallCursor]
-                if candidate and candidate.Parent then
-                    local part = bestTreeHitPart(candidate)
-                    if part then
-                        local d = (part.Position - hrp.Position).Magnitude
-                        if d > CHOP_RADIUS then
-                            teleportNearTree(candidate)
-                            return
+                local function findAnyInRangeIndex()
+                    local n = #smallTreeList
+                    if n == 0 then return nil end
+                    local start = smallCursor
+                    if start < 1 then start = 1 end
+                    if start > n then start = 1 end
+                    for i = 0, n - 1 do
+                        local idx = ((start + i - 1) % n) + 1
+                        local t = smallTreeList[idx]
+                        if t and t.Parent and isSmallTreeModel(t) then
+                            local p = bestTreeHitPart(t)
+                            if p and (p.Position - hrp.Position).Magnitude <= CHOP_RADIUS then
+                                return idx
+                            end
                         end
                     end
+                    return nil
                 end
 
-                local hitsDone = 0
+                local inRangeIdx = findAnyInRangeIndex()
+                if not inRangeIdx then
+                    local candidate = smallTreeList[smallCursor]
+                    if candidate and candidate.Parent then
+                        teleportNearTree(candidate)
+                    end
+                    return
+                end
+
+                smallCursor = inRangeIdx
+
                 local listSize = #smallTreeList
                 if listSize == 0 then return end
                 local steps = math.min(SMALL_HITS_PER_STEP, listSize)
@@ -407,7 +421,6 @@ return function(C, R, UI)
                     local impactCF = impactCFForTree(tree, hitPart)
                     HitTreeRemote(tree, axe, hitId, impactCF)
                     smallHitCounts[tree] = count + 1
-                    hitsDone += 1
 
                     if (count + 1) >= needed then
                         removeSmallTreeAt(idx)
