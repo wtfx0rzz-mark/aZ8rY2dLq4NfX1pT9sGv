@@ -159,6 +159,10 @@ return function(C, R, UI)
 
         local function HitTreeRemote(treeModel, tool, hitId, impactCF)
             if not (treeModel and tool and hitId and impactCF) then return end
+            local bucket = attrBucket(treeModel)
+            if bucket and bucket.SetAttribute then
+                pcall(function() bucket:SetAttribute(hitId, true) end)
+            end
             ToolDamageObject:InvokeServer(treeModel, tool, hitId, impactCF)
         end
 
@@ -490,23 +494,31 @@ return function(C, R, UI)
                 local t = pickNextBigTree(requiredHits)
                 if not t then return end
                 bigTargetTree = t
-                bigTargetEndAt = now + math.max(0, switchSec)
+                if switchSec and switchSec > 0 then
+                    bigTargetEndAt = now + switchSec
+                else
+                    bigTargetEndAt = 0
+                end
                 bigNextSwingAt = 0
             end
 
-            if now >= bigTargetEndAt and bigNextSwingAt ~= 0 then
-                bigTargetTree = nil
-                bigNextSwingAt = 0
-                bigCurrentIndex = bigCurrentIndex + 1
-                return
+            if switchSec and switchSec > 0 then
+                if now >= bigTargetEndAt and bigNextSwingAt ~= 0 then
+                    bigTargetTree = nil
+                    bigNextSwingAt = 0
+                    bigCurrentIndex = bigCurrentIndex + 1
+                    return
+                end
             end
 
             if now < bigNextSwingAt then return end
 
             local tree = bigTargetTree
             if (not tree) or (not tree.Parent) or (not isBigTreeModel(tree)) then
+                if tree then removeBigTree(tree) end
                 bigTargetTree = nil
                 bigTargetWaitOnly = true
+                bigTargetEndAt = now + 0.10
                 return
             end
 
@@ -515,6 +527,7 @@ return function(C, R, UI)
                 removeBigTree(tree)
                 bigTargetTree = nil
                 bigTargetWaitOnly = true
+                bigTargetEndAt = now + 0.10
                 return
             end
 
@@ -522,6 +535,8 @@ return function(C, R, UI)
                 removeBigTree(tree)
                 bigTargetTree = nil
                 bigTargetWaitOnly = true
+                bigTargetEndAt = now + 0.10
+                bigCurrentIndex = bigCurrentIndex + 1
                 return
             end
 
@@ -535,11 +550,6 @@ return function(C, R, UI)
             local impactCF = impactCFForTree(tree, hitPart)
             HitTreeRemote(tree, tool, hitId, impactCF)
             bigNextSwingAt = now + SWING_COOLDOWN_BIG
-
-            if switchSec == 0 then
-                bigTargetTree = nil
-                bigCurrentIndex = bigCurrentIndex + 1
-            end
         end
 
         local function startBigFarm()
