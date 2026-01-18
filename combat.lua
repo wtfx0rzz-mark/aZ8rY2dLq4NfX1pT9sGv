@@ -45,6 +45,8 @@ return function(C, R, UI)
         character = nil,
         hrp = nil,
         acc = 0,
+        _groundRoot = nil,
+        _groundLastTryAt = 0,
     }
 
     local function auraVis_getPlayerGui()
@@ -152,16 +154,45 @@ return function(C, R, UI)
         self.hrp = hrp
     end
 
+    function auraVis:_resolveGroundRoot()
+        local now = os.clock()
+        if self._groundRoot and self._groundRoot.Parent then return self._groundRoot end
+        if (now - (self._groundLastTryAt or 0)) < 1.0 then return nil end
+        self._groundLastTryAt = now
+
+        local map = WS:FindFirstChild("Map")
+        if not map then return nil end
+        local ground = map:FindFirstChild("Ground")
+        if not ground then return nil end
+        self._groundRoot = ground
+        return ground
+    end
+
+    function auraVis:_groundYAtXZ(x, z, fallbackY)
+        local ground = self:_resolveGroundRoot()
+        if not ground then return fallbackY end
+
+        local origin = Vector3.new(x, (fallbackY or 0) + 200, z)
+        local dir = Vector3.new(0, -600, 0)
+
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Include
+        rp.FilterDescendantsInstances = { ground }
+        rp.IgnoreWater = true
+
+        local res = WS:Raycast(origin, dir, rp)
+        if res and res.Position then
+            return res.Position.Y
+        end
+        return fallbackY
+    end
+
     function auraVis:updateAnchor()
         if not (self.hrp and self.hrp.Parent and self.anchor and self.anchor.Parent) then return end
-        local ch = self.character
-        local hum = ch and ch:FindFirstChildOfClass("Humanoid") or nil
         local pos = self.hrp.Position
-        local yOff = 3.0
-        if hum and typeof(hum.HipHeight) == "number" then
-            yOff = math.clamp(hum.HipHeight + 2.0, 2.5, 6.0)
-        end
-        self.anchor.CFrame = CFrame.new(pos.X, pos.Y - yOff, pos.Z)
+        local groundY = self:_groundYAtXZ(pos.X, pos.Z, pos.Y - 3.0)
+        local y = (groundY or (pos.Y - 3.0)) + 0.05
+        self.anchor.CFrame = CFrame.new(pos.X, y, pos.Z)
     end
 
     function auraVis:start()
@@ -207,6 +238,8 @@ return function(C, R, UI)
         self.adorn = nil
         if self.anchor then pcall(function() self.anchor:Destroy() end) end
         self.anchor = nil
+        self._groundRoot = nil
+        self._groundLastTryAt = 0
     end
 
     local function syncAuraVisualRadius()
