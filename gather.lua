@@ -64,7 +64,7 @@ return function(C, R, UI)
         local NUDGE_DOWN     = 4
         local CULTIST_LIMIT  = math.huge
 
-        local PLACE_BATCH    = 10
+        local PLACE_BATCH    = 25 -- faster (was 10)
         local PLACE_YIELD_FN = function() Run.Heartbeat:Wait() end
 
         local CLUSTER_RADIUS_MIN  = 0.75
@@ -80,7 +80,12 @@ return function(C, R, UI)
         local PLACE_USE_NUDGE_DOWN     = false
         local PLACE_NUDGE_DOWN_STUDS   = 16
 
-        local RELEASE_DAMP_FRAMES = 6
+        local RELEASE_DAMP_FRAMES = 2 -- faster (was 6)
+
+        local FLASHLIGHT_STOPDRAG_AFTER_SETTLE = {
+            ["Strong Flashlight"] = true,
+            ["Old Flashlight"] = true
+        }
 
         local function waitIf(v)
             v = tonumber(v)
@@ -612,6 +617,77 @@ return function(C, R, UI)
             return CFrame.lookAt(dropPos, dropPos + baseForward)
         end
 
+        local function isMostlySettledModel(m, pos0)
+            local mp = mainPart(m)
+            if not (mp and mp.Parent) then return true end
+            local dp = (mp.Position - pos0).Magnitude
+            local v  = mp.AssemblyLinearVelocity.Magnitude
+            return dp <= 0.06 and v <= 0.20
+        end
+
+        local function waitForSettle(m, maxSec)
+            local mp = mainPart(m)
+            if not (m and m.Parent and mp and mp.Parent) then return end
+            local t0 = os.clock()
+            local stable = 0
+            while (m and m.Parent) and (os.clock() - t0) < (maxSec or 1.50) do
+                mp = mainPart(m)
+                if not (mp and mp.Parent) then return end
+                local pos0 = mp.Position
+                Run.Heartbeat:Wait()
+                if not (m and m.Parent) then return end
+                if isMostlySettledModel(m, pos0) then
+                    stable += 1
+                    if stable >= 6 then return end
+                else
+                    stable = 0
+                end
+            end
+        end
+
+        local function rayParamsForRevolverSnap(ignoreModel)
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.IgnoreWater = true
+            local ex = { lp.Character }
+            local items = itemsRootOrNil()
+            if items then table.insert(ex, items) end
+            if ignoreModel then table.insert(ex, ignoreModel) end
+            params.FilterDescendantsInstances = ex
+            return params
+        end
+
+        local function revolverSnapDown(m, maxDepth, pad)
+            if not (m and m.Parent and m:IsA("Model")) then return false end
+            if m.Name ~= "Revolver" then return false end
+
+            local rp = mainPart(m)
+            if not (rp and rp.Parent) then return false end
+
+            local depth = maxDepth or 360
+            local extraPad = pad or 0.14
+
+            local params = rayParamsForRevolverSnap(m)
+            local start = rp.Position + Vector3.new(0, 80, 0)
+            local hit = WS:Raycast(start, Vector3.new(0, -depth, 0), params)
+            if not hit then return false end
+
+            local halfY = (rp.Size.Y * 0.5)
+            local targetPos = Vector3.new(rp.Position.X, hit.Position.Y + halfY + extraPad, rp.Position.Z)
+
+            local cf = rp.CFrame
+            local rot = (cf - cf.Position)
+            local targetCF = CFrame.new(targetPos) * rot
+
+            setNoCollideModel(m, true)
+            zeroAllMomentum(m)
+            pivotModel(m, targetCF)
+            zeroAllMomentum(m)
+            setNoCollideModel(m, false)
+
+            return true
+        end
+
         local function dropOneItem(m, baseForward, basePos)
             if not (m and m.Parent) then return end
             local mp = mainPart(m)
@@ -652,6 +728,24 @@ return function(C, R, UI)
             pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
 
             finallyStopDrag(m)
+
+            if m and m.Parent and m:IsA("Model") then
+                if FLASHLIGHT_STOPDRAG_AFTER_SETTLE[m.Name] then
+                    task.spawn(function()
+                        waitForSettle(m, 1.50)
+                        if m and m.Parent then
+                            pcall(function() safeStopDrag(m) end) -- ONE extra, after settle
+                        end
+                    end)
+                elseif m.Name == "Revolver" then
+                    task.spawn(function()
+                        task.wait(0.25)
+                        if not (m and m.Parent) then return end
+                        revolverSnapDown(m, 360, 0.14)
+                    end)
+                end
+            end
+
             dragUntrack(m)
         end
 
@@ -688,6 +782,78 @@ return function(C, R, UI)
 
             clearAll()
         end
+
+        local gatherOn = false
+        local scanConn, hoverConn = nil, nil
+        local gathered, list = {}, {}
+        local cultistCount = 0
+        local itemsChildConn = nil
+
+        local function addGather(m)
+            if gathered[m] then return end
+            gathered[m] = true
+            list[#list+1] = m
+            if isCultist(m) then cultistCount = cultistCount + 1 end
+        end
+
+        local function removeGather(m)
+            if not gathered[m] then return end
+            if isCultist(m) then cultistCount = math.max(0, cultistCount - 1) end
+            gathered[m] = nil
+            for i = #list, 1, -1 do
+                if list[i] == m then
+                    table.remove(list, i)
+                    break
+                end
+            end
+        end
+
+        local function clearAll2()
+            for m,_ in pairs(gathered) do gathered[m] = nil end
+            table.clear(list)
+            cultistCount = 0
+        end
+
+        local function hoverFollow2()
+            if not gatherOn then return end
+            local root = hrp(); if not root then return end
+            local forward = root.CFrame.LookVector
+            local above   = root.Position + Vector3.new(0, hoverHeight, 0)
+            local baseCF  = CFrame.lookAt(above, above + forward)
+            for _,m in ipairs(list) do
+                if m and m.Parent then
+                    dragKeepAlive(m)
+                    pivotModel(m, baseCF)
+                else
+                    removeGather(m)
+                end
+            end
+        end
+
+        local function startGather2()
+            if gatherOn then return end
+            gatherOn = true
+            scanConn  = Run.Heartbeat:Connect(captureIfNear)
+            hoverConn = Run.RenderStepped:Connect(hoverFollow2)
+            local items = itemsRootOrNil()
+            if items then
+                if itemsChildConn then pcall(function() itemsChildConn:Disconnect() end) end
+                itemsChildConn = items.ChildAdded:Connect(onItemsChildAdded)
+            end
+            if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = true end
+        end
+
+        local function stopGather2()
+            gatherOn = false
+            if scanConn  then pcall(function() scanConn:Disconnect()  end) end; scanConn = nil
+            if hoverConn then pcall(function() hoverConn:Disconnect() end) end; hoverConn = nil
+            if itemsChildConn then pcall(function() itemsChildConn:Disconnect() end) end; itemsChildConn = nil
+        end
+
+        clearAll = clearAll2
+        hoverFollow = hoverFollow2
+        startGather = startGather2
+        stopGather = stopGather2
 
         C.Gather = C.Gather or {}
         C.Gather.IsOn      = function() return gatherOn end
