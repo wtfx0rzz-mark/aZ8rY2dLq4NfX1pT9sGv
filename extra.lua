@@ -269,7 +269,6 @@ return function(C, R, UI)
         pcall(function() _G.__AutoChestExtra.Destroy() end)
     end
 
-    -- Defaults (only tracking ON by default)
     if C.State.Toggles.ChestTrack == nil then
         C.State.Toggles.ChestTrack = true
     end
@@ -279,7 +278,6 @@ return function(C, R, UI)
     if C.State.Toggles.GrabNearby == nil then
         C.State.Toggles.GrabNearby = false
     end
-
 
     local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = 0.12
     local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = 4.0
@@ -311,6 +309,70 @@ return function(C, R, UI)
         RF_Stop  = getRemote("RequestStopDraggingItem","StopDraggingItem","StopDraggingItemRemote")
     end
     refreshDragRemotes()
+
+    local function getTakeRoots()
+        local ugc = game:FindFirstChild("Ugc")
+        if ugc and ugc:FindFirstChild("ReplicatedStorage") and ugc:FindFirstChild("Workspace") then
+            return ugc.ReplicatedStorage, ugc.Workspace
+        end
+        return RS, WS
+    end
+
+    local SPECIAL_TAKE_NAMES = {
+        ["Strong Axe"] = true,
+        ["Strong Flashlight"] = true,
+        ["Giant Sack"] = true,
+        ["Tactical Shotgun"] = true,
+        ["Morningstar"] = true,
+    }
+
+    local function isSwordName(n)
+        return type(n) == "string" and (n:find("Sword", 1, true) ~= nil)
+    end
+
+    local function hasSpecialInInventory(itemName)
+        local inv = lp:FindFirstChild("Inventory")
+        if not inv then return false end
+        if isSwordName(itemName) then
+            for _,ch in ipairs(inv:GetChildren()) do
+                if ch and ch.Name and isSwordName(ch.Name) then
+                    return true
+                end
+            end
+            return false
+        end
+        for _,ch in ipairs(inv:GetChildren()) do
+            if ch and ch.Name == itemName then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function takeItemToInventory(itemModel)
+        if not (itemModel and itemModel.Parent) then return false end
+        local takeRS, _ = getTakeRoots()
+        local rf = takeRS:FindFirstChild("RemoteEvents")
+        if not rf then return false end
+        local hotbarX = rf:FindFirstChild("RequestHotbarItem")
+        local stopDragRE = rf:FindFirstChild("StopDraggingItem")
+        if not hotbarX then return false end
+        if not (stopDragRE and stopDragRE:IsA("RemoteEvent")) then return false end
+
+        local okHotbar = pcall(function()
+            if hotbarX:IsA("RemoteFunction") then
+                hotbarX:InvokeServer(itemModel)
+            else
+                hotbarX:FireServer(itemModel)
+            end
+        end)
+        if not okHotbar then return false end
+
+        pcall(function() stopDragRE:FireServer(itemModel) end)
+        RunService.Heartbeat:Wait()
+        pcall(function() stopDragRE:FireServer(itemModel) end)
+        return true
+    end
 
     local alive = true
     local conns = {}
@@ -500,6 +562,15 @@ return function(C, R, UI)
         if not (inst and inst.Parent) then return false end
         if CapturedSet[inst] then return false end
         if isChestInst(inst) then return false end
+
+        local n = inst.Name
+        local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
+        if wantsTake and (not hasSpecialInInventory(n)) then
+            if takeItemToInventory(inst) then
+                return true
+            end
+        end
+
         refreshDragRemotes()
         if not dragStart(inst) then return false end
         task.wait(0.06)
@@ -634,9 +705,9 @@ return function(C, R, UI)
     local STAND_UP = 2.5
     local STRONGHOLD_EXCLUDE_RADIUS = 15.0
     local EXCLUDE_NAMES = {
-    ["Stronghold Diamond Chest"] = true,
-    ["Mossy Chest"] = true,
-}
+        ["Stronghold Diamond Chest"] = true,
+        ["Mossy Chest"] = true,
+    }
 
     local function makeChestRayParams(extras)
         local params = RaycastParams.new()
@@ -1161,17 +1232,16 @@ return function(C, R, UI)
         end
     })
 
-    ExtraTab:Button({
-        Title = "Start Chest Run",
-        Callback = function()
-            startRun()
-        end
-    })
-
-    ExtraTab:Button({
-        Title = "Stop Chest Run",
-        Callback = function()
-            stopRun()
+    ExtraTab:Toggle({
+        Title = "Chest Run",
+        Value = C.State.Toggles.ChestRun,
+        Callback = function(on)
+            C.State.Toggles.ChestRun = on
+            if on then
+                startRun()
+            else
+                stopRun()
+            end
         end
     })
 
