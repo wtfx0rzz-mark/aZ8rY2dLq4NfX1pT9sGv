@@ -62,6 +62,12 @@ return function(C, R, UI)
 
     local RAW_TO_COOKED = { ["Morsel"]="Cooked Morsel", ["Steak"]="Cooked Steak", ["Ribs"]="Cooked Ribs" }
 
+    local STICKY_DROP = {
+        ["Strong Flashlight"] = true,
+        ["Old Flashlight"] = true,
+        ["Revolver"] = true
+    }
+
     local function hrp()
         local ch = Players.LocalPlayer.Character or Players.LocalPlayer.CharacterAdded:Wait()
         return ch and ch:FindFirstChild("HumanoidRootPart")
@@ -104,9 +110,18 @@ return function(C, R, UI)
         if obj:IsA("BasePart") then return obj end
         if obj:IsA("Model") then
             if obj.PrimaryPart then return obj.PrimaryPart end
-            return obj:FindFirstChildWhichIsA("BasePart")
+            return obj:FindFirstChildWhichIsA("BasePart", true)
         end
         return nil
+    end
+    local function physicalRootPart(model)
+        if not (model and model.Parent) then return nil end
+        if model:IsA("BasePart") then return model end
+        if not model:IsA("Model") then return mainPart(model) end
+        local m = model:FindFirstChild("Main", true)
+        if m and m:IsA("BasePart") then return m end
+        if model.PrimaryPart then return model.PrimaryPart end
+        return model:FindFirstChildWhichIsA("BasePart", true)
     end
     local function getAllParts(target)
         local t = {}
@@ -120,13 +135,23 @@ return function(C, R, UI)
         end
         return t
     end
-    local function bboxHeight(m)
-        if m:IsA("Model") then
-            local s = m:GetExtentsSize()
-            return (s and s.Y) or 2
+    local function bboxHeight(model)
+        local rp = physicalRootPart(model)
+        if rp then return rp.Size.Y end
+        local parts = getAllParts(model)
+        local minY, maxY = nil, nil
+        for _,p in ipairs(parts) do
+            if p and p.Parent and p.CanCollide then
+                local y0 = p.Position.Y - (p.Size.Y * 0.5)
+                local y1 = p.Position.Y + (p.Size.Y * 0.5)
+                if not minY or y0 < minY then minY = y0 end
+                if not maxY or y1 > maxY then maxY = y1 end
+            end
         end
-        local p = mainPart(m)
-        return (p and p.Size.Y) or 2
+        if minY and maxY then
+            return math.max(0.5, maxY - minY)
+        end
+        return 2
     end
 
     local function requestMoreStreamingAround(posList)
@@ -179,6 +204,13 @@ return function(C, R, UI)
         task.delay(0.05, function() pcall(safeStopDrag, r, model) end)
         task.delay(0.20, function() pcall(safeStopDrag, r, model) end)
     end
+    local function finallyStopDragTwice(r, model)
+        pcall(safeStopDrag, r, model)
+        Run.Heartbeat:Wait()
+        pcall(safeStopDrag, r, model)
+        task.delay(0.05, function() pcall(safeStopDrag, r, model) end)
+        task.delay(0.20, function() pcall(safeStopDrag, r, model) end)
+    end
 
     local function setCollide(model, on, snapshot)
         local parts = getAllParts(model)
@@ -198,6 +230,7 @@ return function(C, R, UI)
             p.AssemblyAngularVelocity = Vector3.new()
         end
     end
+
     local function computeForwardDropCF()
         local root = hrp(); if not root then return nil end
         local head = headPart()
@@ -206,6 +239,7 @@ return function(C, R, UI)
         local center = basePos + Vector3.new(0, DROP_ABOVE_HEAD_STUDS, 0) + look * FALLBACK_AHEAD
         return CFrame.lookAt(center, center + look)
     end
+
     local function pivotOverTarget(model, target)
         local mp = mainPart(target); if not mp then return end
         local above = mp.CFrame + Vector3.new(0, FALLBACK_UP, 0)
@@ -363,25 +397,123 @@ return function(C, R, UI)
     local function groundCFAroundPlayer(model)
         local root = hrp(); if not root then return nil end
         local head = headPart()
-        local mp   = mainPart(model); if not mp then return nil end
-
         local basePos = head and head.Position or (root.Position + Vector3.new(0, 4, 0))
         local look    = root.CFrame.LookVector
-
         local offset  = ringOffset()
         local waveY   = math.sin(dropCounter * AIR_DROP_WAVE_FREQUENCY) * AIR_DROP_WAVE_AMPLITUDE
-
         local pos = basePos
             + look * FALLBACK_AHEAD
             + Vector3.new(0, DROP_ABOVE_HEAD_STUDS, 0)
             + Vector3.new(offset.X, 0, offset.Z)
             + Vector3.new(0, waveY, 0)
-
         return CFrame.lookAt(pos, pos + look)
+    end
+
+    local function rayParamsForGround(extras)
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.IgnoreWater = true
+        local ex = { lp.Character }
+        local items = WS:FindFirstChild("Items")
+        if items then table.insert(ex, items) end
+        if extras then
+            for i=1,#extras do
+                local v = extras[i]
+                if v then table.insert(ex, v) end
+            end
+        end
+        params.FilterDescendantsInstances = ex
+        return params
+    end
+
+    local function groundBelow(xz, ignoreInst, maxDepth)
+        local depth = maxDepth or 220
+        local params = rayParamsForGround({ ignoreInst })
+        local start = Vector3.new(xz.X, xz.Y + 60, xz.Z)
+        local hit = WS:Raycast(start, Vector3.new(0, -depth, 0), params)
+        return hit and hit.Position or nil
+    end
+
+    local function settleCFForModelAtXZ(model, xz, facing)
+        local rp = physicalRootPart(model)
+        local halfY = (rp and rp.Size and rp.Size.Y * 0.5) or (bboxHeight(model) * 0.5)
+        local hitPos = groundBelow(xz, model, 260) or xz
+        local y = hitPos.Y + halfY + 0.15
+        local pos = Vector3.new(xz.X, y, xz.Z)
+        local dir = facing or Vector3.new(0,0,-1)
+        if dir.Magnitude < 1e-3 then dir = Vector3.new(0,0,-1) end
+        return CFrame.lookAt(pos, pos + Vector3.new(dir.X, 0, dir.Z))
+    end
+
+    local function stickyDropNearPlayer(model)
+        if not (model and model.Parent) then return false end
+        local root = hrp(); if not root then return false end
+        local r = resolveRemotes()
+        local started = safeStartDrag(r, model)
+        Run.Heartbeat:Wait()
+
+        local head = headPart()
+        local basePos = head and head.Position or (root.Position + Vector3.new(0, 4, 0))
+        local look = root.CFrame.LookVector
+        local off = ringOffset()
+        local targetXZ = basePos + look * FALLBACK_AHEAD + Vector3.new(off.X, 0, off.Z)
+
+        local snap = setCollide(model, false)
+        zeroAssembly(model)
+
+        local cf = settleCFForModelAtXZ(model, targetXZ, look)
+        if model:IsA("Model") then
+            model:PivotTo(cf)
+        else
+            local p = mainPart(model); if p then p.CFrame = cf end
+        end
+
+        for i=1,3 do
+            Run.Heartbeat:Wait()
+            zeroAssembly(model)
+            local cf2 = settleCFForModelAtXZ(model, targetXZ, look)
+            if model:IsA("Model") then
+                model:PivotTo(cf2)
+            else
+                local p = mainPart(model); if p then p.CFrame = cf2 end
+            end
+        end
+
+        setCollide(model, true, snap)
+
+        for _,p in ipairs(getAllParts(model)) do
+            p.Anchored = false
+            p.AssemblyLinearVelocity  = Vector3.new()
+            p.AssemblyAngularVelocity = Vector3.new()
+        end
+
+        if started then
+            finallyStopDragTwice(r, model)
+        end
+        refreshPrompts(model)
+        task.delay(0.5, function()
+            pcall(function()
+                if model_attach and model_attach.Parent then end
+            end)
+        end)
+        task.delay(0.5, function()
+            pcall(function()
+                if model and model.Parent then
+                    model:SetAttribute("OrbInFlightAt", nil)
+                    model:SetAttribute("OrbJob", nil)
+                    model:SetAttribute("DeliveredAtOrb", nil)
+                end
+            end)
+        end)
+        return true
     end
 
     local function dropNearPlayer(model)
         if not (model and model.Parent) then return false end
+        if model:IsA("Model") and STICKY_DROP[model.Name] then
+            return stickyDropNearPlayer(model)
+        end
+
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
         Run.Heartbeat:Wait()
@@ -446,8 +578,17 @@ return function(C, R, UI)
     local function dropFromOrbSmooth(model, orbPos, jobId, origSnap, H)
         if not (model and model.Parent) then return end
         zeroAssembly(model)
-        local above = orbPos + Vector3.new(0, math.max(0.5, H * 0.25), 0)
+
+        local rp = physicalRootPart(model)
+        local halfY = (rp and rp.Size and rp.Size.Y * 0.5) or math.max(0.5, (H or bboxHeight(model)) * 0.5)
+
+        local xz = Vector3.new(orbPos.X, orbPos.Y, orbPos.Z)
+        local g = groundBelow(xz, model, 320)
+        local y = g and (g.Y + halfY + 0.15) or (orbPos.Y + math.max(0.5, (H or 2) * 0.25))
+        local above = Vector3.new(orbPos.X, y, orbPos.Z)
+
         setPivot(model, CFrame.new(above))
+
         for _,p in ipairs(getAllParts(model)) do
             p.Anchored = false
             p.AssemblyLinearVelocity  = Vector3.new()
@@ -467,6 +608,24 @@ return function(C, R, UI)
                 end
             end)
         end)
+
+        if model:IsA("Model") and STICKY_DROP[model.Name] then
+            task.delay(0.12, function()
+                if not (model and model.Parent) then return end
+                local root = hrp()
+                local look = root and root.CFrame.LookVector or Vector3.new(0,0,-1)
+                local cf2 = settleCFForModelAtXZ(model, Vector3.new(orbPos.X, orbPos.Y, orbPos.Z), look)
+                local snap = setCollide(model, false)
+                zeroAssembly(model)
+                setPivot(model, cf2)
+                setCollide(model, true, snap)
+                for _,p in ipairs(getAllParts(model)) do
+                    p.Anchored = false
+                    p.AssemblyLinearVelocity  = Vector3.new()
+                    p.AssemblyAngularVelocity = Vector3.new()
+                end
+            end)
+        end
     end
 
     local function itemsRootOrNil() return WS:FindFirstChild("Items") end
@@ -640,7 +799,6 @@ return function(C, R, UI)
         dropFromOrbSmooth(model, orbPos, jobId, snapOrig, H)
     end
 
-    -- CHANGED: added perNameCount that persists across waves for this job
     local function runConveyorWave(centerPos, orbPos, targets, jobId, perNameCount)
         local picked = getCandidates(centerPos, ORB_PICK_RADIUS, targets, jobId)
         if #picked == 0 then
@@ -686,7 +844,6 @@ return function(C, R, UI)
         return #picked
     end
 
-    -- CHANGED: maintain perNameCount across waves
     local function runConveyorJob(centerPos, orbPos, targets, jobId)
         local t0 = now()
         local emptyPasses = 0
@@ -767,7 +924,6 @@ return function(C, R, UI)
             local limitOn = C.State.BringLimitEnabled and true or false
             local maxPerName = currentLimit()
 
-            -- CHANGED: persist per-name counts across all passes of this bring run
             local perNameCount = {}
 
             local function scanQueue(alreadyMoved)
