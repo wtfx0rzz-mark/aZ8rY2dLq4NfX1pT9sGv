@@ -298,19 +298,61 @@ return function(C, R, UI)
             return nil
         end
 
+        local CAMPFIRE_GROUND_PAD_Y        = 4.25  -- higher to reduce fall-through
+        local CAMPFIRE_MIN_ABOVE_CENTER_Y  = 1.00  -- never place below/too close to the fire center height
+        local CAMPFIRE_RAY_START_ABOVE_Y   = 250
+        local CAMPFIRE_RAY_DEPTH_Y         = 1600
+
+        local function groundBelowCampfire(pos, extraExcludes)
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.IgnoreWater = true
+
+            local ex = { lp.Character }
+            local map = WS:FindFirstChild("Map")
+            if map then
+                local fol = map:FindFirstChild("Foliage")
+                if fol then table.insert(ex, fol) end
+            end
+            local items = WS:FindFirstChild("Items");      if items then table.insert(ex, items) end
+            local chars = WS:FindFirstChild("Characters"); if chars then table.insert(ex, chars) end
+
+            if typeof(extraExcludes) == "table" then
+                for i = 1, #extraExcludes do
+                    local inst = extraExcludes[i]
+                    if inst then table.insert(ex, inst) end
+                end
+            end
+
+            params.FilterDescendantsInstances = ex
+
+            local start = Vector3.new(pos.X, pos.Y + CAMPFIRE_RAY_START_ABOVE_Y, pos.Z)
+            local hit = WS:Raycast(start, Vector3.new(0, -CAMPFIRE_RAY_DEPTH_Y, 0), params)
+            if hit then return hit.Position end
+
+            start = Vector3.new(pos.X, pos.Y + (CAMPFIRE_RAY_START_ABOVE_Y * 2), pos.Z)
+            hit = WS:Raycast(start, Vector3.new(0, -CAMPFIRE_RAY_DEPTH_Y, 0), params)
+            return (hit and hit.Position) or pos
+        end
+
         local function campfireTeleportCF()
             local fire = resolveCampfireModel(); if not fire then return nil end
             local center = fireCenterPart(fire); if not center then return fire:GetPivot() end
+
             local look   = center.CFrame.LookVector
             local zone   = fire:FindFirstChild("InnerTouchZone")
+
             local offset = 6
             if zone and zone:IsA("BasePart") then
                 offset = math.max(zone.Size.X, zone.Size.Z) * 0.5 + 4
             end
-            local targetPos = center.Position + look * offset + Vector3.new(0, 3, 0)
-            local g = groundBelow(targetPos)
-            local clampedY = math.max(g.Y + 2.5, center.Position.Y + 0.5)
-            local finalPos = Vector3.new(targetPos.X, clampedY, targetPos.Z)
+
+            local desiredXZ = center.Position + look * offset
+            local g = groundBelowCampfire(desiredXZ, { fire })
+
+            local minY = math.max(g.Y + CAMPFIRE_GROUND_PAD_Y, center.Position.Y + CAMPFIRE_MIN_ABOVE_CENTER_Y)
+            local finalPos = Vector3.new(desiredXZ.X, minY, desiredXZ.Z)
+
             return CFrame.new(finalPos, center.Position)
         end
 
