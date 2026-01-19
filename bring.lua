@@ -445,6 +445,57 @@ return function(C, R, UI)
         return CFrame.lookAt(pos, pos + Vector3.new(dir.X, 0, dir.Z))
     end
 
+    local function rayParamsForRevolverSnap(ignoreModel)
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.IgnoreWater = true
+        local ex = { lp.Character }
+        local items = WS:FindFirstChild("Items")
+        if items then table.insert(ex, items) end
+        if ignoreModel then table.insert(ex, ignoreModel) end
+        params.FilterDescendantsInstances = ex
+        return params
+    end
+
+    local function revolverSnapDown(model, maxDepth, pad)
+        if not (model and model.Parent) then return false end
+        if model.Name ~= "Revolver" then return false end
+
+        local rp = physicalRootPart(model)
+        if not rp then return false end
+
+        local depth = maxDepth or 360
+        local extraPad = pad or 0.14
+
+        local params = rayParamsForRevolverSnap(model)
+        local start = rp.Position + Vector3.new(0, 80, 0)
+        local hit = WS:Raycast(start, Vector3.new(0, -depth, 0), params)
+        if not hit then return false end
+
+        local halfY = rp.Size.Y * 0.5
+        local targetPos = Vector3.new(rp.Position.X, hit.Position.Y + halfY + extraPad, rp.Position.Z)
+        local rot = (rp.CFrame - rp.CFrame.Position)
+        local targetCF = CFrame.new(targetPos) * rot
+
+        local snap = setCollide(model, false)
+        zeroAssembly(model)
+        if model:IsA("Model") then
+            model:PivotTo(targetCF)
+        else
+            local p = mainPart(model)
+            if p then p.CFrame = targetCF end
+        end
+        setCollide(model, true, snap)
+
+        for _,p in ipairs(getAllParts(model)) do
+            p.Anchored = false
+            p.AssemblyLinearVelocity  = Vector3.new()
+            p.AssemblyAngularVelocity = Vector3.new()
+        end
+
+        return true
+    end
+
     local function stickyDropNearPlayer(model)
         if not (model and model.Parent) then return false end
         local root = hrp(); if not root then return false end
@@ -491,6 +542,14 @@ return function(C, R, UI)
             finallyStopDragTwice(r, model)
         end
         refreshPrompts(model)
+
+        if model and model.Parent and model.Name == "Revolver" then
+            task.delay(0.20, function()
+                if not (model and model.Parent) then return end
+                revolverSnapDown(model, 360, 0.14)
+            end)
+        end
+
         task.delay(0.5, function()
             pcall(function()
                 if model_attach and model_attach.Parent then end
@@ -608,6 +667,13 @@ return function(C, R, UI)
                 end
             end)
         end)
+
+        if model and model.Parent and model.Name == "Revolver" then
+            task.delay(0.20, function()
+                if not (model and model.Parent) then return end
+                revolverSnapDown(model, 360, 0.14)
+            end)
+        end
 
         if model:IsA("Model") and STICKY_DROP[model.Name] then
             task.delay(0.12, function()
