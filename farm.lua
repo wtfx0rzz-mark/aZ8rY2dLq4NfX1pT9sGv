@@ -41,9 +41,9 @@ return function(C, R, UI)
 
         local SMALL_STEP_INTERVAL = 0.05
         local SMALL_HITS_PER_STEP = 10
-        local SMALL_NEXT_TREE_DELAY = 0.15
+        local SMALL_NEXT_TREE_DELAY = 0.2
 
-        local BIG_ZERO_PACE_DELAY = 0.15
+        local BIG_ZERO_PACE_DELAY = 0.2
 
         local BIG_MAX_TOTAL_HITS = 40
         local BIG_MAX_NO_PROGRESS_TRIES = 2
