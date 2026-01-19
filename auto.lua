@@ -379,7 +379,7 @@ return function(C, R, UI)
         local showTeleportEdge, showCampEdge = false, true
 
         -- ADDED: show by default (requested)
-        local showSkipNightEdge = true
+        local showSkipNightEdge = false
 
         phaseBtn.Visible = showPhaseEdge
         plantBtn.Visible = showPlantEdge
@@ -520,7 +520,7 @@ return function(C, R, UI)
         -- ADDED: toggle for Skip Night edge button (requested button only; toggle is non-invasive)
         tab:Toggle({
             Title = "Edge Button: Skip Night",
-            Value = true,
+            Value = false,
             Callback = function(state)
                 showSkipNightEdge = state
                 if skipNightBtn then skipNightBtn.Visible = state end
