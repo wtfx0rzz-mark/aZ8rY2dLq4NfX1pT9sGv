@@ -290,7 +290,7 @@ return function(C, R, UI)
     local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = 4.0
     -- After a chest is confirmed opened, keep scanning for spawned drops for this long (seconds)
     -- and capture them as they appear.
-    local CHEST_COLLECT_WINDOW_SECONDS = 0.75
+    local CHEST_COLLECT_WINDOW_SECONDS = 1.0
     -- Small “breather” delay after finishing collection before moving to the next chest (seconds).
     local CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT = 0.05
     -- If a chest fails to open/confirm, wait this long (seconds) before attempting it again.
