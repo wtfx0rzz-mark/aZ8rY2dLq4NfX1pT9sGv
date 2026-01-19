@@ -282,7 +282,7 @@ return function(C, R, UI)
         C.State.Toggles.ItemSearch = false
     end
 
-    local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = 0.12
+    local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = 0
     local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = 4.0
     local CHEST_COLLECT_WINDOW_SECONDS = 0.75
     local CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT = 0.05
