@@ -36,6 +36,10 @@ return function(C, R, UI)
             local f = RS:FindFirstChild("RemoteEvents")
             return f and f:FindFirstChild(name) or nil
         end
+
+        local DUMMY_MODEL = Instance.new("Model")
+        DUMMY_MODEL.Name = "__cg_dummy__"
+
         local function zeroAssembly(root)
             if not root then return end
             root.AssemblyLinearVelocity  = Vector3.new()
@@ -298,8 +302,8 @@ return function(C, R, UI)
             return nil
         end
 
-        local CAMPFIRE_GROUND_PAD_Y        = 4.25  -- higher to reduce fall-through
-        local CAMPFIRE_MIN_ABOVE_CENTER_Y  = 1.00  -- never place below/too close to the fire center height
+        local CAMPFIRE_GROUND_PAD_Y        = 4.25
+        local CAMPFIRE_MIN_ABOVE_CENTER_Y  = 1.00
         local CAMPFIRE_RAY_START_ABOVE_Y   = 250
         local CAMPFIRE_RAY_DEPTH_Y         = 1600
 
@@ -414,13 +418,10 @@ return function(C, R, UI)
         local lostBtn  = makeEdgeBtn("LostEdge",    "Lost Child", 4)
         local campBtn  = makeEdgeBtn("CampEdge",    "Campfire", 5)
 
-        -- ADDED: Skip Night edge button (requested)
         local skipNightBtn = makeEdgeBtn("SkipNightEdge", "Skip Night", 6)
 
         local showPhaseEdge, showPlantEdge = false, false
         local showTeleportEdge, showCampEdge = false, true
-
-        -- ADDED: show by default (requested)
         local showSkipNightEdge = false
 
         phaseBtn.Visible = showPhaseEdge
@@ -428,8 +429,6 @@ return function(C, R, UI)
         tpBtn.Visible    = showTeleportEdge
         campBtn.Visible  = showCampEdge
         lostBtn.Visible  = false
-
-        -- ADDED: visibility
         skipNightBtn.Visible = showSkipNightEdge
 
         phaseBtn.MouseButton1Click:Connect(function()
@@ -462,7 +461,6 @@ return function(C, R, UI)
             if cf then teleportWithDive(cf) end
         end)
 
-        -- ADDED: Skip Night click handler (requested)
         skipNightBtn.MouseButton1Click:Connect(function()
             local ev = getRemote("RequestActivateNightSkipMachine")
             if not (ev and ev:IsA("RemoteEvent")) then return end
@@ -516,13 +514,13 @@ return function(C, R, UI)
             local plantRF   = getRemote("RequestPlantItem"); if not plantRF then return end
             local root = hrp(); if not root then return end
             local plantPos = groundAhead(root)
-            if startDrag then pcall(function() startDrag:FireServer(sapling) end); pcall(function() startDrag:FireServer(Instance.new("Model")) end) end
+            if startDrag then pcall(function() startDrag:FireServer(sapling) end); pcall(function() startDrag:FireServer(DUMMY_MODEL) end) end
             task.wait(0.05)
             local ok = pcall(function() return plantRF:InvokeServer(sapling, Vector3.new(plantPos.X, plantPos.Y, plantPos.Z)) end)
-            if not ok then local dummy = Instance.new("Model"); ok = pcall(function() return plantRF:InvokeServer(dummy, Vector3.new(plantPos.X, plantPos.Y, plantPos.Z)) end) end
-            if not ok then pcall(function() plantRF:FireServer(sapling, Vector3.new(plantPos.X, plantPos.Y, plantPos.Z)) end); pcall(function() plantRF:FireServer(Instance.new("Model"), Vector3.new(plantPos.X, plantPos.Y, plantPos.Z)) end) end
+            if not ok then ok = pcall(function() return plantRF:InvokeServer(DUMMY_MODEL, Vector3.new(plantPos.X, plantPos.Y, plantPos.Z)) end) end
+            if not ok then pcall(function() plantRF:FireServer(sapling, Vector3.new(plantPos.X, plantPos.Y, plantPos.Z)) end); pcall(function() plantRF:FireServer(DUMMY_MODEL, Vector3.new(plantPos.X, plantPos.Y, plantPos.Z)) end) end
             task.wait(0.05)
-            if stopDrag then pcall(function() stopDrag:FireServer(sapling) end); pcall(function() stopDrag:FireServer(Instance.new("Model")) end) end
+            if stopDrag then pcall(function() stopDrag:FireServer(sapling) end); pcall(function() stopDrag:FireServer(DUMMY_MODEL) end) end
         end
         plantBtn.MouseButton1Click:Connect(function() plantNearestSaplingInFront() end)
 
@@ -558,14 +556,66 @@ return function(C, R, UI)
                 if campBtn then campBtn.Visible = state end
             end
         })
-
-        -- ADDED: toggle for Skip Night edge button (requested button only; toggle is non-invasive)
         tab:Toggle({
             Title = "Edge Button: Skip Night",
             Value = false,
             Callback = function(state)
                 showSkipNightEdge = state
                 if skipNightBtn then skipNightBtn.Visible = state end
+            end
+        })
+
+        local skipNightTimerOn = false
+        local skipNightTimerThread = nil
+        local SKIP_NIGHT_TIMER_SECONDS = 180
+
+        local function fireSkipNightOnce()
+            local ev = getRemote("RequestActivateNightSkipMachine")
+            if not (ev and ev:IsA("RemoteEvent")) then return end
+            local structures = WS:FindFirstChild("Structures")
+            if not structures then return end
+            local machine = structures:FindFirstChild("Temporal Accelerometer")
+            if not (machine and machine:IsA("Model")) then return end
+            pcall(function()
+                ev:FireServer(machine)
+            end)
+        end
+
+        local function enableSkipNightTimer()
+            if skipNightTimerOn then return end
+            skipNightTimerOn = true
+            if skipNightTimerThread then
+                pcall(function() task.cancel(skipNightTimerThread) end)
+                skipNightTimerThread = nil
+            end
+            skipNightTimerThread = task.spawn(function()
+                while skipNightTimerOn do
+                    fireSkipNightOnce()
+                    local t0 = os.clock()
+                    while skipNightTimerOn and (os.clock() - t0) < SKIP_NIGHT_TIMER_SECONDS do
+                        task.wait(0.25)
+                    end
+                end
+            end)
+        end
+
+        local function disableSkipNightTimer()
+            skipNightTimerOn = false
+            if skipNightTimerThread then
+                pcall(function() task.cancel(skipNightTimerThread) end)
+                skipNightTimerThread = nil
+            end
+        end
+
+        tab:Toggle({
+            Title = "Skip Nights With Timer",
+            Value = false,
+            Callback = function(state)
+                if state then
+                    enableSkipNightTimer()
+                else
+                    disableSkipNightTimer()
+                end
             end
         })
 
@@ -705,6 +755,7 @@ return function(C, R, UI)
             end
         })
         task.defer(enableLostChild)
+
         local godOn = false
         local godHB = nil
         local godLastHealth = nil
@@ -918,9 +969,9 @@ return function(C, R, UI)
             local torch = getRemote("MonsterHitByTorch"); if not torch then return end
             local ok = pcall(function()
                 if torch:IsA("RemoteFunction") then
-                    return torch:InvokeServer(targetModel or Instance.new("Model"))
+                    return torch:InvokeServer(targetModel or DUMMY_MODEL)
                 else
-                    return torch:FireServer(targetModel or Instance.new("Model"))
+                    return torch:FireServer(targetModel or DUMMY_MODEL)
                 end
             end)
             return ok
@@ -1237,7 +1288,7 @@ return function(C, R, UI)
         local function dropModelAtFeet(m)
             local startDrag = getRemote("RequestStartDraggingItem")
             local stopDrag  = getRemote("StopDraggingItem")
-            if startDrag then pcall(function() startDrag:FireServer(m) end); pcall(function() startDrag:FireServer(Instance.new("Model")) end) end
+            if startDrag then pcall(function() startDrag:FireServer(m) end); pcall(function() startDrag:FireServer(DUMMY_MODEL) end) end
             Run.Heartbeat:Wait()
             local cf = groundAtFeetCF()
             if cf then
@@ -1246,7 +1297,7 @@ return function(C, R, UI)
                 end)
             end
             task.wait(0.05)
-            if stopDrag then pcall(function() stopDrag:FireServer(m) end); pcall(function() stopDrag:FireServer(Instance.new("Model")) end) end
+            if stopDrag then pcall(function() stopDrag:FireServer(m) end); pcall(function() stopDrag:FireServer(DUMMY_MODEL) end) end
         end
         local SAPLING_DROP_PER_SEC = 25
         local function actionDropSaplings()
@@ -1287,7 +1338,7 @@ return function(C, R, UI)
             local stopDrag  = getRemote("StopDraggingItem")
             if startDrag then
                 pcall(function() startDrag:FireServer(m) end)
-                pcall(function() startDrag:FireServer(Instance.new("Model")) end)
+                pcall(function() startDrag:FireServer(DUMMY_MODEL) end)
             end
             if PLANT_INTERACTION_DELAY > 0 then task.wait(PLANT_INTERACTION_DELAY) else Run.Heartbeat:Wait() end
             local ok = pcall(function()
@@ -1298,19 +1349,18 @@ return function(C, R, UI)
                 end
             end)
             if not ok then
-                local dummy = Instance.new("Model")
                 pcall(function()
                     if plantRF:IsA("RemoteFunction") then
-                        return plantRF:InvokeServer(dummy, pos)
+                        return plantRF:InvokeServer(DUMMY_MODEL, pos)
                     else
-                        plantRF:FireServer(dummy, pos)
+                        plantRF:FireServer(DUMMY_MODEL, pos)
                     end
                 end)
             end
             if PLANT_INTERACTION_DELAY > 0 then task.wait(PLANT_INTERACTION_DELAY) else Run.Heartbeat:Wait() end
             if stopDrag then
                 pcall(function() stopDrag:FireServer(m) end)
-                pcall(function() stopDrag:FireServer(Instance.new("Model")) end)
+                pcall(function() stopDrag:FireServer(DUMMY_MODEL) end)
             end
         end
         local function plantModelInPlace(m)
@@ -1377,7 +1427,10 @@ return function(C, R, UI)
             local function groundBelow3(pos)
                 local params = RaycastParams.new()
                 params.FilterType = Enum.RaycastFilterType.Exclude
-                params.FilterDescendantsInstances = { lp.Character, WS:FindFirstChild("Items") }
+                local ex = { lp.Character }
+                local items = WS:FindFirstChild("Items")
+                if items then table.insert(ex, items) end
+                params.FilterDescendantsInstances = ex
                 local start = pos + Vector3.new(0, 5, 0)
                 local hit = WS:Raycast(start, Vector3.new(0, -1000, 0), params)
                 if hit then return hit.Position end
