@@ -282,12 +282,24 @@ return function(C, R, UI)
         C.State.Toggles.ItemSearch = false
     end
 
-    local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = 0
+    -- Delay after teleporting near a chest before trying to trigger its prompt.
+    -- Set to 0 to open immediately after teleport.
+    local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = 0.2
+    -- Max time (seconds) to wait for proof the chest opened after triggering the prompt.
+    -- Proof is either: (1) prompt disappears, or (2) new items spawn near the chest.
     local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = 4.0
+    -- After a chest is confirmed opened, keep scanning for spawned drops for this long (seconds)
+    -- and capture them as they appear.
     local CHEST_COLLECT_WINDOW_SECONDS = 0.75
+    -- Small “breather” delay after finishing collection before moving to the next chest (seconds).
     local CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT = 0.05
+    -- If a chest fails to open/confirm, wait this long (seconds) before attempting it again.
     local CHEST_RETRY_WAIT_SECONDS = 2.0
+    -- How often (seconds) the confirm loop checks whether the chest opened.
+    -- Lower = faster confirmation, higher CPU usage; higher = less CPU, slower reaction.
     local CHEST_CONFIRM_POLL_INTERVAL = 0.10
+    -- How often (seconds) the collect loop scans for drops during the collection window.
+    -- Lower = more responsive capture, higher CPU usage; higher = less CPU, might miss fast spawns.
     local CHEST_COLLECT_POLL_INTERVAL = 0.08
 
     C.State.ChestWaitAfterTeleportBeforeOpen = CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN
