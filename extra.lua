@@ -321,14 +321,17 @@ return function(C, R, UI)
         return RS, WS
     end
 
+    local ALWAYS_TAKE_NAMES = {
+        ["Bandage"] = true,
+        ["MedKit"] = true,
+    }
+
     local SPECIAL_TAKE_NAMES = {
         ["Strong Axe"] = true,
         ["Strong Flashlight"] = true,
         ["Giant Sack"] = true,
         ["Tactical Shotgun"] = true,
         ["Morningstar"] = true,
-        ["Bandage"] = true,
-        ["MedKit"] = true,
     }
 
     local function isSwordName(n)
@@ -644,6 +647,13 @@ return function(C, R, UI)
         end
 
         local n = inst.Name
+
+        if ALWAYS_TAKE_NAMES[n] then
+            if takeItemToInventory(inst) then
+                return true
+            end
+        end
+
         local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
         if wantsTake and (not hasSpecialInInventory(n)) then
             if takeItemToInventory(inst) then
@@ -1109,7 +1119,6 @@ return function(C, R, UI)
     end
 
     local function trackOnce()
-        local root = hrp()
         local items = itemsFolder()
         if not items then return end
 
@@ -1140,6 +1149,7 @@ return function(C, R, UI)
 
         pruneTracked()
 
+        local root = hrp()
         if root then
             local rpos = root.Position
             table.sort(Tracked, function(a, b)
@@ -1302,6 +1312,7 @@ return function(C, R, UI)
 
     local function isSearchTargetName(n)
         if n == "Thorn Body" then return true end
+        if ALWAYS_TAKE_NAMES[n] then return true end
         if SPECIAL_TAKE_NAMES[n] == true then return true end
         if isSwordName(n) then return true end
         return false
@@ -1309,12 +1320,15 @@ return function(C, R, UI)
 
     local function needsSearchItem(n)
         if n == "Thorn Body" then
-            return not hasThornBodyOwned()
+            return (not hasThornBodyOwned())
+        end
+        if ALWAYS_TAKE_NAMES[n] then
+            return true
         end
         if isSwordName(n) then
-            return not hasSpecialInInventory(n)
+            return (not hasSpecialInInventory(n))
         end
-        return not hasSpecialInInventory(n)
+        return (not hasSpecialInInventory(n))
     end
 
     local function findNearestSearchTarget()
@@ -1355,6 +1369,11 @@ return function(C, R, UI)
         end
 
         local n = target.Name
+        if ALWAYS_TAKE_NAMES[n] then
+            pcall(function() takeItemToInventory(target) end)
+            return
+        end
+
         local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
         if wantsTake and (not hasSpecialInInventory(n)) then
             pcall(function() takeItemToInventory(target) end)
