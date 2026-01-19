@@ -130,7 +130,7 @@ return function(C, R, UI)
     local SKY_RAY_LEN             = 900
     local PLACE_UP                = 1.6
 
-    local AIR_RELEASE_UP          = 0.6
+    local AIR_RELEASE_UP          = 2.6
 
     local OUTSIDE_LOGS_ENABLED    = true
     local OUTSIDE_LOG_SCAN_INT    = 0.85
