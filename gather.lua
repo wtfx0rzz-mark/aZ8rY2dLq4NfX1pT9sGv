@@ -36,7 +36,7 @@ return function(C, R, UI)
             "Cake","Cooked Steak","Cooked Morsel","Steak","Morsel","Berry","Carrot",
             "Chilli","Stew","Ribs","Pumpkin","Hearty Stew","Cooked Ribs","Corn","BBQ ribs","Apple","Mackerel","Acorn","Strawberry"
         }
-        local medicalItems = {"Bandage","MedKit"}
+        local medicalItems = { "Bandage", "MedKit" }
         local weaponsArmor = {
             "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
             "Chainsaw","Crossbow","Katana","Kunai","Laser Cannon","Laser Sword","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
@@ -46,7 +46,7 @@ return function(C, R, UI)
             "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Sapling",
             "Basketball","Blueprint","Diamond","Gem of the Forest Fragment","Flashlight","Old Taming flute","Cultist Gem","Tusk","Infernal Sack"
         }
-        local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"}
+        local pelts = { "Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt" }
 
         local Selected = { Junk = {}, Fuel = {}, Food = {}, Medical = {}, WA = {}, Misc = {}, Pelts = {} }
         local wantMossy, wantCultist, wantSapling = false, false, false
@@ -64,7 +64,7 @@ return function(C, R, UI)
         local NUDGE_DOWN     = 4
         local CULTIST_LIMIT  = math.huge
 
-        local PLACE_BATCH    = 25 -- faster (was 10)
+        local PLACE_BATCH    = 25
         local PLACE_YIELD_FN = function() Run.Heartbeat:Wait() end
 
         local CLUSTER_RADIUS_MIN  = 0.75
@@ -80,7 +80,7 @@ return function(C, R, UI)
         local PLACE_USE_NUDGE_DOWN     = false
         local PLACE_NUDGE_DOWN_STUDS   = 16
 
-        local RELEASE_DAMP_FRAMES = 2 -- faster (was 6)
+        local RELEASE_DAMP_FRAMES = 2
 
         local FLASHLIGHT_STOPDRAG_AFTER_SETTLE = {
             ["Strong Flashlight"] = true,
@@ -305,6 +305,7 @@ return function(C, R, UI)
             if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
             local nm = m and m.Name or ""
             local l  = nm:lower()
+
             if selectedSet["Apple"] and nm == "Apple" then
                 if itemsFolder and m.Parent ~= itemsFolder then return false end
                 if isInsideTree(m) then return false end
@@ -315,6 +316,7 @@ return function(C, R, UI)
                 if isInsideTree(m) then return false end
                 return true
             end
+
             if selectedSet[nm] then return true end
             if selectedSet["Mossy Coin"] and (nm == "Mossy Coin" or nm:match("^Mossy Coin%d+$")) then return true end
             if selectedSet["Cultist"] and m:IsA("Model") and l:find("cultist",1,true) and hasHumanoid(m) then return true end
@@ -553,12 +555,13 @@ return function(C, R, UI)
             local forward = root.CFrame.LookVector
             local above   = root.Position + Vector3.new(0, hoverHeight, 0)
             local baseCF  = CFrame.lookAt(above, above + forward)
-            for _,m in ipairs(list) do
+            for i = #list, 1, -1 do
+                local m = list[i]
                 if m and m.Parent then
                     dragKeepAlive(m)
                     pivotModel(m, baseCF)
                 else
-                    removeGather(m)
+                    table.remove(list, i)
                 end
             end
         end
@@ -734,7 +737,7 @@ return function(C, R, UI)
                     task.spawn(function()
                         waitForSettle(m, 1.50)
                         if m and m.Parent then
-                            pcall(function() safeStopDrag(m) end) -- ONE extra, after settle
+                            pcall(function() safeStopDrag(m) end)
                         end
                     end)
                 elseif m.Name == "Revolver" then
@@ -782,78 +785,6 @@ return function(C, R, UI)
 
             clearAll()
         end
-
-        local gatherOn = false
-        local scanConn, hoverConn = nil, nil
-        local gathered, list = {}, {}
-        local cultistCount = 0
-        local itemsChildConn = nil
-
-        local function addGather(m)
-            if gathered[m] then return end
-            gathered[m] = true
-            list[#list+1] = m
-            if isCultist(m) then cultistCount = cultistCount + 1 end
-        end
-
-        local function removeGather(m)
-            if not gathered[m] then return end
-            if isCultist(m) then cultistCount = math.max(0, cultistCount - 1) end
-            gathered[m] = nil
-            for i = #list, 1, -1 do
-                if list[i] == m then
-                    table.remove(list, i)
-                    break
-                end
-            end
-        end
-
-        local function clearAll2()
-            for m,_ in pairs(gathered) do gathered[m] = nil end
-            table.clear(list)
-            cultistCount = 0
-        end
-
-        local function hoverFollow2()
-            if not gatherOn then return end
-            local root = hrp(); if not root then return end
-            local forward = root.CFrame.LookVector
-            local above   = root.Position + Vector3.new(0, hoverHeight, 0)
-            local baseCF  = CFrame.lookAt(above, above + forward)
-            for _,m in ipairs(list) do
-                if m and m.Parent then
-                    dragKeepAlive(m)
-                    pivotModel(m, baseCF)
-                else
-                    removeGather(m)
-                end
-            end
-        end
-
-        local function startGather2()
-            if gatherOn then return end
-            gatherOn = true
-            scanConn  = Run.Heartbeat:Connect(captureIfNear)
-            hoverConn = Run.RenderStepped:Connect(hoverFollow2)
-            local items = itemsRootOrNil()
-            if items then
-                if itemsChildConn then pcall(function() itemsChildConn:Disconnect() end) end
-                itemsChildConn = items.ChildAdded:Connect(onItemsChildAdded)
-            end
-            if _G._PlaceEdgeBtn then _G._PlaceEdgeBtn.Visible = true end
-        end
-
-        local function stopGather2()
-            gatherOn = false
-            if scanConn  then pcall(function() scanConn:Disconnect()  end) end; scanConn = nil
-            if hoverConn then pcall(function() hoverConn:Disconnect() end) end; hoverConn = nil
-            if itemsChildConn then pcall(function() itemsChildConn:Disconnect() end) end; itemsChildConn = nil
-        end
-
-        clearAll = clearAll2
-        hoverFollow = hoverFollow2
-        startGather = startGather2
-        stopGather = stopGather2
 
         C.Gather = C.Gather or {}
         C.Gather.IsOn      = function() return gatherOn end
@@ -932,25 +863,25 @@ return function(C, R, UI)
         end
 
         tab:Section({ Title = "Junk" })
-        dropdownMulti({ title="Select Junk Items", values=junkItems, set=Selected.Junk, kind="Junk" })
+        dropdownMulti({ title = "Select Junk Items", values = junkItems, set = Selected.Junk, kind = "Junk" })
 
         tab:Section({ Title = "Fuel" })
-        dropdownMulti({ title="Select Fuel Items", values=fuelItems, set=Selected.Fuel, kind="Fuel" })
+        dropdownMulti({ title = "Select Fuel Items", values = fuelItems, set = Selected.Fuel, kind = "Fuel" })
 
         tab:Section({ Title = "Food" })
-        dropdownMulti({ title="Select Food Items", values=foodItems, set=Selected.Food, kind="Food" })
+        dropdownMulti({ title = "Select Food Items", values = foodItems, set = Selected.Food, kind = "Food" })
 
         tab:Section({ Title = "Medical" })
-        dropdownMulti({ title="Select Medical Items", values=medicalItems, set=Selected.Medical, kind="Medical" })
+        dropdownMulti({ title = "Select Medical Items", values = medicalItems, set = Selected.Medical, kind = "Medical" })
 
         tab:Section({ Title = "Weapons & Armor" })
-        dropdownMulti({ title="Select Weapon/Armor", values=weaponsArmor, set=Selected.WA, kind="WA" })
+        dropdownMulti({ title = "Select Weapon/Armor", values = weaponsArmor, set = Selected.WA, kind = "WA" })
 
         tab:Section({ Title = "Ammo & Misc." })
-        dropdownMulti({ title="Select Ammo/Misc", values=ammoMisc, set=Selected.Misc, kind="Misc" })
+        dropdownMulti({ title = "Select Ammo/Misc", values = ammoMisc, set = Selected.Misc, kind = "Misc" })
 
         tab:Section({ Title = "Pelts" })
-        dropdownMulti({ title="Select Pelts", values=pelts, set=Selected.Pelts, kind="Pelts" })
+        dropdownMulti({ title = "Select Pelts", values = pelts, set = Selected.Pelts, kind = "Pelts" })
 
         local function ensurePlaceEdge()
             local playerGui = lp:FindFirstChildOfClass("PlayerGui") or lp:WaitForChild("PlayerGui")
@@ -991,12 +922,12 @@ return function(C, R, UI)
                 btn.Text = "Place"
                 btn.TextSize = 12
                 btn.Font = Enum.Font.GothamBold
-                btn.BackgroundColor3 = Color3.fromRGB(30,30,35)
-                btn.TextColor3  = Color3.new(1,1,1)
+                btn.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+                btn.TextColor3 = Color3.new(1, 1, 1)
                 btn.BorderSizePixel = 0
-                btn.Visible     = false
+                btn.Visible = false
                 btn.LayoutOrder = 1000
-                btn.Parent      = stack
+                btn.Parent = stack
 
                 local corner  = Instance.new("UICorner")
                 corner.CornerRadius = UDim.new(0, 8)
