@@ -269,6 +269,7 @@ return function(C, R, UI)
         pcall(function() _G.__AutoChestExtra.Destroy() end)
     end
 
+    -- Defaults (only tracking ON by default)
     if C.State.Toggles.ChestTrack == nil then
         C.State.Toggles.ChestTrack = true
     end
@@ -278,9 +279,7 @@ return function(C, R, UI)
     if C.State.Toggles.GrabNearby == nil then
         C.State.Toggles.GrabNearby = false
     end
-    if C.State.Toggles.ChestFirePrompts == nil then
-        C.State.Toggles.ChestFirePrompts = false
-    end
+
 
     local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = 0.12
     local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = 4.0
@@ -301,11 +300,6 @@ return function(C, R, UI)
     end
     if not tonumber(C.State.ChestSpawnRadius) then
         C.State.ChestSpawnRadius = 10.00
-    end
-
-    local function clampCaptureRadius()
-        local v = tonumber(C.State.ChestCaptureRadius) or 22.0
-        return math.clamp(v, 6, 40)
     end
 
     local UID_OPEN_KEY = tostring(lp.UserId) .. "Opened"
@@ -609,37 +603,22 @@ return function(C, R, UI)
         return mp and mp.Position or nil
     end
 
-    local firePromptLastAt = setmetatable({}, { __mode = "k" })
-    local FIRE_PROMPT_COOLDOWN = 0.25
-
     local function triggerPrompt(prompt)
-        if not (prompt and prompt.Parent and prompt.Enabled) then return false end
-
-        local t = firePromptLastAt[prompt]
-        if t and (os.clock() - t) < FIRE_PROMPT_COOLDOWN then return false end
-        firePromptLastAt[prompt] = os.clock()
-
+        if not (prompt and prompt.Parent) then return false end
         pcall(function() prompt.RequiresLineOfSight = false end)
         pcall(function()
             if prompt.HoldDuration > 0.12 then
                 prompt.HoldDuration = 0.12
             end
         end)
-
         local ok = pcall(function()
             PPS:TriggerPrompt(prompt)
         end)
         if ok then return true end
-
         local ok2 = pcall(function()
-            PPS:TriggerPrompt(prompt, lp)
-        end)
-        if ok2 then return true end
-
-        local ok3 = pcall(function()
             prompt:InputHoldBegin()
         end)
-        if not ok3 then return false end
+        if not ok2 then return false end
         local hold = tonumber(prompt.HoldDuration) or 0
         local waitTime = (hold > 0) and (hold + 0.05) or 0.05
         task.delay(waitTime, function()
@@ -650,40 +629,14 @@ return function(C, R, UI)
         return true
     end
 
-    local function promptChestModel(prompt)
-        if not (prompt and prompt.Parent) then return nil end
-        local m = prompt:FindFirstAncestorOfClass("Model")
-        if not (m and m.Parent) then return nil end
-        if not isChestName(m.Name) then return nil end
-        return m
-    end
-
     local CHEST_FLOOR_RAY_DEPTH = 80.0
     local FRONT_DIST = 4.0
     local STAND_UP = 2.5
     local STRONGHOLD_EXCLUDE_RADIUS = 15.0
     local EXCLUDE_NAMES = {
-        ["Stronghold Diamond Chest"] = true,
-        ["Mossy Chest"] = true,
-    }
-
-    local firePromptsConn = nil
-    local function enableChestFirePrompts()
-        if firePromptsConn then return end
-        firePromptsConn = PPS.PromptShown:Connect(function(prompt, _inputType)
-            if not (C.State and C.State.Toggles and C.State.Toggles.ChestFirePrompts) then return end
-            if not (prompt and prompt:IsA("ProximityPrompt")) then return end
-            local chest = promptChestModel(prompt)
-            if not chest then return end
-            if EXCLUDE_NAMES[chest.Name] or isSnowChestName(chest.Name) or isHalloweenChestName(chest.Name) then return end
-            task.defer(function() triggerPrompt(prompt) end)
-        end)
-    end
-
-    local function disableChestFirePrompts()
-        if firePromptsConn then firePromptsConn:Disconnect() firePromptsConn = nil end
-        firePromptLastAt = setmetatable({}, { __mode = "k" })
-    end
+    ["Stronghold Diamond Chest"] = true,
+    ["Mossy Chest"] = true,
+}
 
     local function makeChestRayParams(extras)
         local params = RaycastParams.new()
@@ -887,7 +840,7 @@ return function(C, R, UI)
 
         local confirmTimeout = math.max(CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS, 0.5)
         local spawnRadius = math.max(tonumber(C.State.ChestSpawnRadius) or 10.0, 2.0)
-        local captureRadius = math.max(clampCaptureRadius(), spawnRadius)
+        local captureRadius = math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, spawnRadius)
         local captureWindow = math.max(CHEST_COLLECT_WINDOW_SECONDS, 0.05)
 
         local function sawNewSinceSnapshot(chestPos, rad)
@@ -956,11 +909,11 @@ return function(C, R, UI)
             return false
         end
 
-        local preSet = snapshotNearChest(pos, math.max(clampCaptureRadius(), 10.0) + 8.0)
+        local preSet = snapshotNearChest(pos, math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, 10.0) + 8.0)
 
         local prompt = findChestPromptPreferred(chest)
         if not prompt then
-            local cap = captureAllNear(pos, clampCaptureRadius())
+            local cap = captureAllNear(pos, tonumber(C.State.ChestCaptureRadius) or 22.0)
             if cap > 0 then
                 pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
                 return true, true
@@ -1166,6 +1119,7 @@ return function(C, R, UI)
 
     local grabOn = false
     local grabLoop = nil
+    local NEARBY_GRAB_RADIUS_STUDS = 10.0
     local NEARBY_GRAB_INTERVAL_SECONDS = 0.35
     local NEARBY_GRAB_MAX_PER_TICK = 80
 
@@ -1178,8 +1132,7 @@ return function(C, R, UI)
             while alive and grabOn do
                 local root = hrp()
                 if root then
-                    local rad = clampCaptureRadius()
-                    captureAllNear(root.Position, rad, NEARBY_GRAB_MAX_PER_TICK)
+                    captureAllNear(root.Position, NEARBY_GRAB_RADIUS_STUDS, NEARBY_GRAB_MAX_PER_TICK)
                 end
                 task.wait(NEARBY_GRAB_INTERVAL_SECONDS)
             end
@@ -1204,19 +1157,6 @@ return function(C, R, UI)
             else
                 stopRun()
                 stopTracking()
-            end
-        end
-    })
-
-    ExtraTab:Toggle({
-        Title = "Fire Prompts (Chest Assist)",
-        Value = C.State.Toggles.ChestFirePrompts,
-        Callback = function(on)
-            C.State.Toggles.ChestFirePrompts = on and true or false
-            if C.State.Toggles.ChestFirePrompts then
-                enableChestFirePrompts()
-            else
-                disableChestFirePrompts()
             end
         end
     })
@@ -1266,7 +1206,7 @@ return function(C, R, UI)
     ExtraTab:Section({ Title = "Nearby Items" })
 
     ExtraTab:Button({
-        Title = "Start Grab Nearby (Capture radius)",
+        Title = "Start Grab Nearby (10 studs)",
         Callback = function()
             startGrabNearby()
         end
@@ -1304,7 +1244,6 @@ return function(C, R, UI)
         stopTracking()
         stopGrabNearby()
         releaseAllCaptured()
-        disableChestFirePrompts()
         for i=1,#conns do
             local c = conns[i]
             if c and c.Disconnect then pcall(function() c:Disconnect() end) end
@@ -1313,12 +1252,6 @@ return function(C, R, UI)
         ensureHoverOff()
     end
     _G.__AutoChestExtra = api
-
-    if C.State.Toggles.ChestFirePrompts then
-        enableChestFirePrompts()
-    else
-        disableChestFirePrompts()
-    end
 
     if C.State.Toggles.ChestTrack then
         startTracking()
