@@ -278,6 +278,9 @@ return function(C, R, UI)
     if C.State.Toggles.GrabNearby == nil then
         C.State.Toggles.GrabNearby = false
     end
+    if C.State.Toggles.ItemSearch == nil then
+        C.State.Toggles.ItemSearch = false
+    end
 
     local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = 0.12
     local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = 4.0
@@ -324,14 +327,37 @@ return function(C, R, UI)
         ["Giant Sack"] = true,
         ["Tactical Shotgun"] = true,
         ["Morningstar"] = true,
+        ["Bandage"] = true,
+        ["MedKit"] = true,
     }
 
     local function isSwordName(n)
         return type(n) == "string" and (n:find("Sword", 1, true) ~= nil)
     end
 
+    local function invFolder()
+        return lp:FindFirstChild("Inventory")
+    end
+
+    local function armourFolder()
+        return lp:FindFirstChild("Armour")
+    end
+
+    local function getArmourValue()
+        local okA, av = pcall(function() return lp:GetAttribute("Armour") end)
+        if okA and type(av) == "number" then return av end
+        local stats = lp:FindFirstChild("Stats")
+        if stats then
+            local nv = stats:FindFirstChild("Armour")
+            if nv and nv:IsA("NumberValue") then return nv.Value end
+        end
+        local nv2 = lp:FindFirstChild("ArmourValue")
+        if nv2 and nv2:IsA("NumberValue") then return nv2.Value end
+        return nil
+    end
+
     local function hasSpecialInInventory(itemName)
-        local inv = lp:FindFirstChild("Inventory")
+        local inv = invFolder()
         if not inv then return false end
         if isSwordName(itemName) then
             for _,ch in ipairs(inv:GetChildren()) do
@@ -349,8 +375,22 @@ return function(C, R, UI)
         return false
     end
 
-    local function takeItemToInventory(itemModel)
-        if not (itemModel and itemModel.Parent) then return false end
+    local function hasThornBodyOwned()
+        local af = armourFolder()
+        if af and af.Parent then
+            local t = af:FindFirstChild("Thorn Body")
+            if t and t.Parent then return true end
+        end
+        local inv = invFolder()
+        if inv and inv.Parent then
+            local t2 = inv:FindFirstChild("Thorn Body")
+            if t2 and t2.Parent then return true end
+        end
+        return false
+    end
+
+    local function takeItemToInventory(itemInst)
+        if not (itemInst and itemInst.Parent) then return false end
         local takeRS, _ = getTakeRoots()
         local rf = takeRS:FindFirstChild("RemoteEvents")
         if not rf then return false end
@@ -361,17 +401,47 @@ return function(C, R, UI)
 
         local okHotbar = pcall(function()
             if hotbarX:IsA("RemoteFunction") then
-                hotbarX:InvokeServer(itemModel)
+                hotbarX:InvokeServer(itemInst)
             else
-                hotbarX:FireServer(itemModel)
+                hotbarX:FireServer(itemInst)
             end
         end)
         if not okHotbar then return false end
 
-        pcall(function() stopDragRE:FireServer(itemModel) end)
+        pcall(function() stopDragRE:FireServer(itemInst) end)
         RunService.Heartbeat:Wait()
-        pcall(function() stopDragRE:FireServer(itemModel) end)
+        pcall(function() stopDragRE:FireServer(itemInst) end)
         return true
+    end
+
+    local lastThornEquipAt = 0
+    local MIN_THORN_EQUIP_INTERVAL = 1.5
+
+    local function tryEquipThornBody()
+        local now = os.clock()
+        if (now - lastThornEquipAt) < MIN_THORN_EQUIP_INTERVAL then
+            return false
+        end
+
+        local armourVal = getArmourValue()
+        if type(armourVal) ~= "number" then return false end
+        if armourVal > 0.4 then return false end
+
+        local rf = RS:FindFirstChild("RemoteEvents")
+        if not rf then return false end
+        local equipRF = rf:FindFirstChild("RequestEquipArmour")
+        if not (equipRF and equipRF:IsA("RemoteFunction")) then return false end
+
+        local af = armourFolder()
+        if not (af and af.Parent) then return false end
+        local thorn = af:FindFirstChild("Thorn Body")
+        if not (thorn and thorn.Parent) then return false end
+
+        lastThornEquipAt = now
+        local ok = pcall(function()
+            equipRF:InvokeServer(thorn)
+        end)
+        return ok and true or false
     end
 
     local alive = true
@@ -562,6 +632,16 @@ return function(C, R, UI)
         if not (inst and inst.Parent) then return false end
         if CapturedSet[inst] then return false end
         if isChestInst(inst) then return false end
+
+        if inst.Name == "Thorn Body" then
+            if (not hasThornBodyOwned()) then
+                pcall(function() takeItemToInventory(inst) end)
+                task.wait(0.05)
+            end
+            if tryEquipThornBody() then
+                return true
+            end
+        end
 
         local n = inst.Name
         local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
@@ -1216,6 +1296,90 @@ return function(C, R, UI)
         C.State.Toggles.GrabNearby = false
     end
 
+    local itemSearchOn = false
+    local itemSearchLoop = nil
+    local ITEM_SEARCH_INTERVAL_SECONDS = 0.75
+
+    local function isSearchTargetName(n)
+        if n == "Thorn Body" then return true end
+        if SPECIAL_TAKE_NAMES[n] == true then return true end
+        if isSwordName(n) then return true end
+        return false
+    end
+
+    local function needsSearchItem(n)
+        if n == "Thorn Body" then
+            return not hasThornBodyOwned()
+        end
+        if isSwordName(n) then
+            return not hasSpecialInInventory(n)
+        end
+        return not hasSpecialInInventory(n)
+    end
+
+    local function findNearestSearchTarget()
+        local items = itemsFolder()
+        local root = hrp()
+        if not (items and root) then return nil end
+
+        local best, bestD = nil, math.huge
+        for _,m in ipairs(items:GetChildren()) do
+            if (m:IsA("Model") or m:IsA("BasePart")) and m.Parent and (not isChestInst(m)) then
+                local n = m.Name
+                if isSearchTargetName(n) and needsSearchItem(n) then
+                    local mp = mainPart(m)
+                    if mp then
+                        local d = (mp.Position - root.Position).Magnitude
+                        if d < bestD then
+                            bestD = d
+                            best = m
+                        end
+                    end
+                end
+            end
+        end
+        return best
+    end
+
+    local function itemSearchTick()
+        local target = findNearestSearchTarget()
+        if not (target and target.Parent) then return end
+
+        if target.Name == "Thorn Body" then
+            if (not hasThornBodyOwned()) then
+                pcall(function() takeItemToInventory(target) end)
+                task.wait(0.05)
+            end
+            pcall(tryEquipThornBody)
+            return
+        end
+
+        local n = target.Name
+        local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
+        if wantsTake and (not hasSpecialInInventory(n)) then
+            pcall(function() takeItemToInventory(target) end)
+        end
+    end
+
+    local function startItemSearch()
+        if itemSearchOn then return end
+        itemSearchOn = true
+        C.State.Toggles.ItemSearch = true
+        if itemSearchLoop then return end
+        itemSearchLoop = task.spawn(function()
+            while alive and itemSearchOn do
+                pcall(itemSearchTick)
+                task.wait(ITEM_SEARCH_INTERVAL_SECONDS)
+            end
+            itemSearchLoop = nil
+        end)
+    end
+
+    local function stopItemSearch()
+        itemSearchOn = false
+        C.State.Toggles.ItemSearch = false
+    end
+
     ExtraTab:Section({ Title = "Chests" })
 
     ExtraTab:Toggle({
@@ -1273,6 +1437,21 @@ return function(C, R, UI)
         end
     })
 
+    ExtraTab:Section({ Title = "Items" })
+
+    ExtraTab:Toggle({
+        Title = "Item Search",
+        Value = C.State.Toggles.ItemSearch,
+        Callback = function(on)
+            C.State.Toggles.ItemSearch = on
+            if on then
+                startItemSearch()
+            else
+                stopItemSearch()
+            end
+        end
+    })
+
     ExtraTab:Section({ Title = "Nearby Items" })
 
     ExtraTab:Button({
@@ -1313,6 +1492,7 @@ return function(C, R, UI)
         stopRun()
         stopTracking()
         stopGrabNearby()
+        stopItemSearch()
         releaseAllCaptured()
         for i=1,#conns do
             local c = conns[i]
@@ -1332,5 +1512,9 @@ return function(C, R, UI)
 
     if C.State.Toggles.GrabNearby then
         startGrabNearby()
+    end
+
+    if C.State.Toggles.ItemSearch then
+        startItemSearch()
     end
 end
