@@ -160,20 +160,6 @@ return function(C, R, UI)
             end)
         end
 
-        local function diveBelowGround(depth, frames)
-            local root = hrp(); if not root then return end
-            local ch = lp.Character
-            local look = root.CFrame.LookVector
-            local dest = root.Position + Vector3.new(0, -math.abs(depth), 0)
-            for _=1,(frames or 4) do
-                local cf = CFrame.new(dest, dest + look)
-                if ch then pcall(function() ch:PivotTo(cf) end) end
-                pcall(function() root.CFrame = cf end)
-                zeroAssembly(root)
-                Run.Heartbeat:Wait()
-            end
-        end
-
         local function groundBelow(pos)
             local params = RaycastParams.new()
             params.FilterType = Enum.RaycastFilterType.Exclude
@@ -264,19 +250,14 @@ return function(C, R, UI)
             return false
         end
 
-        local DIVE_DEPTH = 200
         local function teleportWithDive(targetCF)
+            if not targetCF then return end
             local upCF = targetCF + Vector3.new(0, SAFE_DROP_UP, 0)
             prefetchRing(upCF)
             requestStreamAt(upCF)
             waitGameplayResumed(1.0)
-            local root = hrp(); if not root then return end
-            local snap = snapshotCollide()
-            setCollideAll(false)
-            diveBelowGround(DIVE_DEPTH, 4)
             teleportSticky(upCF, true)
             waitUntilGroundedOrMoving(3)
-            setCollideAll(true, snap)
             waitGameplayResumed(1.0)
         end
 
@@ -461,44 +442,16 @@ return function(C, R, UI)
             if cf then teleportWithDive(cf) end
         end)
 
-        local function teleportToAccelerometer()
-            local structures = WS:FindFirstChild("Structures")
-            if not structures then return nil end
-            local machine = structures:FindFirstChild("Temporal Accelerometer")
-            if not (machine and machine:IsA("Model")) then return nil end
-
-            local mp = mainPart(machine)
-            local mpos = mp and mp.Position or machine:GetPivot().Position
-            local g = groundBelow(mpos)
-            local stand = Vector3.new(mpos.X, g.Y + 3.0, mpos.Z)
-            local cf = CFrame.new(stand, Vector3.new(mpos.X, stand.Y, mpos.Z))
-
-            teleportWithDive(cf)
-            return machine
-        end
-
-        local function doSkipNightOnce(returnCF)
-            local root = hrp()
-            local savedCF = returnCF or (root and root.CFrame) or nil
-            if not savedCF then return end
-
-            local machine = teleportToAccelerometer()
-            if not machine then return end
-
-            for _ = 1, 4 do Run.Heartbeat:Wait() end
-            task.wait(0.12)
-
-            local ev = getRemote("RequestActivateNightSkipMachine")
-            if (ev and ev:IsA("RemoteEvent")) then
-                pcall(function() ev:FireServer(machine) end)
-            end
-
-            task.wait(0.20)
-            teleportWithDive(savedCF)
-        end
-
         skipNightBtn.MouseButton1Click:Connect(function()
-            doSkipNightOnce(nil)
+            local ev = getRemote("RequestActivateNightSkipMachine")
+            if not (ev and ev:IsA("RemoteEvent")) then return end
+            local structures = WS:FindFirstChild("Structures")
+            if not structures then return end
+            local machine = structures:FindFirstChild("Temporal Accelerometer")
+            if not (machine and machine:IsA("Model")) then return end
+            pcall(function()
+                ev:FireServer(machine)
+            end)
         end)
 
         local AHEAD_DIST, RAY_DEPTH = 3, 2000
@@ -599,7 +552,19 @@ return function(C, R, UI)
         local skipNightSavedCF = nil
 
         local function fireSkipNightOnce()
-            doSkipNightOnce(skipNightSavedCF)
+            if skipNightSavedCF then
+                teleportWithDive(skipNightSavedCF)
+            end
+
+            local ev = getRemote("RequestActivateNightSkipMachine")
+            if not (ev and ev:IsA("RemoteEvent")) then return end
+            local structures = WS:FindFirstChild("Structures")
+            if not structures then return end
+            local machine = structures:FindFirstChild("Temporal Accelerometer")
+            if not (machine and machine:IsA("Model")) then return end
+            pcall(function()
+                ev:FireServer(machine)
+            end)
         end
 
         local function enableSkipNightTimer()
