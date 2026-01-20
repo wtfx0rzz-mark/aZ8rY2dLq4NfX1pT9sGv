@@ -43,7 +43,7 @@ return function(C, R, UI)
             "Sword","Ice Axe","Thorn Body"
         }
         local ammoMisc = {
-            "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Sapling",
+            "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Alien","Alien Elite","Sapling",
             "Basketball","Blueprint","Diamond","Gem of the Forest Fragment","Flashlight","Old Taming flute","Cultist Gem","Tusk","Infernal Sack"
         }
         local pelts = { "Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt" }
