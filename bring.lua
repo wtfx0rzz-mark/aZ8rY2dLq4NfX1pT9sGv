@@ -40,7 +40,7 @@ return function(C, R, UI)
     local fuelItems = {"Log","Coal","Fuel Canister","Oil Barrel","Biofuel","Chair"}
     local foodItems = {
         "Morsel","Cooked Morsel","Steak","Cooked Steak","Ribs","Cooked Ribs","Cake","Berry","Carrot",
-        "Chilli","Stew","Pumpkin","Hearty Stew","Corn","BBQ ribs","Apple","Mackerel","Salmon","Acorn","Strawberry"
+        "Chilli","Stew","Pumpkin","Hearty Stew","Corn","BBQ ribs","Apple","Mackerel","Salmon","Swordfish","Acorn","Strawberry"
     }
     local medicalItems = {"Bandage","MedKit"}
     local weaponsArmor = {
