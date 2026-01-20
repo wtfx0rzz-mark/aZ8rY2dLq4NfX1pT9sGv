@@ -568,8 +568,13 @@ return function(C, R, UI)
         local skipNightTimerOn = false
         local skipNightTimerThread = nil
         local SKIP_NIGHT_TIMER_SECONDS = 180
+        local skipNightSavedCF = nil
 
         local function fireSkipNightOnce()
+            if skipNightSavedCF then
+                teleportWithDive(skipNightSavedCF)
+            end
+
             local ev = getRemote("RequestActivateNightSkipMachine")
             if not (ev and ev:IsA("RemoteEvent")) then return end
             local structures = WS:FindFirstChild("Structures")
@@ -583,6 +588,10 @@ return function(C, R, UI)
 
         local function enableSkipNightTimer()
             if skipNightTimerOn then return end
+
+            local root = hrp()
+            skipNightSavedCF = root and root.CFrame or nil
+
             skipNightTimerOn = true
             if skipNightTimerThread then
                 pcall(function() task.cancel(skipNightTimerThread) end)
@@ -601,6 +610,7 @@ return function(C, R, UI)
 
         local function disableSkipNightTimer()
             skipNightTimerOn = false
+            skipNightSavedCF = nil
             if skipNightTimerThread then
                 pcall(function() task.cancel(skipNightTimerThread) end)
                 skipNightTimerThread = nil
