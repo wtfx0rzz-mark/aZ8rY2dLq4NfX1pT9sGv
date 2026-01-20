@@ -48,6 +48,11 @@ return function(C, R, UI)
         local BIG_MAX_TOTAL_HITS = 40
         local BIG_MAX_NO_PROGRESS_TRIES = 2
 
+        local SMALL_MAX_TOTAL_HITS = 80
+        local SMALL_REBUILD_COOLDOWN = 1.5
+
+        local CIRCLE_SMALL_MAX_TOTAL_HITS = 80
+
         C.State = C.State or {}
         if C.State.FarmTeleportWaitSec == nil then C.State.FarmTeleportWaitSec = 1 end
 
@@ -165,13 +170,35 @@ return function(C, R, UI)
             return jittered(base, k)
         end
 
+        local HitQueue = {}
+        local hitBusy = false
+        local HITQ_MAX = 25
+
+        local function pumpHitQueue()
+            if hitBusy then return end
+            local job = table.remove(HitQueue, 1)
+            if not job then return end
+            hitBusy = true
+            task.spawn(function()
+                pcall(function()
+                    ToolDamageObject:InvokeServer(job.treeModel, job.tool, job.hitId, job.impactCF)
+                end)
+                hitBusy = false
+                pumpHitQueue()
+            end)
+        end
+
         local function HitTreeRemote(treeModel, tool, hitId, impactCF)
             if not (treeModel and tool and hitId and impactCF) then return end
             local bucket = attrBucket(treeModel)
             if bucket and bucket.SetAttribute then
                 pcall(function() bucket:SetAttribute(hitId, true) end)
             end
-            ToolDamageObject:InvokeServer(treeModel, tool, hitId, impactCF)
+            if #HitQueue >= HITQ_MAX then
+                HitQueue = {}
+            end
+            HitQueue[#HitQueue + 1] = { treeModel = treeModel, tool = tool, hitId = hitId, impactCF = impactCF }
+            pumpHitQueue()
         end
 
         local function teleportNearTree(treeModel)
@@ -220,6 +247,26 @@ return function(C, R, UI)
         local EXTRA_BIG_TREE_NAMES = { ["Northern Pine"] = true }
         local TREE_NAMES = buildNameSet(TREE_NAMES_BASE, EXTRA_SMALL_TREE_NAMES)
 
+        local BIG_TREE_NAMES_BASE = { TreeBig1 = true, TreeBig2 = true, TreeBig3 = true }
+        local BIG_TREE_NAMES = buildNameSet(BIG_TREE_NAMES_BASE, EXTRA_BIG_TREE_NAMES)
+        local REQUIRED_HITS = { ["Strong Axe"] = 35, ["Chainsaw"] = 35 }
+
+        local function isBigTreeName(name)
+            if BIG_TREE_NAMES[name] then return true end
+            if type(name) ~= "string" then return false end
+            return name:match("^WebbedTreeBig%d*$") ~= nil
+        end
+
+        local function maybeSmallTreeName(name)
+            if TREE_NAMES[name] then return true end
+            local lower = string.lower(name or "")
+            return lower:find("small", 1, true) and lower:find("tree", 1, true)
+        end
+
+        local function maybeBigTreeName(name)
+            return isBigTreeName(name)
+        end
+
         local function isSmallTreeModel(model)
             if not (model and model:IsA("Model")) then return false end
             local name = model.Name
@@ -231,26 +278,16 @@ return function(C, R, UI)
             return false
         end
 
+        local function isBigTreeModel(model)
+            return model and model:IsA("Model") and isBigTreeName(model.Name) and (bestTreeHitPart(model) ~= nil)
+        end
+
         local function getPreferredAxe()
             for _, name in ipairs(AXE_PREFER) do
                 local item = findInInventory(name)
                 if item then return item end
             end
             return nil
-        end
-
-        local BIG_TREE_NAMES_BASE = { TreeBig1 = true, TreeBig2 = true, TreeBig3 = true }
-        local BIG_TREE_NAMES = buildNameSet(BIG_TREE_NAMES_BASE, EXTRA_BIG_TREE_NAMES)
-        local REQUIRED_HITS = { ["Strong Axe"] = 35, ["Chainsaw"] = 35 }
-
-        local function isBigTreeName(name)
-            if BIG_TREE_NAMES[name] then return true end
-            if type(name) ~= "string" then return false end
-            return name:match("^WebbedTreeBig%d*$") ~= nil
-        end
-
-        local function isBigTreeModel(model)
-            return model and model:IsA("Model") and isBigTreeName(model.Name) and (bestTreeHitPart(model) ~= nil)
         end
 
         local function getCurrentHitCount(treeModel)
@@ -284,21 +321,62 @@ return function(C, R, UI)
             return ch and ch:FindFirstChild("HumanoidRootPart")
         end
 
+        local SmallCandidates = setmetatable({}, { __mode = "k" })
+        local BigCandidates = setmetatable({}, { __mode = "k" })
+        local CampfireCandidates = setmetatable({}, { __mode = "k" })
+
+        local function addCandidateFromModel(m)
+            if not (m and m:IsA("Model")) then return end
+            if maybeSmallTreeName(m.Name) then SmallCandidates[m] = true end
+            if maybeBigTreeName(m.Name) then BigCandidates[m] = true end
+            local ln = string.lower(m.Name or "")
+            if ln:find("campfire", 1, true) then CampfireCandidates[m] = true end
+        end
+
+        local function addCandidateFromPart(p)
+            if not (p and p:IsA("BasePart")) then return end
+            local ln = string.lower(p.Name or "")
+            if ln:find("campfire", 1, true) then CampfireCandidates[p] = true end
+            local m = p:FindFirstAncestorOfClass("Model")
+            if m then addCandidateFromModel(m) end
+        end
+
+        for _, inst in ipairs(WS:GetDescendants()) do
+            if inst:IsA("Model") then
+                addCandidateFromModel(inst)
+            elseif inst:IsA("BasePart") then
+                addCandidateFromPart(inst)
+            end
+        end
+
+        local descAddedConn = WS.DescendantAdded:Connect(function(inst)
+            if inst:IsA("Model") then
+                addCandidateFromModel(inst)
+            elseif inst:IsA("BasePart") then
+                addCandidateFromPart(inst)
+            end
+        end)
+
+        local descRemovingConn = WS.DescendantRemoving:Connect(function(inst)
+            if SmallCandidates[inst] then SmallCandidates[inst] = nil end
+            if BigCandidates[inst] then BigCandidates[inst] = nil end
+            if CampfireCandidates[inst] then CampfireCandidates[inst] = nil end
+        end)
+
         local smallRunning = false
         local smallLoopConn = nil
         local smallTreeList = {}
         local smallHitCounts = {}
-        local smallStartPos = Vector3.new(0, 0, 0)
         local smallCursor = 1
         local smallAcc = 0
         local smallNextTreeAt = 0
+        local smallLastRebuildAt = 0
 
-        local function scanForAllSmallTrees()
-            local origin = smallStartPos
+        local function rebuildSmallTreeList(origin)
             local list = {}
-            for _, inst in ipairs(WS:GetDescendants()) do
-                if inst:IsA("Model") and isSmallTreeModel(inst) then
-                    list[#list + 1] = inst
+            for m in pairs(SmallCandidates) do
+                if m and m.Parent and m:IsA("Model") and isSmallTreeModel(m) then
+                    list[#list + 1] = m
                 end
             end
             table.sort(list, function(a, b)
@@ -314,10 +392,14 @@ return function(C, R, UI)
                 for i = 1, MAX_TREE_QUEUE do trimmed[i] = list[i] end
                 list = trimmed
             end
+            local newCounts = {}
+            for _, m in ipairs(list) do
+                newCounts[m] = smallHitCounts[m] or 0
+            end
             smallTreeList = list
-            smallHitCounts = {}
-            for _, m in ipairs(smallTreeList) do smallHitCounts[m] = 0 end
+            smallHitCounts = newCounts
             smallCursor = 1
+            smallLastRebuildAt = os.clock()
         end
 
         local function removeSmallTreeAt(idx)
@@ -353,11 +435,9 @@ return function(C, R, UI)
                 local axe = getPreferredAxe()
                 if not axe then return end
                 ensureEquipped(axe)
-                local axeName = axe.Name
-                local neededDefault = AXE_HITS[axeName] or 13
 
                 if #smallTreeList == 0 then
-                    scanForAllSmallTrees()
+                    rebuildSmallTreeList(root.Position)
                     return
                 end
 
@@ -376,7 +456,10 @@ return function(C, R, UI)
                         if t and t.Parent and isSmallTreeModel(t) then
                             local p = bestTreeHitPart(t)
                             if p and (p.Position - root.Position).Magnitude <= CHOP_RADIUS then
-                                return idx
+                                local c = smallHitCounts[t] or 0
+                                if c < SMALL_MAX_TOTAL_HITS then
+                                    return idx
+                                end
                             end
                         end
                     end
@@ -385,9 +468,25 @@ return function(C, R, UI)
 
                 local inRangeIdx = findAnyInRangeIndex()
                 if not inRangeIdx then
-                    local candidate = smallTreeList[smallCursor]
-                    if candidate and candidate.Parent then
-                        teleportNearTree(candidate)
+                    if (now - smallLastRebuildAt) >= SMALL_REBUILD_COOLDOWN then
+                        rebuildSmallTreeList(root.Position)
+                        if #smallTreeList == 0 then return end
+                    end
+                    local bestTree, bestIdx, bestD
+                    for idx, t in ipairs(smallTreeList) do
+                        if t and t.Parent and isSmallTreeModel(t) then
+                            local p = bestTreeHitPart(t)
+                            if p then
+                                local d = (p.Position - root.Position).Magnitude
+                                if (not bestD) or d < bestD then
+                                    bestD, bestTree, bestIdx = d, t, idx
+                                end
+                            end
+                        end
+                    end
+                    if bestTree then
+                        smallCursor = bestIdx or smallCursor
+                        teleportNearTree(bestTree)
                     end
                     return
                 end
@@ -423,9 +522,8 @@ return function(C, R, UI)
                         continue
                     end
 
-                    local needed = AXE_HITS[axeName] or neededDefault
                     local count = smallHitCounts[tree] or 0
-                    if count >= needed then
+                    if count >= SMALL_MAX_TOTAL_HITS then
                         removeSmallTreeAt(idx)
                         continue
                     end
@@ -434,10 +532,6 @@ return function(C, R, UI)
                     local impactCF = impactCFForTree(tree, hitPart)
                     HitTreeRemote(tree, axe, hitId, impactCF)
                     smallHitCounts[tree] = count + 1
-
-                    if (count + 1) >= needed then
-                        removeSmallTreeAt(idx)
-                    end
 
                     smallNextTreeAt = os.clock() + SMALL_NEXT_TREE_DELAY
                     break
@@ -448,8 +542,8 @@ return function(C, R, UI)
         local function startSmallFarm()
             if smallRunning then return end
             smallRunning = true
-            smallStartPos = hrpPosOrZero()
-            scanForAllSmallTrees()
+            local root = hrp()
+            rebuildSmallTreeList(root and root.Position or hrpPosOrZero())
             startSmallLoop()
         end
 
@@ -512,15 +606,14 @@ return function(C, R, UI)
             BigLastSeenHits[tree] = getCurrentHitCount(tree)
         end
 
-        local function buildBigTreeList(requiredHits)
+        local function buildBigTreeList(requiredHits, origin)
             bigTreeList = {}
             bigCurrentIndex = 1
-            local origin = bigStartPos
-            for _, inst in ipairs(WS:GetDescendants()) do
-                if inst:IsA("Model") and isBigTreeModel(inst) then
-                    local existing = getCurrentHitCount(inst)
+            for m in pairs(BigCandidates) do
+                if m and m.Parent and m:IsA("Model") and isBigTreeModel(m) then
+                    local existing = getCurrentHitCount(m)
                     if existing < requiredHits then
-                        bigTreeList[#bigTreeList + 1] = inst
+                        bigTreeList[#bigTreeList + 1] = m
                     end
                 end
             end
@@ -549,8 +642,8 @@ return function(C, R, UI)
             clearBigTrack(tree)
         end
 
-        local function pickNextBigTree(requiredHits)
-            if #bigTreeList == 0 then buildBigTreeList(requiredHits) end
+        local function pickNextBigTree(requiredHits, origin)
+            if #bigTreeList == 0 then buildBigTreeList(requiredHits, origin) end
             if #bigTreeList == 0 then return nil end
             if bigCurrentIndex > #bigTreeList then bigCurrentIndex = 1 end
             local total = #bigTreeList
@@ -603,7 +696,7 @@ return function(C, R, UI)
 
             if switchSec == 0 then
                 if now < bigNextTreeAt then return end
-                if #bigTreeList == 0 then buildBigTreeList(requiredHits) end
+                if #bigTreeList == 0 then buildBigTreeList(requiredHits, root.Position) end
                 if #bigTreeList == 0 then return end
                 if bigCurrentIndex < 1 then bigCurrentIndex = 1 end
                 if bigCurrentIndex > #bigTreeList then bigCurrentIndex = 1 end
@@ -612,7 +705,7 @@ return function(C, R, UI)
                 local tree = inRangeTree
                 if inRangeIdx then bigCurrentIndex = inRangeIdx end
                 if not tree then
-                    tree = pickNextBigTree(requiredHits)
+                    tree = pickNextBigTree(requiredHits, root.Position)
                     if not tree then return end
                 end
 
@@ -682,9 +775,9 @@ return function(C, R, UI)
             end
 
             if not bigTargetTree then
-                if #bigTreeList == 0 then buildBigTreeList(requiredHits) end
+                if #bigTreeList == 0 then buildBigTreeList(requiredHits, root.Position) end
                 local inRangeTree, inRangeIdx = findAnyBigInRange(requiredHits, root.Position)
-                local t = inRangeTree or pickNextBigTree(requiredHits)
+                local t = inRangeTree or pickNextBigTree(requiredHits, root.Position)
                 if not t then return end
                 bigTargetTree = t
                 if inRangeIdx then bigCurrentIndex = inRangeIdx end
@@ -822,16 +915,12 @@ return function(C, R, UI)
             local root = hrp()
             local rootPos = root and root.Position or nil
             local bestPos, bestD
-            for _, inst in ipairs(WS:GetDescendants()) do
-                local n = inst.Name
-                if type(n) == "string" then
-                    local ln = string.lower(n)
-                    if ln:find("campfire", 1, true) then
-                        local p = campfireCandidatePos(inst)
-                        if p then
-                            local d = rootPos and (p - rootPos).Magnitude or (p - Vector3.new(0, 0, 0)).Magnitude
-                            if (not bestPos) or d < bestD then bestPos, bestD = p, d end
-                        end
+            for inst in pairs(CampfireCandidates) do
+                if inst and inst.Parent then
+                    local p = campfireCandidatePos(inst)
+                    if p then
+                        local d = rootPos and (p - rootPos).Magnitude or (p - Vector3.new(0, 0, 0)).Magnitude
+                        if (not bestPos) or d < bestD then bestPos, bestD = p, d end
                     end
                 end
             end
@@ -841,13 +930,24 @@ return function(C, R, UI)
         local function rebuildCircleTreeList(centerPos)
             local list = {}
             local rMax = circleRadius
-            for _, inst in ipairs(WS:GetDescendants()) do
-                if inst:IsA("Model") and (isSmallTreeModel(inst) or isBigTreeModel(inst)) then
-                    local part = bestTreeHitPart(inst)
+            for m in pairs(SmallCandidates) do
+                if m and m.Parent and m:IsA("Model") and isSmallTreeModel(m) then
+                    local part = bestTreeHitPart(m)
                     if part then
                         local d = (part.Position - centerPos).Magnitude
                         if d <= rMax then
-                            list[#list + 1] = inst
+                            list[#list + 1] = m
+                        end
+                    end
+                end
+            end
+            for m in pairs(BigCandidates) do
+                if m and m.Parent and m:IsA("Model") and isBigTreeModel(m) then
+                    local part = bestTreeHitPart(m)
+                    if part then
+                        local d = (part.Position - centerPos).Magnitude
+                        if d <= rMax then
+                            list[#list + 1] = m
                         end
                     end
                 end
@@ -865,7 +965,12 @@ return function(C, R, UI)
                 for i = 1, MAX_TREE_QUEUE do trimmed[i] = list[i] end
                 list = trimmed
             end
+            local newCounts = {}
+            for _, m in ipairs(list) do
+                newCounts[m] = circleSmallHitCounts[m] or 0
+            end
             circleTreeList = list
+            circleSmallHitCounts = newCounts
             if circleIndex < 1 then circleIndex = 1 end
             if circleIndex > #circleTreeList then circleIndex = 1 end
         end
@@ -900,9 +1005,6 @@ return function(C, R, UI)
         end
 
         local function findAnyCircleInRangeIndex(rootPos, now)
-            local axe = getPreferredAxe()
-            local axeName = axe and axe.Name or nil
-            local neededSmall = axeName and (AXE_HITS[axeName] or 13) or 13
             local toolBig = getBigTreeTool()
             local requiredBig = toolBig and (REQUIRED_HITS[toolBig.Name] or 35) or 35
 
@@ -915,7 +1017,7 @@ return function(C, R, UI)
                         if part and (part.Position - rootPos).Magnitude <= CHOP_RADIUS then
                             if isSmall then
                                 local count = circleSmallHitCounts[tree] or 0
-                                if count < neededSmall then
+                                if count < CIRCLE_SMALL_MAX_TOTAL_HITS then
                                     return idx
                                 end
                             else
@@ -981,18 +1083,18 @@ return function(C, R, UI)
                     local tool = getPreferredAxe()
                     if not tool then return end
                     ensureEquipped(tool)
-                    local needed = AXE_HITS[tool.Name] or 13
+
                     local count = circleSmallHitCounts[tree] or 0
+                    if count >= CIRCLE_SMALL_MAX_TOTAL_HITS then
+                        circleRemoveAt(circleIndex)
+                        return
+                    end
+
                     local hitId = nextPerTreeHitId(tree)
                     local impactCF = impactCFForTree(tree, hitPart)
                     HitTreeRemote(tree, tool, hitId, impactCF)
-                    count += 1
-                    circleSmallHitCounts[tree] = count
-                    if count >= needed then
-                        circleRemoveAt(circleIndex)
-                    else
-                        circleAdvanceIndex()
-                    end
+                    circleSmallHitCounts[tree] = count + 1
+                    circleAdvanceIndex()
                     return
                 end
 
@@ -1056,6 +1158,10 @@ return function(C, R, UI)
             stopCircleFarm()
             stopSmallFarm()
             stopBigFarm()
+            if descAddedConn then pcall(function() descAddedConn:Disconnect() end) descAddedConn = nil end
+            if descRemovingConn then pcall(function() descRemovingConn:Disconnect() end) descRemovingConn = nil end
+            HitQueue = {}
+            hitBusy = false
         end
 
         C.Farm._cleanup = cleanupAll
