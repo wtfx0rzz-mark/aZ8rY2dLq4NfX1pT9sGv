@@ -991,19 +991,48 @@ return function(C, R, UI)
         return (os.clock() - t) <= windowSec
     end
 
-    local function captureAllNear(pos, rad, maxCount)
+    local function processAllNear(pos, rad, maxCount)
         local cands = getCandidatesNear(pos, rad)
-        local cap = 0
+        local didAny = 0
         for i=1,#cands do
             local inst = cands[i]
-            if inst and inst.Parent and (not isChestInst(inst)) and (not CapturedSet[inst]) then
-                if captureInst(inst) then
-                    cap += 1
-                    if maxCount and cap >= maxCount then break end
+            if inst and inst.Parent and (not isChestInst(inst)) then
+                local n = inst.Name
+                local did = false
+
+                if n == "Thorn Body" then
+                    if (not hasThornBodyOwned()) then
+                        pcall(function() takeItemToInventory(inst) end)
+                        task.wait(0.05)
+                    end
+                    pcall(tryEquipThornBody)
+                    did = true
+                elseif ALWAYS_TAKE_NAMES[n] then
+                    did = takeItemToInventory(inst) and true or false
+                else
+                    local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
+                    if wantsTake and (not hasSpecialInInventory(n)) then
+                        did = takeItemToInventory(inst) and true or false
+                    end
+                end
+
+                if (not did) and (not CapturedSet[inst]) then
+                    if captureInst(inst) then
+                        did = true
+                    end
+                end
+
+                if did then
+                    didAny += 1
+                    if maxCount and didAny >= maxCount then break end
                 end
             end
         end
-        return cap
+        return didAny
+    end
+
+    local function captureAllNear(pos, rad, maxCount)
+        return processAllNear(pos, rad, maxCount)
     end
 
     local function confirmAndCaptureDropsForChest(chest, preSet)
@@ -1048,17 +1077,32 @@ return function(C, R, UI)
 
         if opened and chest and chest.Parent then
             local tEnd = os.clock() + captureWindow
+            local quietStreak = 0
+            local QUIET_POLLS_TO_MOVE_ON = 3
+
             while alive and chest and chest.Parent and os.clock() <= tEnd do
                 local pos = modelWorldPos(chest)
+                local cap = 0
                 if pos then
-                    local cap = captureAllNear(pos, captureRadius)
+                    cap = processAllNear(pos, captureRadius)
                     if cap > 0 then gotAny = true end
                 end
+
+                if cap > 0 then
+                    quietStreak = 0
+                else
+                    quietStreak += 1
+                    if quietStreak >= QUIET_POLLS_TO_MOVE_ON then
+                        break
+                    end
+                end
+
                 task.wait(CHEST_COLLECT_POLL_INTERVAL)
             end
+
             local pos = modelWorldPos(chest)
             if pos then
-                local cap = captureAllNear(pos, captureRadius)
+                local cap = processAllNear(pos, captureRadius)
                 if cap > 0 then gotAny = true end
             end
             task.wait(0.05)
@@ -1086,7 +1130,7 @@ return function(C, R, UI)
 
         local prompt = findChestPromptPreferred(chest)
         if not prompt then
-            local cap = captureAllNear(pos, tonumber(C.State.ChestCaptureRadius) or 22.0)
+            local cap = processAllNear(pos, tonumber(C.State.ChestCaptureRadius) or 22.0)
             if cap > 0 then
                 pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
                 return true, true
@@ -1305,7 +1349,7 @@ return function(C, R, UI)
             while alive and grabOn do
                 local root = hrp()
                 if root then
-                    captureAllNear(root.Position, NEARBY_GRAB_RADIUS_STUDS, NEARBY_GRAB_MAX_PER_TICK)
+                    processAllNear(root.Position, NEARBY_GRAB_RADIUS_STUDS, NEARBY_GRAB_MAX_PER_TICK)
                 end
                 task.wait(NEARBY_GRAB_INTERVAL_SECONDS)
             end
