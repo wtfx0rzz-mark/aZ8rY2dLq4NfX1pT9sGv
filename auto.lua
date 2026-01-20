@@ -594,7 +594,9 @@ return function(C, R, UI)
         local skipNightSavedCF = nil
 
         local function fireSkipNightOnce()
-            doSkipNightSequence(1.0)
+            pcall(function()
+                doSkipNightSequence(1.0)
+            end)
         end
 
         local function enableSkipNightTimer()
@@ -607,13 +609,17 @@ return function(C, R, UI)
                 skipNightTimerThread = nil
             end
             skipNightTimerThread = task.spawn(function()
+                local nextAt = os.clock()
                 while skipNightTimerOn do
-                    local t0 = os.clock()
-                    while skipNightTimerOn and (os.clock() - t0) < SKIP_NIGHT_TIMER_SECONDS do
-                        task.wait(0.25)
+                    local now = os.clock()
+                    if now >= nextAt then
+                        fireSkipNightOnce()
+                        nextAt = nextAt + SKIP_NIGHT_TIMER_SECONDS
+                        if os.clock() >= nextAt + SKIP_NIGHT_TIMER_SECONDS then
+                            nextAt = os.clock() + SKIP_NIGHT_TIMER_SECONDS
+                        end
                     end
-                    if not skipNightTimerOn then break end
-                    fireSkipNightOnce()
+                    task.wait(0.25)
                 end
             end)
         end
