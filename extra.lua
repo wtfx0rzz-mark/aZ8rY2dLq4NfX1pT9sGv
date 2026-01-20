@@ -491,10 +491,17 @@ return function(C, R, UI)
                 return
             end
 
+            -- Let streaming/physics settle so the server sees our new position before we fire
+            for _ = 1, 4 do Run.Heartbeat:Wait() end
+            task.wait(0.12)
+
             local ev = getRemote("RequestActivateNightSkipMachine")
             if (ev and ev:IsA("RemoteEvent")) then
                 pcall(function() ev:FireServer(machine) end)
             end
+
+            -- Give the server a brief moment to process activation before we leave
+            task.wait(0.20)
 
             teleportWithDive(savedCF)
         end
