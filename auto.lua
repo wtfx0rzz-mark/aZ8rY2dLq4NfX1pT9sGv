@@ -442,16 +442,58 @@ return function(C, R, UI)
             if cf then teleportWithDive(cf) end
         end)
 
-        skipNightBtn.MouseButton1Click:Connect(function()
-            local ev = getRemote("RequestActivateNightSkipMachine")
-            if not (ev and ev:IsA("RemoteEvent")) then return end
+        local function resolveNightSkipMachineModel()
             local structures = WS:FindFirstChild("Structures")
-            if not structures then return end
+            if not structures then return nil end
             local machine = structures:FindFirstChild("Temporal Accelerometer")
-            if not (machine and machine:IsA("Model")) then return end
-            pcall(function()
-                ev:FireServer(machine)
-            end)
+            if machine and machine:IsA("Model") then return machine end
+            return nil
+        end
+
+        local function nightSkipTeleportCF(machine)
+            machine = machine or resolveNightSkipMachineModel()
+            if not machine then return nil end
+            local mp = mainPart(machine) or machine.PrimaryPart
+            if not mp then
+                local ok, cf = pcall(function() return machine:GetPivot() end)
+                return ok and cf or nil
+            end
+            local look = mp.CFrame.LookVector
+            local desired = mp.Position - look * 8
+            local g = groundBelow(desired)
+            local standPos = Vector3.new(desired.X, g.Y + 3.0, desired.Z)
+            return CFrame.new(standPos, mp.Position)
+        end
+
+        local function doSkipNightSequence(preWaitSeconds)
+            local root = hrp(); if not root then return end
+            local returnCF = root.CFrame
+
+            local machine = resolveNightSkipMachineModel()
+            if not machine then return end
+
+            local destCF = nightSkipTeleportCF(machine)
+            if not destCF then return end
+
+            teleportSticky(destCF, true)
+
+            if preWaitSeconds and preWaitSeconds > 0 then
+                task.wait(preWaitSeconds)
+            end
+
+            local ev = getRemote("RequestActivateNightSkipMachine")
+            if ev and ev:IsA("RemoteEvent") then
+                pcall(function()
+                    ev:FireServer(machine)
+                end)
+            end
+
+            task.wait(1.0)
+            teleportSticky(returnCF, true)
+        end
+
+        skipNightBtn.MouseButton1Click:Connect(function()
+            doSkipNightSequence(0)
         end)
 
         local AHEAD_DIST, RAY_DEPTH = 3, 2000
@@ -552,26 +594,12 @@ return function(C, R, UI)
         local skipNightSavedCF = nil
 
         local function fireSkipNightOnce()
-            if skipNightSavedCF then
-                teleportWithDive(skipNightSavedCF)
-            end
-
-            local ev = getRemote("RequestActivateNightSkipMachine")
-            if not (ev and ev:IsA("RemoteEvent")) then return end
-            local structures = WS:FindFirstChild("Structures")
-            if not structures then return end
-            local machine = structures:FindFirstChild("Temporal Accelerometer")
-            if not (machine and machine:IsA("Model")) then return end
-            pcall(function()
-                ev:FireServer(machine)
-            end)
+            doSkipNightSequence(1.0)
         end
 
         local function enableSkipNightTimer()
             if skipNightTimerOn then return end
-
-            local root = hrp()
-            skipNightSavedCF = root and root.CFrame or nil
+            skipNightSavedCF = nil
 
             skipNightTimerOn = true
             if skipNightTimerThread then
@@ -580,11 +608,12 @@ return function(C, R, UI)
             end
             skipNightTimerThread = task.spawn(function()
                 while skipNightTimerOn do
-                    fireSkipNightOnce()
                     local t0 = os.clock()
                     while skipNightTimerOn and (os.clock() - t0) < SKIP_NIGHT_TIMER_SECONDS do
                         task.wait(0.25)
                     end
+                    if not skipNightTimerOn then break end
+                    fireSkipNightOnce()
                 end
             end)
         end
