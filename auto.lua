@@ -464,34 +464,293 @@ return function(C, R, UI)
             return CFrame.new(standPos, mp.Position)
         end
 
-        local function doSkipNightSequence(preWaitSeconds)
-            local root = hrp(); if not root then return end
-            local returnCF = root.CFrame
+        -- =========================
+        -- Skip Night (Temporal Accelerometer) sequence:
+        -- 1) TP to accel
+        -- 2) wait 1s
+        -- 3) Pick Up Nearest (expects accel is nearest)
+        -- 4) wait 1s
+        -- 5) Place Temporal Accelerometer Blueprint (snapped to original accel placement)
+        -- 6) wait 1s
+        -- 7) Fire Accel Remote
+        -- 8) wait 1s
+        -- 9) TP back to start
+        -- =========================
 
-            local machine = resolveNightSkipMachineModel()
-            if not machine then return end
+        local skipNightBusy = false
 
-            local destCF = nightSkipTeleportCF(machine)
-            if not destCF then return end
-
-            teleportSticky(destCF, true)
-
-            if preWaitSeconds and preWaitSeconds > 0 then
-                task.wait(preWaitSeconds)
+        local function findRemoteAny(name)
+            local re = RS:FindFirstChild("RemoteEvents")
+            if re then
+                local r = re:FindFirstChild(name)
+                if r then return r end
             end
-
-            local ev = getRemote("RequestActivateNightSkipMachine")
-            if ev and ev:IsA("RemoteEvent") then
-                pcall(function()
-                    ev:FireServer(machine)
-                end)
+            local rf = RS:FindFirstChild("RemoteFunctions")
+            if rf then
+                local r = rf:FindFirstChild(name)
+                if r then return r end
             end
-
-            task.wait(1.0)
-            teleportSticky(returnCF, true)
+            return RS:FindFirstChild(name, true)
         end
 
-        -- Unified: "Edge Button: Skip Night" exact sequence (used by both edge click + timer)
+        local function remoteCall(remote, ...)
+            if not remote then return nil, false end
+            if remote:IsA("RemoteFunction") then
+                local ok, ret = pcall(function() return remote:InvokeServer(...) end)
+                return ret, ok
+            elseif remote:IsA("RemoteEvent") then
+                local ok = pcall(function() remote:FireServer(...) end)
+                return true, ok
+            end
+            return nil, false
+        end
+
+        local function structuresFolder()
+            return WS:FindFirstChild("Structures")
+        end
+
+        local function modelPos(m)
+            if not m then return nil end
+            if m.PrimaryPart then return m.PrimaryPart.Position end
+            local ok, cf = pcall(function() return m:GetPivot() end)
+            if ok and cf then return cf.Position end
+            local bp = m:FindFirstChildWhichIsA("BasePart", true)
+            return bp and bp.Position or nil
+        end
+
+        local function nearestStructure()
+            local root = hrp()
+            local folder = structuresFolder()
+            if not (root and folder) then return nil, nil end
+            local best, bestD = nil, math.huge
+            for _, m in ipairs(folder:GetChildren()) do
+                if m:IsA("Model") and m.Parent then
+                    local p = modelPos(m)
+                    if p then
+                        local d = (p - root.Position).Magnitude
+                        if d < bestD then bestD, best = d, m end
+                    end
+                end
+            end
+            if not best then return nil, nil end
+            return best, bestD
+        end
+
+        local function isBlueprintName(n)
+            return type(n) == "string" and n:sub(-9) == "Blueprint"
+        end
+
+        local function resolveTemporalAccelBlueprint()
+            local inv = lp:FindFirstChild("Inventory")
+            if not inv then return nil end
+            local exact = inv:FindFirstChild("Temporal Accelerometer Blueprint")
+            if exact and exact:IsA("Model") then return exact end
+            for _, ch in ipairs(inv:GetChildren()) do
+                if ch:IsA("Model") then
+                    local n = (ch.Name or "")
+                    local nl = n:lower()
+                    if isBlueprintName(n) and nl:find("temporal", 1, true) and nl:find("acceler", 1, true) then
+                        return ch
+                    end
+                end
+            end
+            return nil
+        end
+
+        local cam = WS.CurrentCamera
+        WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function() cam = WS.CurrentCamera end)
+
+        local function yawOnly(pos, lookVec)
+            local lv = Vector3.new(lookVec.X, 0, lookVec.Z)
+            if lv.Magnitude < 1e-6 then
+                lv = Vector3.new(0, 0, -1)
+            else
+                lv = lv.Unit
+            end
+            return CFrame.lookAt(pos, pos + lv, Vector3.new(0, 1, 0))
+        end
+
+        local function groundYAtSnap(xz, fallbackY, excludeModel)
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            local ex = { lp.Character }
+            if cam then table.insert(ex, cam) end
+            if excludeModel then table.insert(ex, excludeModel) end
+            params.FilterDescendantsInstances = ex
+            params.IgnoreWater = false
+
+            local origin = xz + Vector3.new(0, 140, 0)
+            local dir = Vector3.new(0, -900, 0)
+            local hit = WS:Raycast(origin, dir, params)
+            local y = hit and hit.Position.Y or (fallbackY or xz.Y)
+            if fallbackY and math.abs(y - fallbackY) > 35 then
+                y = fallbackY
+            end
+            return y
+        end
+
+        local function placementFromExistingModel(m)
+            if not (m and m.Parent) then return nil end
+            local ok, pivot = pcall(function() return m:GetPivot() end)
+            if not ok or not pivot then return nil end
+
+            local basePos = pivot.Position
+            local gy = groundYAtSnap(basePos, basePos.Y, m)
+            local pos = Vector3.new(basePos.X, gy, basePos.Z)
+
+            local yOff = basePos.Y - gy
+            local fwd = pivot.LookVector
+            local cf = yawOnly(Vector3.new(pos.X, pos.Y + yOff, pos.Z), fwd)
+            local placement = { Valid = true, Position = pos, CFrame = cf }
+            local rot = (cf - cf.Position)
+
+            return placement, rot
+        end
+
+        local function findPickUpRemote()
+            local re = RS:FindFirstChild("RemoteEvents")
+            if re then
+                local r = re:FindFirstChild("RequestPickUpStructure")
+                if r then return r end
+            end
+            local rf = RS:FindFirstChild("RemoteFunctions")
+            if rf then
+                local r = rf:FindFirstChild("RequestPickUpStructure")
+                if r then return r end
+            end
+            return RS:FindFirstChild("RequestPickUpStructure", true)
+        end
+
+        local function findPlaceRemote()
+            local re = RS:FindFirstChild("RemoteEvents")
+            if re then
+                local r = re:FindFirstChild("RequestPlaceStructure")
+                if r then return r end
+            end
+            local rf = RS:FindFirstChild("RemoteFunctions")
+            if rf then
+                local r = rf:FindFirstChild("RequestPlaceStructure")
+                if r then return r end
+            end
+            return RS:FindFirstChild("RequestPlaceStructure", true)
+        end
+
+        local function findAccelRemote()
+            local re = RS:FindFirstChild("RemoteEvents")
+            if re then
+                local r = re:FindFirstChild("RequestActivateNightSkipMachine")
+                if r then return r end
+            end
+            local rf = RS:FindFirstChild("RemoteFunctions")
+            if rf then
+                local r = rf:FindFirstChild("RequestActivateNightSkipMachine")
+                if r then return r end
+            end
+            return RS:FindFirstChild("RequestActivateNightSkipMachine", true)
+        end
+
+        local function waitForAccelModel(timeout)
+            local t0 = os.clock()
+            while os.clock() - t0 < (timeout or 3.0) do
+                local m = resolveNightSkipMachineModel()
+                if m and m.Parent then return m end
+                task.wait(0.1)
+            end
+            return resolveNightSkipMachineModel()
+        end
+
+        local function doPickUpNearest()
+            local target = nil
+            local dist = nil
+            target, dist = nearestStructure()
+            if not target then
+                target = resolveNightSkipMachineModel()
+            end
+            if not target then return false end
+            local r = findPickUpRemote()
+            if not r then return false end
+            local _, ok = remoteCall(r, target)
+            return ok and true or false
+        end
+
+        local function doPlaceTemporalAccel(placement, rot)
+            local bp = resolveTemporalAccelBlueprint()
+            if not bp then return false end
+
+            local place = findPlaceRemote()
+            if not place then return false end
+
+            local ret, ok = remoteCall(place, bp, placement, rot, nil)
+            if ok then
+                if ret == nil then
+                    remoteCall(place, bp, placement, rot, true)
+                end
+                return true
+            end
+            return false
+        end
+
+        local function doFireAccelRemote()
+            local m = waitForAccelModel(3.0)
+            if not m then return false end
+            local r = findAccelRemote()
+            if not r then return false end
+            local _, ok = remoteCall(r, m)
+            return ok and true or false
+        end
+
+        local function doSkipNightSequence(preWaitSeconds)
+            if skipNightBusy then return end
+            skipNightBusy = true
+
+            local root = hrp()
+            local returnCF = root and root.CFrame or nil
+
+            local function safeReturn()
+                if returnCF then
+                    pcall(function()
+                        teleportWithDive(returnCF)
+                    end)
+                end
+            end
+
+            local ok = pcall(function()
+                local machine = resolveNightSkipMachineModel()
+                if not machine then return end
+
+                local destCF = nightSkipTeleportCF(machine)
+                if not destCF then return end
+
+                teleportWithDive(destCF)
+                task.wait(1.0)
+
+                if preWaitSeconds and preWaitSeconds > 0 then
+                    task.wait(preWaitSeconds)
+                end
+
+                local placement, rot = placementFromExistingModel(machine)
+
+                doPickUpNearest()
+                task.wait(1.0)
+
+                if placement and rot then
+                    doPlaceTemporalAccel(placement, rot)
+                else
+                    doPlaceTemporalAccel({ Valid = true, Position = machine:GetPivot().Position, CFrame = machine:GetPivot() }, (machine:GetPivot() - machine:GetPivot().Position))
+                end
+                task.wait(1.0)
+
+                doFireAccelRemote()
+                task.wait(1.0)
+            end)
+
+            safeReturn()
+            skipNightBusy = false
+            if not ok then
+                -- swallow
+            end
+        end
+
         local function runSkipNightEdgeSequence()
             doSkipNightSequence(0)
         end
@@ -612,7 +871,7 @@ return function(C, R, UI)
                 skipNightTimerThread = nil
             end
             skipNightTimerThread = task.spawn(function()
-                fireSkipNightOnce() -- one time immediately on enable
+                fireSkipNightOnce()
                 local nextAt = os.clock() + SKIP_NIGHT_TIMER_SECONDS
                 while skipNightTimerOn do
                     local now = os.clock()
@@ -1073,8 +1332,6 @@ return function(C, R, UI)
             end
         end
         tab:Toggle({ Title = "Disable Shadows", Value = false, Callback = function(state) if state then enableNoShadows() else disableNoShadows() end end })
-        local cam = WS.CurrentCamera
-        WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function() cam = WS.CurrentCamera end)
 
         local function isBigTreeName(n)
             if not n then return false end
@@ -1420,6 +1677,7 @@ return function(C, R, UI)
                 end
             end
         })
+
         do
             local nextChestBtn = stack:FindFirstChild("NextChestEdge") or (function()
                 local b = Instance.new("TextButton")
