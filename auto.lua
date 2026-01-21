@@ -10,6 +10,17 @@ return function(C, R, UI)
         local Lighting = (C and C.Services and C.Services.Lighting) or game:GetService("Lighting")
         local VIM      = game:GetService("VirtualInputManager")
 
+        local function adoptUgcRoot()
+            local ugc = game:FindFirstChild("Ugc")
+            if not ugc then return end
+            local rs2 = ugc:FindFirstChild("ReplicatedStorage")
+            local ws2 = ugc:FindFirstChild("Workspace")
+            if rs2 and ws2 and rs2.ClassName == "ReplicatedStorage" and ws2.ClassName == "Workspace" then
+                RS, WS = rs2, ws2
+            end
+        end
+        adoptUgcRoot()
+
         local lp = Players.LocalPlayer
         local Tabs = (UI and UI.Tabs) or {}
         local tab  = Tabs.Auto
@@ -522,13 +533,17 @@ return function(C, R, UI)
 
         local function invokePlace(placeRF, bpModel, placement, rotOnly, a4)
             if a4 == nil then
-                return pcall(function()
+                local ok, ret = pcall(function()
                     return placeRF:InvokeServer(bpModel, placement, rotOnly)
                 end)
+                if ok and ret ~= false then return true, ret end
+                return false, ret
             end
-            return pcall(function()
+            local ok, ret = pcall(function()
                 return placeRF:InvokeServer(bpModel, placement, rotOnly, a4)
             end)
+            if ok and ret ~= false then return true, ret end
+            return false, ret
         end
 
         local skipBusy = false
@@ -536,152 +551,54 @@ return function(C, R, UI)
             if skipBusy then return end
             skipBusy = true
 
-            local root = hrp()
-            if not root then skipBusy = false return end
-            local returnCF = root.CFrame
+            local function body()
+                local root = hrp()
+                if not root then return end
+                local returnCF = root.CFrame
 
-            local machine = resolveNightSkipMachineModel()
-            if not machine then skipBusy = false return end
+                local machine = resolveNightSkipMachineModel()
+                if not machine then return end
 
-            local destCF = nightSkipTeleportCF(machine)
-            if not destCF then skipBusy = false return end
+                local destCF = nightSkipTeleportCF(machine)
+                if not destCF then return end
 
-            teleportSticky(destCF, true)
+                teleportSticky(destCF, true)
 
-            local startItem = getEquippedInvModel()
-            local hammer = findInvModel("Hammer")
-            if hammer then equipInvModel(hammer) end
+                local startItem = getEquippedInvModel()
+                local hammer = findInvModel("Hammer")
+                if hammer then equipInvModel(hammer) end
 
-            task.wait(1.0)
-
-            local pivotCF = nil
-            do
-                local ok, cf = pcall(function() return machine:GetPivot() end)
-                if ok then
-                    pivotCF = cf
-                else
-                    local mp = mainPart(machine)
-                    pivotCF = mp and mp.CFrame or destCF
-                end
-            end
-
-            local pickupRF = getRemote("RequestPickUpStructure")
-            local placeRF  = getRemote("RequestPlaceStructure")
-
-            if not (pickupRF and pickupRF:IsA("RemoteFunction") and placeRF and placeRF:IsA("RemoteFunction")) then
-                local ev = getRemote("RequestActivateNightSkipMachine")
-                if ev and ev:IsA("RemoteEvent") then pcall(function() ev:FireServer(machine) end) end
                 task.wait(1.0)
-                if startItem and startItem.Parent then equipInvModel(startItem) end
-                teleportSticky(returnCF, true)
-                skipBusy = false
-                return
-            end
 
-            local okPickup = pcall(function()
-                return pickupRF:InvokeServer(machine)
-            end)
-
-            if okPickup then
-                local tempTA = waitForTempTA(2.5)
-                if tempTA then
-                    local p = pivotCF.Position
-                    local g = groundBelow(p)
-                    local groundY = g.Y
-
-                    local look = pivotCF.LookVector
-                    local flatLook = Vector3.new(look.X, 0, look.Z)
-                    if flatLook.Magnitude < 1e-6 then flatLook = Vector3.new(0, 0, -1) end
-                    flatLook = flatLook.Unit
-
-                    local yOff = 0
-                    local placePos = Vector3.new(p.X, groundY, p.Z)
-                    local placeCF = CFrame.lookAt(
-                        Vector3.new(p.X, groundY + yOff, p.Z),
-                        Vector3.new(p.X, groundY + yOff, p.Z) + flatLook
-                    )
-                    local placement = { Valid = true, Position = placePos, CFrame = placeCF }
-                    local rotOnly = (placeCF - placeCF.Position)
-
-                    invokePlace(placeRF, tempTA, placement, rotOnly, nil)
-                    local placedModel = waitForTAInStructures(1.8)
-
-                    if not placedModel then
-                        tempTA = resolveTempAccelerometer() or tempTA
-                        invokePlace(placeRF, tempTA, placement, rotOnly, true)
-                        waitForTAInStructures(2.2)
+                local pivotCF = nil
+                do
+                    local ok, cf = pcall(function() return machine:GetPivot() end)
+                    if ok then
+                        pivotCF = cf
+                    else
+                        local mp = mainPart(machine)
+                        pivotCF = mp and mp.CFrame or destCF
                     end
                 end
-            end
 
-            local machine2 = resolveNightSkipMachineModel() or machine
+                local pickupRF = getRemote("RequestPickUpStructure")
+                local placeRF  = getRemote("RequestPlaceStructure")
 
-            if preWaitSeconds and preWaitSeconds > 0 then
-                task.wait(preWaitSeconds)
-            end
-
-            local ev = getRemote("RequestActivateNightSkipMachine")
-            if ev and ev:IsA("RemoteEvent") then
-                pcall(function()
-                    ev:FireServer(machine2)
-                end)
-            end
-
-            task.wait(1.0)
-
-            if startItem and startItem.Parent then
-                equipInvModel(startItem)
-            end
-
-            teleportSticky(returnCF, true)
-            skipBusy = false
-        end
-
-            if skipBusy then return end
-            skipBusy = true
-
-            local root = hrp(); if not root then skipBusy = false return end
-            local returnCF = root.CFrame
-
-            local machine = resolveNightSkipMachineModel()
-            if not machine then skipBusy = false return end
-
-            local destCF = nightSkipTeleportCF(machine)
-            if not destCF then skipBusy = false return end
-
-            teleportSticky(destCF, true)
-
-            local startItem = getEquippedInvModel()
-            local hammer = findInvModel("Hammer")
-            if hammer then
-                equipInvModel(hammer)
-            end
-
-            task.wait(1.0)
-
-            local pivotCF = nil
-            do
-                local ok, cf = pcall(function() return machine:GetPivot() end)
-                if ok then
-                    pivotCF = cf
-                else
-                    local mp = mainPart(machine)
-                    pivotCF = mp and mp.CFrame or destCF
+                if not (pickupRF and pickupRF:IsA("RemoteFunction") and placeRF and placeRF:IsA("RemoteFunction")) then
+                    local ev = getRemote("RequestActivateNightSkipMachine")
+                    if ev and ev:IsA("RemoteEvent") then pcall(function() ev:FireServer(machine) end) end
+                    task.wait(1.0)
+                    if startItem and startItem.Parent then equipInvModel(startItem) end
+                    teleportSticky(returnCF, true)
+                    return
                 end
-            end
 
-            local pickupRF = getRemote("RequestPickUpStructure")
-            local placeRF  = getRemote("RequestPlaceStructure")
-
-            local didReset = false
-            if pickupRF and pickupRF:IsA("RemoteFunction") and placeRF and placeRF:IsA("RemoteFunction") then
                 local okPickup = pcall(function()
                     return pickupRF:InvokeServer(machine)
                 end)
 
                 if okPickup then
-                    task.wait(0.15)
-                    local tempTA = resolveTempAccelerometer()
+                    local tempTA = waitForTempTA(2.5)
                     if tempTA then
                         local p = pivotCF.Position
                         local g = groundBelow(p)
@@ -701,39 +618,45 @@ return function(C, R, UI)
                         local placement = { Valid = true, Position = placePos, CFrame = placeCF }
                         local rotOnly = (placeCF - placeCF.Position)
 
-                        local okPlace = pcall(function()
-                            return placeRF:InvokeServer(tempTA, placement, rotOnly)
-                        end)
+                        local ok3 = invokePlace(placeRF, tempTA, placement, rotOnly, nil)
+                        local placedModel = waitForTAInStructures(ok3 and 1.8 or 0.6)
 
-                        if okPlace then
-                            didReset = true
-                            task.wait(0.35)
+                        if not placedModel then
+                            tempTA = resolveTempAccelerometer() or tempTA
+                            invokePlace(placeRF, tempTA, placement, rotOnly, true)
+                            waitForTAInStructures(2.2)
                         end
+
+                        task.wait(0.35)
                     end
                 end
+
+                local machine2 = resolveNightSkipMachineModel() or machine
+
+                if preWaitSeconds and preWaitSeconds > 0 then
+                    task.wait(preWaitSeconds)
+                end
+
+                local ev = getRemote("RequestActivateNightSkipMachine")
+                if ev and ev:IsA("RemoteEvent") then
+                    pcall(function()
+                        ev:FireServer(machine2)
+                    end)
+                end
+
+                task.wait(1.0)
+
+                if startItem and startItem.Parent then
+                    equipInvModel(startItem)
+                end
+
+                teleportSticky(returnCF, true)
             end
 
-            local machine2 = resolveNightSkipMachineModel() or machine
-
-            if preWaitSeconds and preWaitSeconds > 0 then
-                task.wait(preWaitSeconds)
+            local ok, err = pcall(body)
+            if not ok then
+                warn("[Auto] SkipNight error: " .. tostring(err))
             end
-
-            local ev = getRemote("RequestActivateNightSkipMachine")
-            if ev and ev:IsA("RemoteEvent") then
-                pcall(function()
-                    ev:FireServer(machine2)
-                end)
-            end
-
-            task.wait(1.0)
-
-            if startItem and startItem.Parent then
-                equipInvModel(startItem)
-            end
-
-            teleportSticky(returnCF, true)
-
             skipBusy = false
         end
 
@@ -1399,11 +1322,10 @@ return function(C, R, UI)
                 end
                 cur = cur.Parent
             end
-            return nil
         end
         local function findMossyOrStack(inst)
-            local stack = findCoinCarrier(inst)
-            if stack then return stack end
+            local stack2 = findCoinCarrier(inst)
+            if stack2 then return stack2 end
             local cur = inst
             for _ = 1, 8 do
                 if not cur then break end
@@ -1438,9 +1360,9 @@ return function(C, R, UI)
                 if ok then return true end
             end
             do
-                local stack = findCoinCarrier(targetModel)
-                if stack then
-                    local s, r = pcall(function() return remote:InvokeServer(stack) end)
+                local stack2 = findCoinCarrier(targetModel)
+                if stack2 then
+                    local s, r = pcall(function() return remote:InvokeServer(stack2) end)
                     ok = s and (r ~= nil or true)
                     if ok then return true end
                 end
@@ -2060,6 +1982,7 @@ return function(C, R, UI)
             end
         end)
     end
+
     local ok, err = pcall(run)
     if not ok then warn("[Auto] module error: " .. tostring(err)) end
 end
