@@ -3,23 +3,28 @@
 return function(C, R, UI)
     local function run()
         local Players  = (C and C.Services and C.Services.Players)  or game:GetService("Players")
-        local RS       = (C and C.Services and C.Services.RS)       or game:GetService("ReplicatedStorage")
-        local WS       = (C and C.Services and C.Services.WS)       or game:GetService("Workspace")
+        local RSSvc    = game:GetService("ReplicatedStorage")
+        local WSSvc    = game:GetService("Workspace")
+        local RS       = (C and C.Services and C.Services.RS)       or RSSvc
+        local WS       = (C and C.Services and C.Services.WS)       or WSSvc
         local PPS      = game:GetService("ProximityPromptService")
         local Run      = (C and C.Services and C.Services.Run)      or game:GetService("RunService")
         local Lighting = (C and C.Services and C.Services.Lighting) or game:GetService("Lighting")
         local VIM      = game:GetService("VirtualInputManager")
 
-        local function adoptUgcRoot()
+        local function getRoot()
             local ugc = game:FindFirstChild("Ugc")
-            if not ugc then return end
-            local rs2 = ugc:FindFirstChild("ReplicatedStorage")
-            local ws2 = ugc:FindFirstChild("Workspace")
-            if rs2 and ws2 and rs2.ClassName == "ReplicatedStorage" and ws2.ClassName == "Workspace" then
-                RS, WS = rs2, ws2
+            if ugc then
+                local rs2 = ugc:FindFirstChild("ReplicatedStorage")
+                local ws2 = ugc:FindFirstChild("Workspace")
+                if rs2 and ws2 then
+                    return rs2, ws2
+                end
             end
+            return RS, WS
         end
-        adoptUgcRoot()
+
+        RS, WS = getRoot()
 
         local lp = Players.LocalPlayer
         local Tabs = (UI and UI.Tabs) or {}
@@ -68,7 +73,7 @@ return function(C, R, UI)
         local STREAM_TIMEOUT    = 6.0
         local function requestStreamAt(pos, timeout)
             local p = typeof(pos) == "CFrame" and pos.Position or pos
-            local ok = pcall(function() WS:RequestStreamAroundAsync(p, timeout or STREAM_TIMEOUT) end)
+            local ok = pcall(function() WSSvc:RequestStreamAroundAsync(p, timeout or STREAM_TIMEOUT) end)
             return ok
         end
         local function prefetchRing(cf, r)
@@ -171,23 +176,16 @@ return function(C, R, UI)
             end)
         end
 
+        -- MATCHES standalone TA script: cast from +300 down -2000, exclude only character, ignore water.
         local function groundBelow(pos)
             local params = RaycastParams.new()
             params.FilterType = Enum.RaycastFilterType.Exclude
-            local ex = { lp.Character }
-            local map = WS:FindFirstChild("Map")
-            if map then
-                local fol = map:FindFirstChild("Foliage")
-                if fol then table.insert(ex, fol) end
-            end
-            local items = WS:FindFirstChild("Items");      if items then table.insert(ex, items) end
-            local chars = WS:FindFirstChild("Characters"); if chars then table.insert(ex, chars) end
-            params.FilterDescendantsInstances = ex
-            local start = pos + Vector3.new(0, 5, 0)
-            local hit = WS:Raycast(start, Vector3.new(0, -1000, 0), params)
+            params.IgnoreWater = true
+            params.FilterDescendantsInstances = { lp.Character }
+            local start = pos + Vector3.new(0, 300, 0)
+            local hit = WS:Raycast(start, Vector3.new(0, -2000, 0), params)
             if hit then return hit.Position end
-            hit = WS:Raycast(pos + Vector3.new(0, 200, 0), Vector3.new(0, -1000, 0), params)
-            return (hit and hit.Position) or pos
+            return pos
         end
 
         local function teleportSticky(cf, dropMode)
@@ -409,7 +407,6 @@ return function(C, R, UI)
         local plantBtn = makeEdgeBtn("PlantEdge",   "Plant",    3)
         local lostBtn  = makeEdgeBtn("LostEdge",    "Lost Child", 4)
         local campBtn  = makeEdgeBtn("CampEdge",    "Campfire", 5)
-
         local skipNightBtn = makeEdgeBtn("SkipNightEdge", "Reset+Skip Night", 6)
 
         local showPhaseEdge, showPlantEdge = false, false
@@ -511,94 +508,53 @@ return function(C, R, UI)
             return (m and m:IsA("Model")) and m or nil
         end
 
-        local function waitForTempTA(timeout)
-            local t0 = os.clock()
-            while os.clock() - t0 < (timeout or 2.5) do
-                local m = resolveTempAccelerometer()
-                if m then return m end
-                Run.Heartbeat:Wait()
-            end
-            return nil
-        end
-
-        local function waitForTAInStructures(timeout)
-            local t0 = os.clock()
-            while os.clock() - t0 < (timeout or 2.5) do
-                local m = resolveNightSkipMachineModel()
-                if m and m:IsA("Model") then return m end
-                Run.Heartbeat:Wait()
-            end
-            return nil
-        end
-
-        local function invokePlace(placeRF, bpModel, placement, rotOnly, a4)
-            if a4 == nil then
-                local ok, ret = pcall(function()
-                    return placeRF:InvokeServer(bpModel, placement, rotOnly)
-                end)
-                if ok and ret ~= false then return true, ret end
-                return false, ret
-            end
-            local ok, ret = pcall(function()
-                return placeRF:InvokeServer(bpModel, placement, rotOnly, a4)
-            end)
-            if ok and ret ~= false then return true, ret end
-            return false, ret
-        end
-
         local skipBusy = false
         local function doSkipNightSequence(preWaitSeconds)
             if skipBusy then return end
             skipBusy = true
 
-            local function body()
-                local root = hrp()
-                if not root then return end
-                local returnCF = root.CFrame
+            local root = hrp(); if not root then skipBusy = false return end
+            local returnCF = root.CFrame
 
-                local machine = resolveNightSkipMachineModel()
-                if not machine then return end
+            local machine = resolveNightSkipMachineModel()
+            if not machine then skipBusy = false return end
 
-                local destCF = nightSkipTeleportCF(machine)
-                if not destCF then return end
+            local destCF = nightSkipTeleportCF(machine)
+            if not destCF then skipBusy = false return end
 
-                teleportSticky(destCF, true)
+            teleportSticky(destCF, true)
 
-                local startItem = getEquippedInvModel()
-                local hammer = findInvModel("Hammer")
-                if hammer then equipInvModel(hammer) end
+            local startItem = getEquippedInvModel()
+            local hammer = findInvModel("Hammer")
+            if hammer then
+                equipInvModel(hammer)
+            end
 
-                task.wait(1.0)
+            task.wait(1.0)
 
-                local pivotCF = nil
-                do
-                    local ok, cf = pcall(function() return machine:GetPivot() end)
-                    if ok then
-                        pivotCF = cf
-                    else
-                        local mp = mainPart(machine)
-                        pivotCF = mp and mp.CFrame or destCF
-                    end
+            local pivotCF = nil
+            do
+                local ok, cf = pcall(function() return machine:GetPivot() end)
+                if ok then
+                    pivotCF = cf
+                else
+                    local mp = mainPart(machine)
+                    pivotCF = mp and mp.CFrame or destCF
                 end
+            end
 
-                local pickupRF = getRemote("RequestPickUpStructure")
-                local placeRF  = getRemote("RequestPlaceStructure")
+            local pickupRF = getRemote("RequestPickUpStructure")
+            local placeRF  = getRemote("RequestPlaceStructure")
 
-                if not (pickupRF and pickupRF:IsA("RemoteFunction") and placeRF and placeRF:IsA("RemoteFunction")) then
-                    local ev = getRemote("RequestActivateNightSkipMachine")
-                    if ev and ev:IsA("RemoteEvent") then pcall(function() ev:FireServer(machine) end) end
-                    task.wait(1.0)
-                    if startItem and startItem.Parent then equipInvModel(startItem) end
-                    teleportSticky(returnCF, true)
-                    return
-                end
-
-                local okPickup = pcall(function()
+            local didReset = false
+            if pickupRF and pickupRF:IsA("RemoteFunction") and placeRF and placeRF:IsA("RemoteFunction") then
+                local okPickup, retPickup = pcall(function()
                     return pickupRF:InvokeServer(machine)
                 end)
 
-                if okPickup then
-                    local tempTA = waitForTempTA(2.5)
+                if okPickup and retPickup ~= false then
+                    task.wait(0.15)
+                    local tempTA = resolveTempAccelerometer()
                     if tempTA then
                         local p = pivotCF.Position
                         local g = groundBelow(p)
@@ -618,45 +574,44 @@ return function(C, R, UI)
                         local placement = { Valid = true, Position = placePos, CFrame = placeCF }
                         local rotOnly = (placeCF - placeCF.Position)
 
-                        local ok3 = invokePlace(placeRF, tempTA, placement, rotOnly, nil)
-                        local placedModel = waitForTAInStructures(ok3 and 1.8 or 0.6)
-
-                        if not placedModel then
-                            tempTA = resolveTempAccelerometer() or tempTA
-                            invokePlace(placeRF, tempTA, placement, rotOnly, true)
-                            waitForTAInStructures(2.2)
+                        local okPlace, retPlace = pcall(function()
+                            return placeRF:InvokeServer(tempTA, placement, rotOnly)
+                        end)
+                        if (not okPlace) or retPlace == false then
+                            okPlace, retPlace = pcall(function()
+                                return placeRF:InvokeServer(tempTA, placement, rotOnly, true)
+                            end)
                         end
 
-                        task.wait(0.35)
+                        if okPlace and retPlace ~= false then
+                            didReset = true
+                            task.wait(0.35)
+                        end
                     end
                 end
-
-                local machine2 = resolveNightSkipMachineModel() or machine
-
-                if preWaitSeconds and preWaitSeconds > 0 then
-                    task.wait(preWaitSeconds)
-                end
-
-                local ev = getRemote("RequestActivateNightSkipMachine")
-                if ev and ev:IsA("RemoteEvent") then
-                    pcall(function()
-                        ev:FireServer(machine2)
-                    end)
-                end
-
-                task.wait(1.0)
-
-                if startItem and startItem.Parent then
-                    equipInvModel(startItem)
-                end
-
-                teleportSticky(returnCF, true)
             end
 
-            local ok, err = pcall(body)
-            if not ok then
-                warn("[Auto] SkipNight error: " .. tostring(err))
+            local machine2 = resolveNightSkipMachineModel() or machine
+
+            if preWaitSeconds and preWaitSeconds > 0 then
+                task.wait(preWaitSeconds)
             end
+
+            local ev = getRemote("RequestActivateNightSkipMachine")
+            if ev and ev:IsA("RemoteEvent") then
+                pcall(function()
+                    ev:FireServer(machine2)
+                end)
+            end
+
+            task.wait(1.0)
+
+            if startItem and startItem.Parent then
+                equipInvModel(startItem)
+            end
+
+            teleportSticky(returnCF, true)
+
             skipBusy = false
         end
 
@@ -1237,8 +1192,8 @@ return function(C, R, UI)
             end
         end
         tab:Toggle({ Title = "Disable Shadows", Value = false, Callback = function(state) if state then enableNoShadows() else disableNoShadows() end end })
-        local cam = WS.CurrentCamera
-        WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function() cam = WS.CurrentCamera end)
+        local cam = WSSvc.CurrentCamera
+        WSSvc:GetPropertyChangedSignal("CurrentCamera"):Connect(function() cam = WSSvc.CurrentCamera end)
 
         local function isBigTreeName(n)
             if not n then return false end
@@ -1322,10 +1277,11 @@ return function(C, R, UI)
                 end
                 cur = cur.Parent
             end
+            return nil
         end
         local function findMossyOrStack(inst)
-            local stack2 = findCoinCarrier(inst)
-            if stack2 then return stack2 end
+            local stack = findCoinCarrier(inst)
+            if stack then return stack end
             local cur = inst
             for _ = 1, 8 do
                 if not cur then break end
@@ -1360,9 +1316,9 @@ return function(C, R, UI)
                 if ok then return true end
             end
             do
-                local stack2 = findCoinCarrier(targetModel)
-                if stack2 then
-                    local s, r = pcall(function() return remote:InvokeServer(stack2) end)
+                local stack = findCoinCarrier(targetModel)
+                if stack then
+                    local s, r = pcall(function() return remote:InvokeServer(stack) end)
                     ok = s and (r ~= nil or true)
                     if ok then return true end
                 end
@@ -1435,8 +1391,8 @@ return function(C, R, UI)
             if noPauseOn then return end
             noPauseOn = true
             pcall(function()
-                prevPauseMode = WS.StreamingPauseMode
-                WS.StreamingPauseMode = Enum.StreamingPauseMode.Disabled
+                prevPauseMode = WSSvc.StreamingPauseMode
+                WSSvc.StreamingPauseMode = Enum.StreamingPauseMode.Disabled
             end)
         end
         enableNoStreamingPause()
@@ -1968,7 +1924,7 @@ return function(C, R, UI)
             if skipNightBtn then skipNightBtn.Visible = showSkipNightEdge end
             if noShadowsOn and not lightConn then enableNoShadows() end
             if loadDefenseOnDefault then enableLoadDefenseSafe() end
-            pcall(function() WS.StreamingPauseMode = Enum.StreamingPauseMode.Disabled end)
+            pcall(function() WSSvc.StreamingPauseMode = Enum.StreamingPauseMode.Disabled end)
             if coinOn and not coinConn then enableCoin() end
             if chestFinderOn and enableChestFinder then enableChestFinder() end
             if godOn then
@@ -1982,7 +1938,6 @@ return function(C, R, UI)
             end
         end)
     end
-
     local ok, err = pcall(run)
     if not ok then warn("[Auto] module error: " .. tostring(err)) end
 end
