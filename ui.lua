@@ -48,7 +48,8 @@ local Tabs = {
     Esp   = Window:Tab({ Title = "ESP",   Icon = "brain",   Desc = "ESP Items" }),
     Extra   = Window:Tab({ Title = "Extra",   Icon = "brain",   Desc = "Extra" }),
     PlayerInspector   = Window:Tab({ Title = "Player Inspector",   Icon = "brain",   Desc = "Player Inspector" }),
-    Diamonds = Window:Tab({ Title = "Diamonds", Icon = "diamond", Desc = "Diamonds" })
+    Diamonds = Window:Tab({ Title = "Diamonds", Icon = "diamond", Desc = "Diamonds" }),
+    More = Window:Tab({ Title = "More", Icon = "diamond", Desc = "More" })
 
 }
 
