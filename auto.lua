@@ -500,13 +500,6 @@ return function(C, R, UI)
             return ok
         end
 
-        local function resolveTempAccelerometer()
-            local temp = RS:FindFirstChild("TempStorage")
-            if not temp then return nil end
-            local m = temp:FindFirstChild("Temporal Accelerometer")
-            return (m and m:IsA("Model")) and m or nil
-        end
-
         local function waitForNightSkipMachine(timeout)
             local t0 = os.clock()
             while os.clock() - t0 < (timeout or 1.5) do
@@ -540,6 +533,47 @@ return function(C, R, UI)
             local placement = { Valid = true, Position = placePos, CFrame = placeCF }
             local rotOnly = (placeCF - placeCF.Position)
             return placement, rotOnly
+        end
+
+        local function resolvePlaceableTA()
+            local temp = RS:FindFirstChild("TempStorage")
+            local inv  = lp and lp:FindFirstChild("Inventory")
+
+            local function scan(container)
+                if not container then return nil end
+                local direct = container:FindFirstChild("Temporal Accelerometer")
+                if direct and direct:IsA("Model") then return direct end
+                local bp = container:FindFirstChild("Temporal Accelerometer Blueprint")
+                if bp and bp:IsA("Model") then return bp end
+                for _,ch in ipairs(container:GetChildren()) do
+                    if ch:IsA("Model") then
+                        local n = ch.Name
+                        if n == "Temporal Accelerometer" or n == "Temporal Accelerometer Blueprint" then
+                            return ch
+                        end
+                        if type(n) == "string" and n:find("Temporal Accelerometer", 1, true) then
+                            return ch
+                        end
+                    end
+                end
+                return nil
+            end
+
+            local m = scan(temp)
+            if m then return m, "TempStorage" end
+            m = scan(inv)
+            if m then return m, "Inventory" end
+            return nil, nil
+        end
+
+        local function waitForPlaceableTA(timeout)
+            local t0 = os.clock()
+            while os.clock() - t0 < (timeout or 2.8) do
+                local m, where = resolvePlaceableTA()
+                if m then return m, where end
+                Run.Heartbeat:Wait()
+            end
+            return nil, nil
         end
 
         local skipBusy = false
@@ -592,8 +626,14 @@ return function(C, R, UI)
 
                     if okPickup and retPickup ~= false then
                         task.wait(0.15)
-                        local tempTA = resolveTempAccelerometer()
-                        if tempTA then
+
+                        local placeableTA = nil
+                        do
+                            local m, where = waitForPlaceableTA(2.8)
+                            placeableTA = m
+                        end
+
+                        if placeableTA then
                             local placement, rotOnly = buildPlacementFromPivot(pivotCF)
                             if placement and rotOnly then
                                 local placedMachine = nil
@@ -602,15 +642,15 @@ return function(C, R, UI)
                                     local okP, retP = pcall(function()
                                         if placeRF:IsA("RemoteFunction") then
                                             if a4 == nil then
-                                                return placeRF:InvokeServer(tempTA, placement, rotOnly)
+                                                return placeRF:InvokeServer(placeableTA, placement, rotOnly)
                                             else
-                                                return placeRF:InvokeServer(tempTA, placement, rotOnly, a4)
+                                                return placeRF:InvokeServer(placeableTA, placement, rotOnly, a4)
                                             end
                                         else
                                             if a4 == nil then
-                                                placeRF:FireServer(tempTA, placement, rotOnly)
+                                                placeRF:FireServer(placeableTA, placement, rotOnly)
                                             else
-                                                placeRF:FireServer(tempTA, placement, rotOnly, a4)
+                                                placeRF:FireServer(placeableTA, placement, rotOnly, a4)
                                             end
                                             return true
                                         end
@@ -619,11 +659,11 @@ return function(C, R, UI)
                                 end
 
                                 tryPlace(nil)
-                                placedMachine = waitForNightSkipMachine(1.5)
+                                placedMachine = waitForNightSkipMachine(1.8)
 
                                 if not placedMachine then
                                     tryPlace(true)
-                                    placedMachine = waitForNightSkipMachine(1.5)
+                                    placedMachine = waitForNightSkipMachine(1.8)
                                 end
 
                                 machine = placedMachine or machine
