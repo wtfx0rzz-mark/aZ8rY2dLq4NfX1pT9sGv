@@ -500,8 +500,143 @@ return function(C, R, UI)
             return (m and m:IsA("Model")) and m or nil
         end
 
+        local function waitForTempTA(timeout)
+            local t0 = os.clock()
+            while os.clock() - t0 < (timeout or 2.5) do
+                local m = resolveTempAccelerometer()
+                if m then return m end
+                Run.Heartbeat:Wait()
+            end
+            return nil
+        end
+
+        local function waitForTAInStructures(timeout)
+            local t0 = os.clock()
+            while os.clock() - t0 < (timeout or 2.5) do
+                local m = resolveNightSkipMachineModel()
+                if m and m:IsA("Model") then return m end
+                Run.Heartbeat:Wait()
+            end
+            return nil
+        end
+
+        local function invokePlace(placeRF, bpModel, placement, rotOnly, a4)
+            if a4 == nil then
+                return pcall(function()
+                    return placeRF:InvokeServer(bpModel, placement, rotOnly)
+                end)
+            end
+            return pcall(function()
+                return placeRF:InvokeServer(bpModel, placement, rotOnly, a4)
+            end)
+        end
+
         local skipBusy = false
         local function doSkipNightSequence(preWaitSeconds)
+            if skipBusy then return end
+            skipBusy = true
+
+            local root = hrp()
+            if not root then skipBusy = false return end
+            local returnCF = root.CFrame
+
+            local machine = resolveNightSkipMachineModel()
+            if not machine then skipBusy = false return end
+
+            local destCF = nightSkipTeleportCF(machine)
+            if not destCF then skipBusy = false return end
+
+            teleportSticky(destCF, true)
+
+            local startItem = getEquippedInvModel()
+            local hammer = findInvModel("Hammer")
+            if hammer then equipInvModel(hammer) end
+
+            task.wait(1.0)
+
+            local pivotCF = nil
+            do
+                local ok, cf = pcall(function() return machine:GetPivot() end)
+                if ok then
+                    pivotCF = cf
+                else
+                    local mp = mainPart(machine)
+                    pivotCF = mp and mp.CFrame or destCF
+                end
+            end
+
+            local pickupRF = getRemote("RequestPickUpStructure")
+            local placeRF  = getRemote("RequestPlaceStructure")
+
+            if not (pickupRF and pickupRF:IsA("RemoteFunction") and placeRF and placeRF:IsA("RemoteFunction")) then
+                local ev = getRemote("RequestActivateNightSkipMachine")
+                if ev and ev:IsA("RemoteEvent") then pcall(function() ev:FireServer(machine) end) end
+                task.wait(1.0)
+                if startItem and startItem.Parent then equipInvModel(startItem) end
+                teleportSticky(returnCF, true)
+                skipBusy = false
+                return
+            end
+
+            local okPickup = pcall(function()
+                return pickupRF:InvokeServer(machine)
+            end)
+
+            if okPickup then
+                local tempTA = waitForTempTA(2.5)
+                if tempTA then
+                    local p = pivotCF.Position
+                    local g = groundBelow(p)
+                    local groundY = g.Y
+
+                    local look = pivotCF.LookVector
+                    local flatLook = Vector3.new(look.X, 0, look.Z)
+                    if flatLook.Magnitude < 1e-6 then flatLook = Vector3.new(0, 0, -1) end
+                    flatLook = flatLook.Unit
+
+                    local yOff = 0
+                    local placePos = Vector3.new(p.X, groundY, p.Z)
+                    local placeCF = CFrame.lookAt(
+                        Vector3.new(p.X, groundY + yOff, p.Z),
+                        Vector3.new(p.X, groundY + yOff, p.Z) + flatLook
+                    )
+                    local placement = { Valid = true, Position = placePos, CFrame = placeCF }
+                    local rotOnly = (placeCF - placeCF.Position)
+
+                    invokePlace(placeRF, tempTA, placement, rotOnly, nil)
+                    local placedModel = waitForTAInStructures(1.8)
+
+                    if not placedModel then
+                        tempTA = resolveTempAccelerometer() or tempTA
+                        invokePlace(placeRF, tempTA, placement, rotOnly, true)
+                        waitForTAInStructures(2.2)
+                    end
+                end
+            end
+
+            local machine2 = resolveNightSkipMachineModel() or machine
+
+            if preWaitSeconds and preWaitSeconds > 0 then
+                task.wait(preWaitSeconds)
+            end
+
+            local ev = getRemote("RequestActivateNightSkipMachine")
+            if ev and ev:IsA("RemoteEvent") then
+                pcall(function()
+                    ev:FireServer(machine2)
+                end)
+            end
+
+            task.wait(1.0)
+
+            if startItem and startItem.Parent then
+                equipInvModel(startItem)
+            end
+
+            teleportSticky(returnCF, true)
+            skipBusy = false
+        end
+
             if skipBusy then return end
             skipBusy = true
 
