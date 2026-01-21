@@ -282,25 +282,19 @@ return function(C, R, UI)
         C.State.Toggles.ItemSearch = false
     end
 
-    -- Delay after teleporting near a chest before trying to trigger its prompt.
-    -- Set to 0 to open immediately after teleport.
     local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = 0.2
-    -- Max time (seconds) to wait for proof the chest opened after triggering the prompt.
-    -- Proof is either: (1) prompt disappears, or (2) new items spawn near the chest.
     local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = 4.0
-    -- After a chest is confirmed opened, keep scanning for spawned drops for this long (seconds)
-    -- and capture them as they appear.
     local CHEST_COLLECT_WINDOW_SECONDS = 1.0
-    -- Small “breather” delay after finishing collection before moving to the next chest (seconds).
     local CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT = 0.05
-    -- If a chest fails to open/confirm, wait this long (seconds) before attempting it again.
     local CHEST_RETRY_WAIT_SECONDS = 2.0
-    -- How often (seconds) the confirm loop checks whether the chest opened.
-    -- Lower = faster confirmation, higher CPU usage; higher = less CPU, slower reaction.
     local CHEST_CONFIRM_POLL_INTERVAL = 0.10
-    -- How often (seconds) the collect loop scans for drops during the collection window.
-    -- Lower = more responsive capture, higher CPU usage; higher = less CPU, might miss fast spawns.
     local CHEST_COLLECT_POLL_INTERVAL = 0.08
+
+    local CHEST_FAST_POLL_INTERVAL = 0.03
+    local CHEST_FAST_POLL_DURATION = 0.60
+    local CHEST_QUIET_GRACE_SECONDS = 0.35
+    local CHEST_MAX_COLLECT_WINDOW_SECONDS = 3.0
+    local CHEST_CAPTURE_MAX_PER_POLL = 180
 
     C.State.ChestWaitAfterTeleportBeforeOpen = CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN
     C.State.ChestOpenConfirmTimeoutSeconds = CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS
@@ -1031,6 +1025,50 @@ return function(C, R, UI)
         return didAny
     end
 
+    local function processNewSinceSnapshot(pos, rad, preSet, maxCount)
+        local cands = getCandidatesNear(pos, rad)
+        local didAny = 0
+        for i=1,#cands do
+            local inst = cands[i]
+            if inst and inst.Parent and (not isChestInst(inst)) then
+                local k = itemKey(inst)
+                if not preSet[k] then
+                    local n = inst.Name
+                    local did = false
+
+                    if n == "Thorn Body" then
+                        if (not hasThornBodyOwned()) then
+                            pcall(function() takeItemToInventory(inst) end)
+                            task.wait(0.05)
+                        end
+                        pcall(tryEquipThornBody)
+                        did = true
+                    elseif ALWAYS_TAKE_NAMES[n] then
+                        did = takeItemToInventory(inst) and true or false
+                    else
+                        local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
+                        if wantsTake and (not hasSpecialInInventory(n)) then
+                            did = takeItemToInventory(inst) and true or false
+                        end
+                    end
+
+                    if (not did) and (not CapturedSet[inst]) then
+                        if captureInst(inst) then
+                            did = true
+                        end
+                    end
+
+                    if did then
+                        preSet[k] = true
+                        didAny += 1
+                        if maxCount and didAny >= maxCount then break end
+                    end
+                end
+            end
+        end
+        return didAny
+    end
+
     local function captureAllNear(pos, rad, maxCount)
         return processAllNear(pos, rad, maxCount)
     end
@@ -1038,77 +1076,76 @@ return function(C, R, UI)
     local function confirmAndCaptureDropsForChest(chest, preSet)
         local opened = false
         local gotAny = false
-        local t0 = os.clock()
 
         local confirmTimeout = math.max(CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS, 0.5)
         local spawnRadius = math.max(tonumber(C.State.ChestSpawnRadius) or 10.0, 2.0)
-        local captureRadius = math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, spawnRadius)
-        local captureWindow = math.max(CHEST_COLLECT_WINDOW_SECONDS, 0.05)
+        local captureRadius = math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, spawnRadius + 12.0)
+        local captureWindowMin = math.max(tonumber(C.State.ChestCollectWindowSeconds) or CHEST_COLLECT_WINDOW_SECONDS, 0.05)
+        local captureWindowMax = math.max(CHEST_MAX_COLLECT_WINDOW_SECONDS, captureWindowMin)
 
-        local function sawNewSinceSnapshot(chestPos, rad)
-            local cands = getCandidatesNear(chestPos, rad)
-            for i=1,#cands do
-                local inst = cands[i]
-                if inst and inst.Parent and (not isChestInst(inst)) then
-                    local k = itemKey(inst)
-                    if not preSet[k] then
-                        return true
-                    end
-                end
-            end
-            return false
-        end
+        local t0 = os.clock()
+        local tConfirmEnd = t0 + confirmTimeout
 
-        while alive and chest and chest.Parent and (os.clock() - t0) <= confirmTimeout do
+        while alive and chest and chest.Parent and os.clock() <= tConfirmEnd do
             local pos = modelWorldPos(chest)
             if pos then
-                if sawNewSinceSnapshot(pos, spawnRadius) then
+                local cap = processNewSinceSnapshot(pos, captureRadius, preSet, CHEST_CAPTURE_MAX_PER_POLL)
+                if cap > 0 then
+                    gotAny = true
                     opened = true
                     break
                 end
             end
+
             local p = findChestPromptPreferred(chest)
             if not (p and p.Parent) then
                 opened = true
                 break
             end
-            task.wait(CHEST_CONFIRM_POLL_INTERVAL)
+
+            local dt = os.clock() - t0
+            local waitT = (dt <= CHEST_FAST_POLL_DURATION) and CHEST_FAST_POLL_INTERVAL or CHEST_CONFIRM_POLL_INTERVAL
+            task.wait(waitT)
         end
 
-        if opened and chest and chest.Parent then
-            local tEnd = os.clock() + captureWindow
-            local quietStreak = 0
-            local QUIET_POLLS_TO_MOVE_ON = 3
+        if not opened then
+            return false, false
+        end
 
-            while alive and chest and chest.Parent and os.clock() <= tEnd do
-                local pos = modelWorldPos(chest)
-                local cap = 0
-                if pos then
-                    cap = processAllNear(pos, captureRadius)
-                    if cap > 0 then gotAny = true end
-                end
+        local tOpen = os.clock()
+        local tMinEnd = tOpen + captureWindowMin
+        local tMaxEnd = tOpen + captureWindowMax
+        local lastNewAt = tOpen
 
-                if cap > 0 then
-                    quietStreak = 0
-                else
-                    quietStreak += 1
-                    if quietStreak >= QUIET_POLLS_TO_MOVE_ON then
-                        break
-                    end
-                end
-
-                task.wait(CHEST_COLLECT_POLL_INTERVAL)
-            end
-
+        while alive and chest and chest.Parent and os.clock() <= tMaxEnd do
             local pos = modelWorldPos(chest)
+            local cap = 0
             if pos then
-                local cap = processAllNear(pos, captureRadius)
-                if cap > 0 then gotAny = true end
+                cap = processNewSinceSnapshot(pos, captureRadius, preSet, CHEST_CAPTURE_MAX_PER_POLL)
+                if cap > 0 then
+                    gotAny = true
+                    lastNewAt = os.clock()
+                end
             end
-            task.wait(0.05)
+
+            local now = os.clock()
+            if now >= tMinEnd and (now - lastNewAt) >= CHEST_QUIET_GRACE_SECONDS then
+                break
+            end
+
+            local dt = now - tOpen
+            local waitT = (dt <= CHEST_FAST_POLL_DURATION) and CHEST_FAST_POLL_INTERVAL or CHEST_COLLECT_POLL_INTERVAL
+            task.wait(waitT)
         end
 
-        return opened, gotAny
+        local pos = modelWorldPos(chest)
+        if pos then
+            local cap = processNewSinceSnapshot(pos, captureRadius, preSet, CHEST_CAPTURE_MAX_PER_POLL)
+            if cap > 0 then gotAny = true end
+        end
+        task.wait(0.05)
+
+        return true, gotAny
     end
 
     local function openChestOnce(chest)
@@ -1126,7 +1163,8 @@ return function(C, R, UI)
             return false
         end
 
-        local preSet = snapshotNearChest(pos, math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, 10.0) + 8.0)
+        local snapRad = math.max(math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, tonumber(C.State.ChestSpawnRadius) or 10.0) + 16.0, 18.0)
+        local preSet = snapshotNearChest(pos, snapRad)
 
         local prompt = findChestPromptPreferred(chest)
         if not prompt then
