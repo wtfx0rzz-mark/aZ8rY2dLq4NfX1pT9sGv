@@ -399,7 +399,7 @@ return function(C, R, UI)
         local lostBtn  = makeEdgeBtn("LostEdge",    "Lost Child", 4)
         local campBtn  = makeEdgeBtn("CampEdge",    "Campfire", 5)
 
-        local skipNightBtn = makeEdgeBtn("SkipNightEdge", "Skip Night", 6)
+        local skipNightBtn = makeEdgeBtn("SkipNightEdge", "Reset+Skip Night", 6)
 
         local showPhaseEdge, showPlantEdge = false, false
         local showTeleportEdge, showCampEdge = false, true
@@ -465,17 +465,120 @@ return function(C, R, UI)
             return CFrame.new(standPos, mp.Position)
         end
 
+        local function findInvModel(name)
+            local inv = lp and lp:FindFirstChild("Inventory")
+            if not inv then return nil end
+            local m = inv:FindFirstChild(name)
+            return (m and m:IsA("Model")) and m or nil
+        end
+
+        local function getEquippedInvModel()
+            local inv = lp and lp:FindFirstChild("Inventory")
+            if not inv then return nil end
+            for _,c in ipairs(inv:GetChildren()) do
+                if c:IsA("Model") and c:GetAttribute("Equipped") == true then
+                    return c
+                end
+            end
+            return nil
+        end
+
+        local function equipInvModel(model)
+            if not (model and model.Parent) then return false end
+            local equip = getRemote("EquipItemHandle")
+            if not (equip and equip:IsA("RemoteEvent")) then return false end
+            local ok = pcall(function()
+                equip:FireServer("FireAllClients", model)
+            end)
+            return ok
+        end
+
+        local function resolveTempAccelerometer()
+            local temp = RS:FindFirstChild("TempStorage")
+            if not temp then return nil end
+            local m = temp:FindFirstChild("Temporal Accelerometer")
+            return (m and m:IsA("Model")) and m or nil
+        end
+
+        local skipBusy = false
         local function doSkipNightSequence(preWaitSeconds)
-            local root = hrp(); if not root then return end
+            if skipBusy then return end
+            skipBusy = true
+
+            local root = hrp(); if not root then skipBusy = false return end
             local returnCF = root.CFrame
 
             local machine = resolveNightSkipMachineModel()
-            if not machine then return end
+            if not machine then skipBusy = false return end
 
             local destCF = nightSkipTeleportCF(machine)
-            if not destCF then return end
+            if not destCF then skipBusy = false return end
 
             teleportSticky(destCF, true)
+
+            local startItem = getEquippedInvModel()
+            local hammer = findInvModel("Hammer")
+            if hammer then
+                equipInvModel(hammer)
+            end
+
+            task.wait(1.0)
+
+            local pivotCF = nil
+            do
+                local ok, cf = pcall(function() return machine:GetPivot() end)
+                if ok then
+                    pivotCF = cf
+                else
+                    local mp = mainPart(machine)
+                    pivotCF = mp and mp.CFrame or destCF
+                end
+            end
+
+            local pickupRF = getRemote("RequestPickUpStructure")
+            local placeRF  = getRemote("RequestPlaceStructure")
+
+            local didReset = false
+            if pickupRF and pickupRF:IsA("RemoteFunction") and placeRF and placeRF:IsA("RemoteFunction") then
+                local okPickup = pcall(function()
+                    return pickupRF:InvokeServer(machine)
+                end)
+
+                if okPickup then
+                    task.wait(0.15)
+                    local tempTA = resolveTempAccelerometer()
+                    if tempTA then
+                        local p = pivotCF.Position
+                        local g = groundBelow(p)
+                        local groundY = g.Y
+
+                        local look = pivotCF.LookVector
+                        local flatLook = Vector3.new(look.X, 0, look.Z)
+                        if flatLook.Magnitude < 1e-6 then flatLook = Vector3.new(0, 0, -1) end
+                        flatLook = flatLook.Unit
+
+                        local yOff = 0
+                        local placePos = Vector3.new(p.X, groundY, p.Z)
+                        local placeCF = CFrame.lookAt(
+                            Vector3.new(p.X, groundY + yOff, p.Z),
+                            Vector3.new(p.X, groundY + yOff, p.Z) + flatLook
+                        )
+                        local placement = { Valid = true, Position = placePos, CFrame = placeCF }
+                        local rotOnly = (placeCF - placeCF.Position)
+
+                        local okPlace = pcall(function()
+                            return placeRF:InvokeServer(tempTA, placement, rotOnly)
+                        end)
+
+                        if okPlace then
+                            didReset = true
+                            task.wait(0.35)
+                        end
+                    end
+                end
+            end
+
+            local machine2 = resolveNightSkipMachineModel() or machine
 
             if preWaitSeconds and preWaitSeconds > 0 then
                 task.wait(preWaitSeconds)
@@ -484,12 +587,19 @@ return function(C, R, UI)
             local ev = getRemote("RequestActivateNightSkipMachine")
             if ev and ev:IsA("RemoteEvent") then
                 pcall(function()
-                    ev:FireServer(machine)
+                    ev:FireServer(machine2)
                 end)
             end
 
             task.wait(1.0)
+
+            if startItem and startItem.Parent then
+                equipInvModel(startItem)
+            end
+
             teleportSticky(returnCF, true)
+
+            skipBusy = false
         end
 
         skipNightBtn.MouseButton1Click:Connect(function()
