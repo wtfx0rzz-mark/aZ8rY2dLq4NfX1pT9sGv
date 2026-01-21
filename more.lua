@@ -610,6 +610,16 @@ return function(C, R, UI)
             end
         })
 
+        tab:Button({
+            Title = "Pick Up Nearest Structure",
+            Callback = function()
+                local ok = doPickupNearest()
+                if not ok then
+                    warn("[More] pickup failed (no target/remote or invoke error)")
+                end
+            end
+        })
+
         local timerOn = false
         local timerThread = nil
         local TIMER_SECONDS = 180
