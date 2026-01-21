@@ -398,7 +398,6 @@ return function(C, R, UI)
         local plantBtn = makeEdgeBtn("PlantEdge",   "Plant",    3)
         local lostBtn  = makeEdgeBtn("LostEdge",    "Lost Child", 4)
         local campBtn  = makeEdgeBtn("CampEdge",    "Campfire", 5)
-
         local skipNightBtn = makeEdgeBtn("SkipNightEdge", "Skip Night", 6)
 
         local showPhaseEdge, showPlantEdge = false, false
@@ -492,8 +491,13 @@ return function(C, R, UI)
             teleportSticky(returnCF, true)
         end
 
-        skipNightBtn.MouseButton1Click:Connect(function()
+        -- Unified: "Edge Button: Skip Night" exact sequence (used by both edge click + timer)
+        local function runSkipNightEdgeSequence()
             doSkipNightSequence(0)
+        end
+
+        skipNightBtn.MouseButton1Click:Connect(function()
+            runSkipNightEdgeSequence()
         end)
 
         local AHEAD_DIST, RAY_DEPTH = 3, 2000
@@ -595,28 +599,28 @@ return function(C, R, UI)
 
         local function fireSkipNightOnce()
             pcall(function()
-                doSkipNightSequence(1.0)
+                runSkipNightEdgeSequence()
             end)
         end
 
         local function enableSkipNightTimer()
             if skipNightTimerOn then return end
             skipNightSavedCF = nil
-
             skipNightTimerOn = true
             if skipNightTimerThread then
                 pcall(function() task.cancel(skipNightTimerThread) end)
                 skipNightTimerThread = nil
             end
             skipNightTimerThread = task.spawn(function()
-                local nextAt = os.clock()
+                fireSkipNightOnce() -- one time immediately on enable
+                local nextAt = os.clock() + SKIP_NIGHT_TIMER_SECONDS
                 while skipNightTimerOn do
                     local now = os.clock()
                     if now >= nextAt then
                         fireSkipNightOnce()
                         nextAt = nextAt + SKIP_NIGHT_TIMER_SECONDS
-                        if os.clock() >= nextAt + SKIP_NIGHT_TIMER_SECONDS then
-                            nextAt = os.clock() + SKIP_NIGHT_TIMER_SECONDS
+                        if now >= nextAt + SKIP_NIGHT_TIMER_SECONDS then
+                            nextAt = now + SKIP_NIGHT_TIMER_SECONDS
                         end
                     end
                     task.wait(0.25)
