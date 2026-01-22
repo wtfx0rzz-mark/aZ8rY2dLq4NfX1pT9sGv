@@ -805,6 +805,21 @@ return function(C, R, UI)
         ["Mossy Chest"] = true,
     }
 
+    local CHEST_LOOT_RAY_UP_DISTANCE = 38.0
+    local CHEST_LOOT_RAY_START_PAD  = 0.40
+    local CHEST_LOOT_RAY_OFF        = 1.05
+    local CHEST_LOOT_RAY_OFFSETS = {
+        Vector3.new(0, 0, 0),
+        Vector3.new( CHEST_LOOT_RAY_OFF, 0, 0),
+        Vector3.new(-CHEST_LOOT_RAY_OFF, 0, 0),
+        Vector3.new(0, 0,  CHEST_LOOT_RAY_OFF),
+        Vector3.new(0, 0, -CHEST_LOOT_RAY_OFF),
+        Vector3.new( CHEST_LOOT_RAY_OFF, 0,  CHEST_LOOT_RAY_OFF),
+        Vector3.new( CHEST_LOOT_RAY_OFF, 0, -CHEST_LOOT_RAY_OFF),
+        Vector3.new(-CHEST_LOOT_RAY_OFF, 0,  CHEST_LOOT_RAY_OFF),
+        Vector3.new(-CHEST_LOOT_RAY_OFF, 0, -CHEST_LOOT_RAY_OFF),
+    }
+
     local function makeChestRayParams(extras)
         local params = RaycastParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
@@ -817,6 +832,23 @@ return function(C, R, UI)
             local fol = map:FindFirstChild("Foliage")
             if fol then table.insert(ex, fol) end
         end
+        if extras then
+            for i=1,#extras do
+                local v = extras[i]
+                if v then table.insert(ex, v) end
+            end
+        end
+        params.FilterDescendantsInstances = ex
+        return params
+    end
+
+    local function makeLootRayParams(extras)
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.IgnoreWater = true
+        local ex = { lp.Character }
+        local map = WS:FindFirstChild("Map")
+        if map then table.insert(ex, map) end
         if extras then
             for i=1,#extras do
                 local v = extras[i]
@@ -985,6 +1017,85 @@ return function(C, R, UI)
         return (os.clock() - t) <= windowSec
     end
 
+    local function lootRaycastCandidates(chest)
+        if not (chest and chest.Parent and chest:IsA("Model")) then return {} end
+        local mp = mainPart(chest)
+        if not mp then return {} end
+        local itemsRoot = itemsFolder()
+        local chestCenter = mp.Position
+        local chestTopY = mp.Position.Y + (mp.Size.Y * 0.5)
+        local params = makeLootRayParams({ chest })
+        local out = {}
+        local seen = {}
+
+        for i=1,#CHEST_LOOT_RAY_OFFSETS do
+            local off = CHEST_LOOT_RAY_OFFSETS[i]
+            local start = Vector3.new(chestCenter.X + off.X, chestTopY + CHEST_LOOT_RAY_START_PAD, chestCenter.Z + off.Z)
+            local hit = WS:Raycast(start, Vector3.new(0, CHEST_LOOT_RAY_UP_DISTANCE, 0), params)
+            if hit and hit.Instance and hit.Instance.Parent then
+                local part = hit.Instance
+                local cand = nil
+                if itemsRoot then
+                    cand = topModelUnderItems(part, itemsRoot) or part
+                else
+                    cand = part:FindFirstAncestorOfClass("Model") or part
+                end
+                if cand and cand.Parent and (not seen[cand]) then
+                    if not isChestInst(cand) then
+                        seen[cand] = true
+                        out[#out+1] = cand
+                    end
+                end
+            end
+        end
+
+        return out
+    end
+
+    local function processRaycastNewLoot(chest, preSet, maxCount)
+        local cands = lootRaycastCandidates(chest)
+        local didAny = 0
+        for i=1,#cands do
+            local inst = cands[i]
+            if inst and inst.Parent and (not isChestInst(inst)) then
+                local k = itemKey(inst)
+                if not (preSet and preSet[k]) then
+                    local did = false
+                    local n = inst.Name
+
+                    if n == "Thorn Body" then
+                        if (not hasThornBodyOwned()) then
+                            pcall(function() takeItemToInventory(inst) end)
+                            task.wait(0.05)
+                        end
+                        pcall(tryEquipThornBody)
+                        did = true
+                    elseif ALWAYS_TAKE_NAMES[n] then
+                        did = takeItemToInventory(inst) and true or false
+                    else
+                        local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
+                        if wantsTake and (not hasSpecialInInventory(n)) then
+                            did = takeItemToInventory(inst) and true or false
+                        end
+                    end
+
+                    if (not did) and (not CapturedSet[inst]) then
+                        if captureInst(inst) then
+                            did = true
+                        end
+                    end
+
+                    if did then
+                        if preSet then preSet[k] = true end
+                        didAny += 1
+                        if maxCount and didAny >= maxCount then break end
+                    end
+                end
+            end
+        end
+        return didAny
+    end
+
     local function processAllNear(pos, rad, maxCount)
         local cands = getCandidatesNear(pos, rad)
         local didAny = 0
@@ -1097,6 +1208,13 @@ return function(C, R, UI)
                 end
             end
 
+            local rayCap = processRaycastNewLoot(chest, preSet, CHEST_CAPTURE_MAX_PER_POLL)
+            if rayCap > 0 then
+                gotAny = true
+                opened = true
+                break
+            end
+
             local p = findChestPromptPreferred(chest)
             if not (p and p.Parent) then
                 opened = true
@@ -1128,6 +1246,12 @@ return function(C, R, UI)
                 end
             end
 
+            local rayCap = processRaycastNewLoot(chest, preSet, CHEST_CAPTURE_MAX_PER_POLL)
+            if rayCap > 0 then
+                gotAny = true
+                lastNewAt = os.clock()
+            end
+
             local now = os.clock()
             if now >= tMinEnd and (now - lastNewAt) >= CHEST_QUIET_GRACE_SECONDS then
                 break
@@ -1143,6 +1267,8 @@ return function(C, R, UI)
             local cap = processNewSinceSnapshot(pos, captureRadius, preSet, CHEST_CAPTURE_MAX_PER_POLL)
             if cap > 0 then gotAny = true end
         end
+        local rayCapFinal = processRaycastNewLoot(chest, preSet, CHEST_CAPTURE_MAX_PER_POLL)
+        if rayCapFinal > 0 then gotAny = true end
         task.wait(0.05)
 
         return true, gotAny
@@ -1169,7 +1295,8 @@ return function(C, R, UI)
         local prompt = findChestPromptPreferred(chest)
         if not prompt then
             local cap = processAllNear(pos, tonumber(C.State.ChestCaptureRadius) or 22.0)
-            if cap > 0 then
+            local rayCap = processRaycastNewLoot(chest, preSet, CHEST_CAPTURE_MAX_PER_POLL)
+            if (cap > 0) or (rayCap > 0) then
                 pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
                 return true, true
             end
