@@ -41,7 +41,7 @@ return function(C, R, UI)
             if m:IsA("BasePart") then return m end
             if m:IsA("Model") then
                 if m.PrimaryPart then return m.PrimaryPart end
-                return m:FindFirstChildWhichIsA("BasePart")
+                return m:FindFirstChildWhichIsA("BasePart", true)
             end
             return nil
         end
@@ -50,6 +50,18 @@ return function(C, R, UI)
             local f = RS:FindFirstChild("RemoteEvents")
             return f and f:FindFirstChild(name) or nil
         end
+
+        local function getRoot()
+            local ugc = game:FindFirstChild("Ugc")
+            if ugc then
+                local rs = ugc:FindFirstChild("ReplicatedStorage")
+                local ws = ugc:FindFirstChild("Workspace")
+                if rs and ws then return rs, ws end
+            end
+            return RS, WS
+        end
+
+        local RootRS, RootWS = getRoot()
 
         local DUMMY_MODEL = Instance.new("Model")
         DUMMY_MODEL.Name = "__cg_dummy__"
@@ -671,6 +683,220 @@ return function(C, R, UI)
 
         if C.State.Toggles.MoreTemporalTimer == true then
             startTimer()
+        end
+
+        do
+            local function lower(s)
+                return (type(s) == "string") and string.lower(s) or ""
+            end
+
+            local function itemsFolder()
+                local f = RootWS:FindFirstChild("Items")
+                if f then return f end
+                local f2 = WS:FindFirstChild("Items")
+                if f2 then return f2 end
+                return nil
+            end
+
+            local function isMyCharModel(m)
+                local c = lp.Character
+                return c and m == c
+            end
+
+            local function isSelectedNPC(m, selectedSet)
+                if not (m and m:IsA("Model")) then return false end
+                if isMyCharModel(m) then return false end
+                if not m:FindFirstChildWhichIsA("Humanoid", true) then return false end
+                local n = lower(m.Name or "")
+                if selectedSet["Cultist"] and n:find("cultist", 1, true) then return true end
+                if selectedSet["Alien"] and n:find("alien", 1, true) then return true end
+                return false
+            end
+
+            local function isSelectedItemName(ln, selectedSet)
+                if selectedSet["Sapling"] and ln == "sapling" then return true end
+                if selectedSet["Sacrifice Totem"] then
+                    if ln == "sacrifice totem" or ln == "sacrificetotem" then return true end
+                    if ln:find("sacrifice", 1, true) and ln:find("totem", 1, true) then return true end
+                end
+                return false
+            end
+
+            local function isSelectedItem(inst, selectedSet)
+                if not inst then return false end
+                local ln = lower(inst.Name or "")
+                ln = ln:gsub("%s+", " ")
+                local ln2 = (lower(inst.Name or "")):gsub("%s+", "")
+                if selectedSet["Sapling"] and ln == "sapling" then return true end
+                if selectedSet["Sacrifice Totem"] then
+                    if ln == "sacrifice totem" or ln2 == "sacrificetotem" then return true end
+                    if ln:find("sacrifice", 1, true) and ln:find("totem", 1, true) then return true end
+                end
+                return false
+            end
+
+            local function topModelUnderItems(part, items)
+                local cur = part
+                local lastModel = nil
+                while cur and cur ~= WS and cur ~= RootWS and cur ~= items do
+                    if cur:IsA("Model") then lastModel = cur end
+                    cur = cur.Parent
+                end
+                if lastModel and items and lastModel:IsDescendantOf(items) then
+                    return lastModel
+                end
+                return lastModel
+            end
+
+            local function findLavaBurnRemote()
+                local remFolder = RootRS:FindFirstChild("RemoteEvents") or RootRS
+                local r = remFolder:FindFirstChild("RequestLavaBurnItem")
+                if r and (r:IsA("RemoteFunction") or r:IsA("RemoteEvent")) then return r end
+                for _, d in ipairs(RootRS:GetDescendants()) do
+                    if d.Name == "RequestLavaBurnItem" and (d:IsA("RemoteFunction") or d:IsA("RemoteEvent")) then
+                        return d
+                    end
+                end
+                return nil
+            end
+
+            local function findLava()
+                local direct = RootWS:FindFirstChild("Map")
+                if direct then
+                    local lm = direct:FindFirstChild("Landmarks")
+                    local v  = lm and lm:FindFirstChild("Volcano")
+                    local f  = v and v:FindFirstChild("Functional")
+                    local lv = f and f:FindFirstChild("Lava")
+                    if lv and lv:IsA("BasePart") then return lv end
+                end
+                for _, d in ipairs(RootWS:GetDescendants()) do
+                    if d:IsA("BasePart") and d.Name == "Lava" then
+                        local a = d.Parent
+                        while a do
+                            if a.Name == "Volcano" then return d end
+                            a = a.Parent
+                        end
+                    end
+                end
+                return nil
+            end
+
+            local function candidateFromPart(part, items, selectedSet)
+                if not (part and part:IsA("BasePart")) then return nil end
+                if RootWS ~= WS and not part:IsDescendantOf(RootWS) then return nil end
+
+                if items and part:IsDescendantOf(items) then
+                    local m = topModelUnderItems(part, items) or part:FindFirstAncestorOfClass("Model")
+                    if m and isSelectedItem(m, selectedSet) then return m end
+                    if isSelectedItem(part, selectedSet) then return part end
+                end
+
+                local m = part:FindFirstAncestorOfClass("Model")
+                if m and isSelectedNPC(m, selectedSet) then return m end
+                return nil
+            end
+
+            local SCAN_RADIUS = 140
+
+            local function setFromChoice(choice)
+                local s = {}
+                if type(choice) == "table" then
+                    for _,v in ipairs(choice) do
+                        if v and v ~= "" then s[v] = true end
+                    end
+                elseif choice and choice ~= "" then
+                    s[choice] = true
+                end
+                return s
+            end
+
+            C.State.MoreLavaBurnChoice = C.State.MoreLavaBurnChoice or {}
+            local burnSelectedSet = setFromChoice(C.State.MoreLavaBurnChoice)
+
+            local burnBusy = false
+            local function burnSelected()
+                if burnBusy then return end
+                burnBusy = true
+                local ok = pcall(function()
+                    if not burnSelectedSet or next(burnSelectedSet) == nil then return end
+                    local Remote = findLavaBurnRemote()
+                    local Lava = findLava()
+                    if not (Remote and Lava and Lava.Parent) then
+                        warn("[More] LavaBurn missing Remote or Lava")
+                        return
+                    end
+
+                    local root = hrp()
+                    if not root then return end
+                    local items = itemsFolder()
+
+                    local params = OverlapParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = { lp.Character }
+
+                    local parts = WS:GetPartBoundsInRadius(root.Position, SCAN_RADIUS, params) or {}
+                    local uniq, targets = {}, {}
+                    for _,p in ipairs(parts) do
+                        local cand = candidateFromPart(p, items, burnSelectedSet)
+                        if cand and not uniq[cand] then
+                            uniq[cand] = true
+                            targets[#targets+1] = cand
+                        end
+                    end
+
+                    local okN, errN = 0, 0
+                    for i = 1, #targets do
+                        local inst = targets[i]
+                        if inst and inst.Parent then
+                            local okCall = false
+                            if Remote:IsA("RemoteFunction") then
+                                okCall = pcall(function()
+                                    return Remote:InvokeServer(inst, Lava)
+                                end)
+                            else
+                                okCall = pcall(function()
+                                    Remote:FireServer(inst, Lava)
+                                end)
+                            end
+                            if okCall then okN += 1 else errN += 1 end
+                        end
+                        if i % 8 == 0 then Run.Heartbeat:Wait() end
+                        task.wait(0.02)
+                    end
+                    warn(("[More] LavaBurn: radius=%d targets=%d ok=%d err=%d"):format(SCAN_RADIUS, #targets, okN, errN))
+                end)
+                burnBusy = false
+                return ok
+            end
+
+            tab:Section({ Title = "Lava Burn" })
+
+            tab:Dropdown({
+                Title = "Targets",
+                Values = { "Cultist", "Alien", "Sacrifice Totem", "Sapling" },
+                Multi = true,
+                AllowNone = true,
+                Callback = function(choice)
+                    local list = {}
+                    if type(choice) == "table" then
+                        for i=1,#choice do
+                            local v = choice[i]
+                            if v and v ~= "" then list[#list+1] = v end
+                        end
+                    elseif choice and choice ~= "" then
+                        list[1] = choice
+                    end
+                    C.State.MoreLavaBurnChoice = list
+                    burnSelectedSet = setFromChoice(choice)
+                end
+            })
+
+            tab:Button({
+                Title = "Burn",
+                Callback = function()
+                    burnSelected()
+                end
+            })
         end
 
         Players.LocalPlayer.CharacterAdded:Connect(function()
