@@ -770,31 +770,50 @@ return function(C, R, UI)
         return mp and mp.Position or nil
     end
 
+    local firePromptLastAt = setmetatable({}, { __mode = "k" })
+    local FIRE_PROMPT_COOLDOWN = 0.25
+
     local function triggerPrompt(prompt)
-        if not (prompt and prompt.Parent) then return false end
+        if not (prompt and prompt.Parent and prompt.Enabled) then return false end
+
+        local t = firePromptLastAt[prompt]
+        if t and (os.clock() - t) < FIRE_PROMPT_COOLDOWN then return false end
+        firePromptLastAt[prompt] = os.clock()
+
         pcall(function() prompt.RequiresLineOfSight = false end)
         pcall(function()
-            if prompt.HoldDuration > 0.12 then
+            if typeof(prompt.HoldDuration) == "number" and prompt.HoldDuration > 0.12 then
                 prompt.HoldDuration = 0.12
             end
         end)
+
+        RunService.Heartbeat:Wait()
+
         local ok = pcall(function()
             PPS:TriggerPrompt(prompt)
         end)
         if ok then return true end
+
         local ok2 = pcall(function()
-            prompt:InputHoldBegin()
+            PPS:TriggerPrompt(prompt, lp)
         end)
-        if not ok2 then return false end
-        local hold = tonumber(prompt.HoldDuration) or 0
-        local waitTime = (hold > 0) and (hold + 0.05) or 0.05
-        task.delay(waitTime, function()
+        if ok2 then return true end
+
+        local hold = 0
+        pcall(function() hold = tonumber(prompt.HoldDuration) or 0 end)
+
+        local ok3 = pcall(function() prompt:InputHoldBegin() end)
+        if not ok3 then return false end
+
+        task.delay(math.max(0.03, hold + 0.03), function()
             if prompt and prompt.Parent then
                 pcall(function() prompt:InputHoldEnd() end)
             end
         end)
+
         return true
     end
+
 
     local CHEST_FLOOR_RAY_DEPTH = 80.0
     local FRONT_DIST = 4.0
