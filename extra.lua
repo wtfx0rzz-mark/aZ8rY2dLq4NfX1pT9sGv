@@ -202,7 +202,26 @@ return function(C, R, UI)
     end
 
     local function itemsFolder()
-        return WS:FindFirstChild("Items")
+        local items = WS:FindFirstChild("Items")
+        if items then return items end
+
+        local ugc = game:FindFirstChild("Ugc") or WS:FindFirstChild("Ugc")
+        if ugc and ugc.Parent then
+            local wroot = ugc:FindFirstChild("Workspace")
+            if wroot and wroot.Parent then
+                local it = wroot:FindFirstChild("Items")
+                if it then return it end
+            end
+            local it2 = ugc:FindFirstChild("Items")
+            if it2 then return it2 end
+        end
+
+        return nil
+    end
+
+    local function isUnderItems(inst, itemsRoot)
+        if not (inst and inst.Parent and itemsRoot and itemsRoot.Parent) then return false end
+        return inst == itemsRoot or inst:IsDescendantOf(itemsRoot)
     end
 
     local function isChestName(n)
@@ -400,6 +419,10 @@ return function(C, R, UI)
 
     local function takeItemToInventory(itemInst)
         if not (itemInst and itemInst.Parent) then return false end
+
+        local itemsRoot = itemsFolder()
+        if not (itemsRoot and isUnderItems(itemInst, itemsRoot)) then return false end
+
         local takeRS, _ = getTakeRoots()
         local rf = takeRS:FindFirstChild("RemoteEvents")
         if not rf then return false end
@@ -423,34 +446,156 @@ return function(C, R, UI)
         return true
     end
 
+    local ARMOUR_APPEAR_TIMEOUT = 2.0
+    local THORN_EQUIP_RETRIES = 3
+    local THORN_RETRY_WAIT = 0.10
+
+    local function ensureArmourFolder()
+        return lp:FindFirstChild("Armour") or lp:WaitForChild("Armour", 5)
+    end
+
+    local function waitForArmourChild(armourFolderInst, targetName, timeout)
+        local got = armourFolderInst:FindFirstChild(targetName)
+        if got then return got end
+
+        local found = nil
+        local conn
+        conn = armourFolderInst.ChildAdded:Connect(function(ch)
+            if ch and ch.Name == targetName then
+                found = ch
+            end
+        end)
+
+        local t0 = os.clock()
+        while armourFolderInst.Parent and (not found) and (os.clock() - t0) < timeout do
+            RunService.Heartbeat:Wait()
+            local now = armourFolderInst:FindFirstChild(targetName)
+            if now then
+                found = now
+                break
+            end
+        end
+
+        pcall(function() conn:Disconnect() end)
+        return found
+    end
+
+    local function getEquipArmourRemotes()
+        local takeRS, _ = getTakeRoots()
+
+        local function fromRoot(r)
+            if not r then return nil, nil, nil end
+            local re = r:FindFirstChild("RemoteEvents")
+            if not re then return nil, nil, nil end
+            local startRE = re:FindFirstChild("RequestStartDraggingItem") or re:FindFirstChild("StartDraggingItem")
+            local stopRE  = re:FindFirstChild("StopDraggingItem") or re:FindFirstChild("RequestStopDraggingItem")
+            local equipRF = re:FindFirstChild("RequestEquipArmour")
+            return startRE, stopRE, equipRF
+        end
+
+        local startRE, stopRE, equipRF = fromRoot(takeRS)
+        if not (startRE and stopRE and equipRF) then
+            local s2, t2, e2 = fromRoot(RS)
+            if not startRE then startRE = s2 end
+            if not stopRE  then stopRE  = t2 end
+            if not equipRF then equipRF = e2 end
+        end
+
+        if not startRE then startRE = RF_Start end
+        if not stopRE  then stopRE  = RF_Stop  end
+
+        return startRE, stopRE, equipRF
+    end
+
     local lastThornEquipAt = 0
     local MIN_THORN_EQUIP_INTERVAL = 1.5
 
-    local function tryEquipThornBody()
+    local function tryEquipThornBody(worldInst)
+        local targetName = "Thorn Body"
+
+        local itemsRoot = itemsFolder()
+        if worldInst and worldInst.Parent and itemsRoot and (not isUnderItems(worldInst, itemsRoot)) then
+            worldInst = nil
+        end
+
+        local armourFolderInst = ensureArmourFolder()
+        if not armourFolderInst then return false end
+
+        local armourVal = getArmourValue()
+        if type(armourVal) ~= "number" then armourVal = 0 end
+        if armourVal > 0.4 then
+            return true
+        end
+
         local now = os.clock()
         if (now - lastThornEquipAt) < MIN_THORN_EQUIP_INTERVAL then
             return false
         end
 
-        local armourVal = getArmourValue()
-        if type(armourVal) ~= "number" then return false end
-        if armourVal > 0.4 then return false end
+        local startRE, stopRE, equipRF = getEquipArmourRemotes()
+        if not equipRF then
+            return false
+        end
 
-        local rf = RS:FindFirstChild("RemoteEvents")
-        if not rf then return false end
-        local equipRF = rf:FindFirstChild("RequestEquipArmour")
-        if not (equipRF and equipRF:IsA("RemoteFunction")) then return false end
+        local armourChild = armourFolderInst:FindFirstChild(targetName)
 
-        local af = armourFolder()
-        if not (af and af.Parent) then return false end
-        local thorn = af:FindFirstChild("Thorn Body")
-        if not (thorn and thorn.Parent) then return false end
+        if (not armourChild) and worldInst and worldInst.Parent and startRE and stopRE then
+            pcall(function() startRE:FireServer(worldInst) end)
+            RunService.Heartbeat:Wait()
+            pcall(function() stopRE:FireServer(worldInst) end)
+            RunService.Heartbeat:Wait()
+            pcall(function() stopRE:FireServer(worldInst) end)
 
-        lastThornEquipAt = now
-        local ok = pcall(function()
-            equipRF:InvokeServer(thorn)
-        end)
-        return ok and true or false
+            armourChild = waitForArmourChild(armourFolderInst, targetName, ARMOUR_APPEAR_TIMEOUT)
+        end
+
+        local target = armourFolderInst:FindFirstChild(targetName) or armourChild
+        if not (target and target.Parent) then
+            return false
+        end
+
+        local equipped = false
+        for i = 1, THORN_EQUIP_RETRIES do
+            target = armourFolderInst:FindFirstChild(targetName) or target
+            if not (target and target.Parent) then
+                break
+            end
+
+            local ok, ret = pcall(function()
+                if equipRF:IsA("RemoteFunction") then
+                    return equipRF:InvokeServer(target)
+                else
+                    equipRF:FireServer(target)
+                    return true
+                end
+            end)
+
+            if ok and ret ~= false then
+                RunService.Heartbeat:Wait()
+                local av = getArmourValue()
+                if type(av) ~= "number" then av = 0 end
+                if (ret == true) or (av > 0.4) then
+                    equipped = true
+                    break
+                end
+            end
+
+            local t0 = os.clock()
+            while (os.clock() - t0) < THORN_RETRY_WAIT do
+                RunService.Heartbeat:Wait()
+            end
+        end
+
+        if worldInst and worldInst.Parent and stopRE and stopRE:IsA("RemoteEvent") then
+            pcall(function() stopRE:FireServer(worldInst) end)
+        end
+
+        if equipped then
+            lastThornEquipAt = os.clock()
+            return true
+        end
+
+        return false
     end
 
     local alive = true
@@ -527,12 +672,12 @@ return function(C, R, UI)
 
     local function refreshOverlapFilter()
         local items = itemsFolder()
-        if items then
+        if items and items.Parent then
             overlapParams.FilterType = Enum.RaycastFilterType.Include
             overlapParams.FilterDescendantsInstances = { items }
         else
-            overlapParams.FilterType = Enum.RaycastFilterType.Exclude
-            overlapParams.FilterDescendantsInstances = { lp.Character }
+            overlapParams.FilterType = Enum.RaycastFilterType.Include
+            overlapParams.FilterDescendantsInstances = {}
         end
     end
     refreshOverlapFilter()
@@ -639,15 +784,15 @@ return function(C, R, UI)
 
     local function captureInst(inst)
         if not (inst and inst.Parent) then return false end
+
+        local itemsRoot = itemsFolder()
+        if not (itemsRoot and isUnderItems(inst, itemsRoot)) then return false end
+
         if CapturedSet[inst] then return false end
         if isChestInst(inst) then return false end
 
         if inst.Name == "Thorn Body" then
-            if (not hasThornBodyOwned()) then
-                pcall(function() takeItemToInventory(inst) end)
-                task.wait(0.05)
-            end
-            if tryEquipThornBody() then
+            if tryEquipThornBody(inst) then
                 return true
             end
         end
@@ -687,6 +832,7 @@ return function(C, R, UI)
         local seen = {}
         local function push(inst)
             if not (inst and inst.Parent) then return end
+            if not isUnderItems(inst, items) then return end
             if isChestInst(inst) then return end
             if isSnowChestName(inst.Name) or isHalloweenChestName(inst.Name) then return end
             if seen[inst] then return end
@@ -695,7 +841,7 @@ return function(C, R, UI)
         end
         if ok and type(parts) == "table" then
             for _,p in ipairs(parts) do
-                if p and p.Parent then
+                if p and p.Parent and p:IsDescendantOf(items) then
                     local m = topModelUnderItems(p, items) or p
                     if m and m.Parent and (m:IsA("Model") or m:IsA("BasePart")) then
                         push(m)
@@ -1048,7 +1194,10 @@ return function(C, R, UI)
         if not (chest and chest.Parent and chest:IsA("Model")) then return {} end
         local mp = mainPart(chest)
         if not mp then return {} end
+
         local itemsRoot = itemsFolder()
+        if not (itemsRoot and itemsRoot.Parent) then return {} end
+
         local chestCenter = mp.Position
         local chestTopY = mp.Position.Y + (mp.Size.Y * 0.5)
         local params = makeLootRayParams({ chest })
@@ -1059,15 +1208,10 @@ return function(C, R, UI)
             local off = CHEST_LOOT_RAY_OFFSETS[i]
             local start = Vector3.new(chestCenter.X + off.X, chestTopY + CHEST_LOOT_RAY_START_PAD, chestCenter.Z + off.Z)
             local hit = WS:Raycast(start, Vector3.new(0, CHEST_LOOT_RAY_UP_DISTANCE, 0), params)
-            if hit and hit.Instance and hit.Instance.Parent then
+            if hit and hit.Instance and hit.Instance.Parent and hit.Instance:IsDescendantOf(itemsRoot) then
                 local part = hit.Instance
-                local cand = nil
-                if itemsRoot then
-                    cand = topModelUnderItems(part, itemsRoot) or part
-                else
-                    cand = part:FindFirstAncestorOfClass("Model") or part
-                end
-                if cand and cand.Parent and (not seen[cand]) then
+                local cand = topModelUnderItems(part, itemsRoot) or part
+                if cand and cand.Parent and (not seen[cand]) and isUnderItems(cand, itemsRoot) then
                     if not isChestInst(cand) then
                         seen[cand] = true
                         out[#out+1] = cand
@@ -1084,6 +1228,8 @@ return function(C, R, UI)
         if not root then return {} end
 
         local itemsRoot = itemsFolder()
+        if not (itemsRoot and itemsRoot.Parent) then return {} end
+
         local params = makeLootRayParams({ chest })
         local out = {}
         local seen = {}
@@ -1112,16 +1258,11 @@ return function(C, R, UI)
                 local start = base + right * x + up * y
                 local hit = WS:Raycast(start, forward * CHEST_FWD_WALL_RAY_DISTANCE, params)
 
-                if hit and hit.Instance and hit.Instance.Parent then
+                if hit and hit.Instance and hit.Instance.Parent and hit.Instance:IsDescendantOf(itemsRoot) then
                     local part = hit.Instance
-                    local cand = nil
-                    if itemsRoot then
-                        cand = topModelUnderItems(part, itemsRoot) or part
-                    else
-                        cand = part:FindFirstAncestorOfClass("Model") or part
-                    end
+                    local cand = topModelUnderItems(part, itemsRoot) or part
 
-                    if cand and cand.Parent and (not seen[cand]) and (not isChestInst(cand)) then
+                    if cand and cand.Parent and (not seen[cand]) and isUnderItems(cand, itemsRoot) and (not isChestInst(cand)) then
                         local candPos = nil
                         if cand:IsA("BasePart") then
                             candPos = cand.Position
@@ -1178,12 +1319,7 @@ return function(C, R, UI)
                     local n = inst.Name
 
                     if n == "Thorn Body" then
-                        if (not hasThornBodyOwned()) then
-                            pcall(function() takeItemToInventory(inst) end)
-                            task.wait(0.05)
-                        end
-                        pcall(tryEquipThornBody)
-                        did = true
+                        did = (tryEquipThornBody(inst) and true or false)
                     elseif ALWAYS_TAKE_NAMES[n] then
                         did = takeItemToInventory(inst) and true or false
                     else
@@ -1220,12 +1356,7 @@ return function(C, R, UI)
                 local did = false
 
                 if n == "Thorn Body" then
-                    if (not hasThornBodyOwned()) then
-                        pcall(function() takeItemToInventory(inst) end)
-                        task.wait(0.05)
-                    end
-                    pcall(tryEquipThornBody)
-                    did = true
+                    did = (tryEquipThornBody(inst) and true or false)
                 elseif ALWAYS_TAKE_NAMES[n] then
                     did = takeItemToInventory(inst) and true or false
                 else
@@ -1262,12 +1393,7 @@ return function(C, R, UI)
                     local did = false
 
                     if n == "Thorn Body" then
-                        if (not hasThornBodyOwned()) then
-                            pcall(function() takeItemToInventory(inst) end)
-                            task.wait(0.05)
-                        end
-                        pcall(tryEquipThornBody)
-                        did = true
+                        did = (tryEquipThornBody(inst) and true or false)
                     elseif ALWAYS_TAKE_NAMES[n] then
                         did = takeItemToInventory(inst) and true or false
                     else
@@ -1691,11 +1817,9 @@ return function(C, R, UI)
         if not (target and target.Parent) then return end
 
         if target.Name == "Thorn Body" then
-            if (not hasThornBodyOwned()) then
-                pcall(function() takeItemToInventory(target) end)
-                task.wait(0.05)
-            end
-            pcall(tryEquipThornBody)
+            pcall(function()
+                tryEquipThornBody(target)
+            end)
             return
         end
 
