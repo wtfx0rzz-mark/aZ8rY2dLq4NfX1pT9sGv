@@ -814,7 +814,6 @@ return function(C, R, UI)
         return true
     end
 
-
     local CHEST_FLOOR_RAY_DEPTH = 80.0
     local FRONT_DIST = 4.0
     local STAND_UP = 2.5
@@ -838,6 +837,15 @@ return function(C, R, UI)
         Vector3.new(-CHEST_LOOT_RAY_OFF, 0,  CHEST_LOOT_RAY_OFF),
         Vector3.new(-CHEST_LOOT_RAY_OFF, 0, -CHEST_LOOT_RAY_OFF),
     }
+
+    local CHEST_FWD_WALL_RAY_DISTANCE   = 42.0
+    local CHEST_FWD_WALL_COLS          = 9
+    local CHEST_FWD_WALL_ROWS          = 7
+    local CHEST_FWD_WALL_HALF_WIDTH    = 8.0
+    local CHEST_FWD_WALL_HALF_HEIGHT   = 5.0
+    local CHEST_FWD_WALL_START_AHEAD   = 1.25
+    local CHEST_FWD_WALL_START_UP      = 2.0
+    local CHEST_FWD_WALL_MAX_RAYS      = 90
 
     local function makeChestRayParams(extras)
         local params = RaycastParams.new()
@@ -1071,8 +1079,95 @@ return function(C, R, UI)
         return out
     end
 
+    local function forwardWallRaycastCandidates(chest)
+        local root = hrp()
+        if not root then return {} end
+
+        local itemsRoot = itemsFolder()
+        local params = makeLootRayParams({ chest })
+        local out = {}
+        local seen = {}
+
+        local chestPos = (chest and chest.Parent) and modelWorldPos(chest) or nil
+        local capRad = math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, (tonumber(C.State.ChestSpawnRadius) or 10.0) + 12.0)
+
+        local forward = root.CFrame.LookVector
+        local right = root.CFrame.RightVector
+        local up = root.CFrame.UpVector
+        local base = root.Position + forward * CHEST_FWD_WALL_START_AHEAD + Vector3.new(0, CHEST_FWD_WALL_START_UP, 0)
+
+        local cols = math.max(1, tonumber(CHEST_FWD_WALL_COLS) or 1)
+        local rows = math.max(1, tonumber(CHEST_FWD_WALL_ROWS) or 1)
+        local dx = (cols > 1) and ((CHEST_FWD_WALL_HALF_WIDTH * 2) / (cols - 1)) or 0
+        local dy = (rows > 1) and ((CHEST_FWD_WALL_HALF_HEIGHT * 2) / (rows - 1)) or 0
+
+        local rayCount = 0
+        for r = 0, rows - 1 do
+            local y = -CHEST_FWD_WALL_HALF_HEIGHT + (dy * r)
+            for c = 0, cols - 1 do
+                rayCount += 1
+                if rayCount > CHEST_FWD_WALL_MAX_RAYS then break end
+
+                local x = -CHEST_FWD_WALL_HALF_WIDTH + (dx * c)
+                local start = base + right * x + up * y
+                local hit = WS:Raycast(start, forward * CHEST_FWD_WALL_RAY_DISTANCE, params)
+
+                if hit and hit.Instance and hit.Instance.Parent then
+                    local part = hit.Instance
+                    local cand = nil
+                    if itemsRoot then
+                        cand = topModelUnderItems(part, itemsRoot) or part
+                    else
+                        cand = part:FindFirstAncestorOfClass("Model") or part
+                    end
+
+                    if cand and cand.Parent and (not seen[cand]) and (not isChestInst(cand)) then
+                        local candPos = nil
+                        if cand:IsA("BasePart") then
+                            candPos = cand.Position
+                        else
+                            candPos = modelWorldPos(cand)
+                        end
+
+                        local okNear = true
+                        if candPos and chestPos then
+                            okNear = ((candPos - chestPos).Magnitude <= capRad)
+                        elseif candPos then
+                            okNear = ((candPos - root.Position).Magnitude <= capRad)
+                        end
+
+                        if okNear then
+                            seen[cand] = true
+                            out[#out+1] = cand
+                        end
+                    end
+                end
+            end
+            if rayCount > CHEST_FWD_WALL_MAX_RAYS then break end
+        end
+
+        return out
+    end
+
     local function processRaycastNewLoot(chest, preSet, maxCount)
         local cands = lootRaycastCandidates(chest)
+
+        local wall = forwardWallRaycastCandidates(chest)
+        if #wall > 0 then
+            local seen = {}
+            for i=1,#cands do
+                local v = cands[i]
+                if v then seen[v] = true end
+            end
+            for i=1,#wall do
+                local inst = wall[i]
+                if inst and (not seen[inst]) then
+                    cands[#cands+1] = inst
+                    seen[inst] = true
+                end
+            end
+        end
+
         local didAny = 0
         for i=1,#cands do
             local inst = cands[i]
@@ -1197,10 +1292,6 @@ return function(C, R, UI)
             end
         end
         return didAny
-    end
-
-    local function captureAllNear(pos, rad, maxCount)
-        return processAllNear(pos, rad, maxCount)
     end
 
     local function confirmAndCaptureDropsForChest(chest, preSet)
