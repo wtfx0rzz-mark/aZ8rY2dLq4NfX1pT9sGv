@@ -523,76 +523,57 @@ return function(C, R, UI)
 
         local armourVal = getArmourValue()
         if type(armourVal) ~= "number" then armourVal = 0 end
-        if armourVal > 0.4 then
-            return true
-        end
+        if armourVal > 0.4 then return true end
 
         local now = os.clock()
-        if (now - lastThornEquipAt) < MIN_THORN_EQUIP_INTERVAL then
-            return false
-        end
+        if (now - lastThornEquipAt) < MIN_THORN_EQUIP_INTERVAL then return false end
 
-        local startRE, stopRE, equipRF = getEquipArmourRemotes()
-        if not equipRF then
-            return false
-        end
+        local _, _, equipRF = getEquipArmourRemotes()
+        if not equipRF then return false end
 
-        local armourChild = armourFolderInst:FindFirstChild(targetName)
-
-        if (not armourChild) and worldInst and worldInst.Parent and startRE and stopRE then
-            pcall(function() startRE:FireServer(worldInst) end)
-            RunService.Heartbeat:Wait()
-            pcall(function() stopRE:FireServer(worldInst) end)
-            RunService.Heartbeat:Wait()
-            pcall(function() stopRE:FireServer(worldInst) end)
-
-            armourChild = waitForArmourChild(armourFolderInst, targetName, ARMOUR_APPEAR_TIMEOUT)
-        end
-
-        local target = armourFolderInst:FindFirstChild(targetName) or armourChild
-        if not (target and target.Parent) then
-            return false
-        end
-
-        local equipped = false
-        for i = 1, THORN_EQUIP_RETRIES do
-            target = armourFolderInst:FindFirstChild(targetName) or target
-            if not (target and target.Parent) then
-                break
-            end
-
-            local ok, ret = pcall(function()
+        local function callEquip(inst)
+            return pcall(function()
                 if equipRF:IsA("RemoteFunction") then
-                    return equipRF:InvokeServer(target)
+                    return equipRF:InvokeServer(inst)
                 else
-                    equipRF:FireServer(target)
+                    equipRF:FireServer(inst)
                     return true
                 end
             end)
+        end
 
-            if ok and ret ~= false then
+        local function armourNowOk()
+            local av = getArmourValue()
+            if type(av) ~= "number" then av = 0 end
+            return av > 0.4
+        end
+
+        if worldInst and worldInst.Parent then
+            for i = 1, THORN_EQUIP_RETRIES do
+                if not (worldInst and worldInst.Parent) then break end
+                local ok, ret = callEquip(worldInst)
                 RunService.Heartbeat:Wait()
-                local av = getArmourValue()
-                if type(av) ~= "number" then av = 0 end
-                if (ret == true) or (av > 0.4) then
-                    equipped = true
-                    break
+                if ok and ret ~= false and (ret == true or armourNowOk()) then
+                    lastThornEquipAt = os.clock()
+                    return true
                 end
-            end
-
-            local t0 = os.clock()
-            while (os.clock() - t0) < THORN_RETRY_WAIT do
-                RunService.Heartbeat:Wait()
+                task.wait(THORN_RETRY_WAIT)
             end
         end
 
-        if worldInst and worldInst.Parent and stopRE and stopRE:IsA("RemoteEvent") then
-            pcall(function() stopRE:FireServer(worldInst) end)
-        end
+        local target = armourFolderInst:FindFirstChild(targetName) or waitForArmourChild(armourFolderInst, targetName, ARMOUR_APPEAR_TIMEOUT)
+        if not (target and target.Parent) then return false end
 
-        if equipped then
-            lastThornEquipAt = os.clock()
-            return true
+        for i = 1, THORN_EQUIP_RETRIES do
+            target = armourFolderInst:FindFirstChild(targetName) or target
+            if not (target and target.Parent) then break end
+            local ok, ret = callEquip(target)
+            RunService.Heartbeat:Wait()
+            if ok and ret ~= false and (ret == true or armourNowOk()) then
+                lastThornEquipAt = os.clock()
+                return true
+            end
+            task.wait(THORN_RETRY_WAIT)
         end
 
         return false
