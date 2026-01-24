@@ -18,15 +18,16 @@ return function(C, R, UI)
     C.Config = C.Config or {}
 
     local TUNE = C.Config
-    TUNE.CHOP_SWING_DELAY     = TUNE.CHOP_SWING_DELAY     or 0.50
-    TUNE.TREE_NAME            = TUNE.TREE_NAME            or "Small Tree"
-    TUNE.UID_SUFFIX           = TUNE.UID_SUFFIX           or "0000000000"
-    TUNE.ChopPrefer           = TUNE.ChopPrefer           or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
-    TUNE.MAX_TARGETS_PER_WAVE = TUNE.MAX_TARGETS_PER_WAVE or 20
-    TUNE.CHAR_MAX_PER_WAVE    = TUNE.CHAR_MAX_PER_WAVE    or 20
-    TUNE.CHAR_DEBOUNCE_SEC    = TUNE.CHAR_DEBOUNCE_SEC    or 0.5
-    TUNE.CHAR_HIT_STEP_WAIT   = TUNE.CHAR_HIT_STEP_WAIT   or 0.0
-    TUNE.CHAR_SORT            = (TUNE.CHAR_SORT ~= false)
+    TUNE.CHOP_SWING_DELAY       = TUNE.CHOP_SWING_DELAY       or 0.50
+    TUNE.SMALL_NEXT_TREE_DELAY  = TUNE.SMALL_NEXT_TREE_DELAY  or 0.25
+    TUNE.TREE_NAME              = TUNE.TREE_NAME              or "Small Tree"
+    TUNE.UID_SUFFIX             = TUNE.UID_SUFFIX             or "0000000000"
+    TUNE.ChopPrefer             = TUNE.ChopPrefer             or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
+    TUNE.MAX_TARGETS_PER_WAVE   = TUNE.MAX_TARGETS_PER_WAVE   or 20
+    TUNE.CHAR_MAX_PER_WAVE      = TUNE.CHAR_MAX_PER_WAVE      or 20
+    TUNE.CHAR_DEBOUNCE_SEC      = TUNE.CHAR_DEBOUNCE_SEC      or 0.5
+    TUNE.CHAR_HIT_STEP_WAIT     = TUNE.CHAR_HIT_STEP_WAIT     or 0.0
+    TUNE.CHAR_SORT              = (TUNE.CHAR_SORT ~= false)
 
     local TRAP_MAX_RADIUS = 20
 
@@ -581,7 +582,8 @@ return function(C, R, UI)
             ["Snowy Small Tree"] = true,
             ["Small Webbed Tree"] = true,
             ["Christmas Pine"] = true,
-            ["Northern Pine"] = true
+            ["Northern Pine"] = true,
+            ["Brightwood Tree"] = true
         }
 
         local TreeImpactCF = setmetatable({}, { __mode = "k" })
@@ -885,7 +887,7 @@ return function(C, R, UI)
                                 batch[i] = allTrees[idx]
                             end
                             SmallTreeAura._cursor = SmallTreeAura._cursor + batchSize
-                            st_chopWaveTrees(batch, TUNE.CHOP_SWING_DELAY)
+                            st_chopWaveTrees(batch, TUNE.SMALL_NEXT_TREE_DELAY)
                         else
                             task.wait(0.2)
                         end
