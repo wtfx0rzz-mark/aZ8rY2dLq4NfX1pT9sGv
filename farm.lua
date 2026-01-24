@@ -587,11 +587,7 @@ return function(C, R, UI)
                 end
 
                 if didHit then
-                    if axe.Name == "Strong Axe" then
-                        smallNextTreeAt = now
-                    else
-                        smallNextTreeAt = now + SMALL_NEXT_TREE_DELAY
-                    end
+                    smallNextTreeAt = now + SMALL_NEXT_TREE_DELAY
                 end
             end)
         end
