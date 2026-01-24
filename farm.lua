@@ -41,7 +41,7 @@ return function(C, R, UI)
 
         local SMALL_STEP_INTERVAL = 0.05
         local SMALL_HITS_PER_STEP = 10
-        local SMALL_NEXT_TREE_DELAY = 0.2
+        local SMALL_NEXT_TREE_DELAY = 0.25
 
         local BIG_ZERO_PACE_DELAY = 0.0
 
