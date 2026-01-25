@@ -974,7 +974,7 @@ return function(C, R, UI)
         {},{},{},{},{},{},{}
 
     local _bringBusy = false
-    local function fastBringToGround(selectedSet)
+    local function fastBringToGround(selectedSet, opts)
         if not selectedSet or next(selectedSet) == nil then
             return
         end
@@ -982,6 +982,8 @@ return function(C, R, UI)
             return
         end
         _bringBusy = true
+
+        local skipFoodRot = (opts and opts.SkipFoodRot == true) or false
 
         local ok = pcall(function()
             dropCounter = 0
@@ -1005,6 +1007,9 @@ return function(C, R, UI)
                     end
                     if m and not seenModel[m] and not alreadyMoved[m] then
                         seenModel[m] = true
+                        if skipFoodRot and m:GetAttribute("FoodRot") ~= nil then
+                            continue
+                        end
                         if not isExcludedModel(m) and not isUnderLogWall(m) then
                             local nm = m.Name
                             if not (nm == "Log" and isWallVariant(m)) then
@@ -1104,7 +1109,7 @@ return function(C, R, UI)
 
     tab:Section({ Title = "Food → Ground (Multi)" })
     multiSelectDropdown({ title = "Select Food Items", values = foodItems, setter = function(s) selFoodMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selFoodMany) end })
+    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selFoodMany, { SkipFoodRot = true }) end })
 
     tab:Section({ Title = "Medical → Ground (Multi)" })
     multiSelectDropdown({ title = "Select Medical Items", values = medicalItems, setter = function(s) selMedicalMany = s end })
