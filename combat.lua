@@ -923,7 +923,10 @@ return function(C, R, UI)
 
         local function bt_isBigTreeName(n)
             if BIG_TREE_NAMES[n] then return true end
-            return type(n) == "string" and (n:match("^WebbedTreeBig%d*$") ~= nil or n:match("^FairyTreeBig%d+$") ~= nil)
+            if type(n) ~= "string" then return false end
+            return (n:match("^WebbedTreeBig%d*$") ~= nil)
+                or (n:match("^FairyTreeBig%d+$") ~= nil)
+                or (n:match("^Corrupted%s+TreeBig%d+$") ~= nil)
         end
 
         local function bt_findItem(name)
