@@ -461,23 +461,18 @@ return function(C, R, UI)
     local function revolverSnapDown(model, maxDepth, pad)
         if not (model and model.Parent) then return false end
         if model.Name ~= "Revolver" then return false end
-
         local rp = physicalRootPart(model)
         if not rp then return false end
-
         local depth = maxDepth or 360
         local extraPad = pad or 0.14
-
         local params = rayParamsForRevolverSnap(model)
         local start = rp.Position + Vector3.new(0, 80, 0)
         local hit = WS:Raycast(start, Vector3.new(0, -depth, 0), params)
         if not hit then return false end
-
         local halfY = rp.Size.Y * 0.5
         local targetPos = Vector3.new(rp.Position.X, hit.Position.Y + halfY + extraPad, rp.Position.Z)
         local rot = (rp.CFrame - rp.CFrame.Position)
         local targetCF = CFrame.new(targetPos) * rot
-
         local snap = setCollide(model, false)
         zeroAssembly(model)
         if model:IsA("Model") then
@@ -487,13 +482,11 @@ return function(C, R, UI)
             if p then p.CFrame = targetCF end
         end
         setCollide(model, true, snap)
-
         for _,p in ipairs(getAllParts(model)) do
             p.Anchored = false
             p.AssemblyLinearVelocity  = Vector3.new()
             p.AssemblyAngularVelocity = Vector3.new()
         end
-
         return true
     end
 
@@ -983,7 +976,8 @@ return function(C, R, UI)
         end
         _bringBusy = true
 
-        local skipFoodRot = (opts and opts.SkipFoodRot == true) or false
+        local skipFoodRot   = (opts and opts.SkipFoodRot == true) or false
+        local excludeCorpse = (opts and opts.ExcludeCorpse == true) or false
 
         local ok = pcall(function()
             dropCounter = 0
@@ -1007,6 +1001,14 @@ return function(C, R, UI)
                     end
                     if m and not seenModel[m] and not alreadyMoved[m] then
                         seenModel[m] = true
+
+                        if excludeCorpse then
+                            local ln = (m.Name or ""):lower()
+                            if ln:find("corpse", 1, true) then
+                                continue
+                            end
+                        end
+
                         if skipFoodRot and m:GetAttribute("FoodRot") ~= nil then
                             continue
                         end
@@ -1125,7 +1127,7 @@ return function(C, R, UI)
 
     tab:Section({ Title = "Pelts → Ground (Multi)" })
     multiSelectDropdown({ title = "Select Pelts", values = pelts, setter = function(s) selPeltMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selPeltMany) end })
+    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selPeltMany, { ExcludeCorpse = true }) end })
 
     do
         local ORB_RADIUS     = 2.2
