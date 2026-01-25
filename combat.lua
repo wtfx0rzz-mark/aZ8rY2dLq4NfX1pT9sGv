@@ -18,16 +18,15 @@ return function(C, R, UI)
     C.Config = C.Config or {}
 
     local TUNE = C.Config
-    TUNE.CHOP_SWING_DELAY       = TUNE.CHOP_SWING_DELAY       or 0.50
-    TUNE.SMALL_NEXT_TREE_DELAY  = TUNE.SMALL_NEXT_TREE_DELAY  or 0.25
-    TUNE.TREE_NAME              = TUNE.TREE_NAME              or "Small Tree"
-    TUNE.UID_SUFFIX             = TUNE.UID_SUFFIX             or "0000000000"
-    TUNE.ChopPrefer             = TUNE.ChopPrefer             or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
-    TUNE.MAX_TARGETS_PER_WAVE   = TUNE.MAX_TARGETS_PER_WAVE   or 20
-    TUNE.CHAR_MAX_PER_WAVE      = TUNE.CHAR_MAX_PER_WAVE      or 20
-    TUNE.CHAR_DEBOUNCE_SEC      = TUNE.CHAR_DEBOUNCE_SEC      or 0.5
-    TUNE.CHAR_HIT_STEP_WAIT     = TUNE.CHAR_HIT_STEP_WAIT     or 0.0
-    TUNE.CHAR_SORT              = (TUNE.CHAR_SORT ~= false)
+    TUNE.CHOP_SWING_DELAY     = TUNE.CHOP_SWING_DELAY     or 0.50
+    TUNE.TREE_NAME            = TUNE.TREE_NAME            or "Small Tree"
+    TUNE.UID_SUFFIX           = TUNE.UID_SUFFIX           or "0000000000"
+    TUNE.ChopPrefer           = TUNE.ChopPrefer           or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
+    TUNE.MAX_TARGETS_PER_WAVE = TUNE.MAX_TARGETS_PER_WAVE or 20
+    TUNE.CHAR_MAX_PER_WAVE    = TUNE.CHAR_MAX_PER_WAVE    or 20
+    TUNE.CHAR_DEBOUNCE_SEC    = TUNE.CHAR_DEBOUNCE_SEC    or 0.5
+    TUNE.CHAR_HIT_STEP_WAIT   = TUNE.CHAR_HIT_STEP_WAIT   or 0.0
+    TUNE.CHAR_SORT            = (TUNE.CHAR_SORT ~= false)
 
     local TRAP_MAX_RADIUS = 20
 
@@ -833,6 +832,7 @@ return function(C, R, UI)
                         anySent = true
 
                         task.spawn(function()
+                            if not SmallTreeAura.running then return end
                             if not (mdl and mdl.Parent) then return end
                             local hitPart = st_bestTreeHitPart(mdl)
                             if not hitPart then return end
@@ -842,6 +842,7 @@ return function(C, R, UI)
                                 local bucket = st_attrBucket(mdl)
                                 if bucket then bucket:SetAttribute(hitId, true) end
                             end)
+                            if not SmallTreeAura.running then return end
                             st_HitTarget(mdl, tool, hitId, impactCF)
                         end)
                     else
@@ -887,7 +888,7 @@ return function(C, R, UI)
                                 batch[i] = allTrees[idx]
                             end
                             SmallTreeAura._cursor = SmallTreeAura._cursor + batchSize
-                            st_chopWaveTrees(batch, TUNE.SMALL_NEXT_TREE_DELAY)
+                            st_chopWaveTrees(batch, TUNE.CHOP_SWING_DELAY)
                         else
                             task.wait(0.2)
                         end
@@ -1162,6 +1163,7 @@ return function(C, R, UI)
                         anySent = true
 
                         task.spawn(function()
+                            if not BigTreeAura.running then return end
                             if not (mdl and mdl.Parent) then return end
                             local hitPart = bt_bestTreeHitPart(mdl)
                             if not hitPart then return end
@@ -1171,6 +1173,7 @@ return function(C, R, UI)
                                 local bucket = bt_attrBucket(mdl)
                                 if bucket then bucket:SetAttribute(hitId, true) end
                             end)
+                            if not BigTreeAura.running then return end
                             bt_HitTarget(mdl, tool, hitId, impactCF)
                         end)
                     else
