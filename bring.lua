@@ -39,7 +39,10 @@ return function(C, R, UI)
     }
     local fuelItems = {"Log","Coal","Fuel Canister","Oil Barrel","Biofuel","Chair"}
     local foodItems = {
-        "Morsel","Cooked Morsel","Steak","Cooked Steak","Ribs","Cooked Ribs","Cake","Berry","Carrot",
+        "Morsel","Rotten Morsel","Cooked Morsel",
+        "Steak","Rotten Steak","Cooked Steak",
+        "Ribs","Cooked Ribs","Cake","Berry",
+        "Carrot","Rotten Carrot",
         "Chilli","Stew","Pumpkin","Hearty Stew","Corn","BBQ ribs","Apple","Mackerel","Salmon","Swordfish","Acorn","Strawberry"
     }
     local medicalItems = {"Bandage","MedKit"}
@@ -720,6 +723,11 @@ return function(C, R, UI)
             return true
         end
 
+        local rk = "Rotten " .. nm
+        if selectedSet[rk] then
+            return m:GetAttribute("FoodRot") ~= nil
+        end
+
         if selectedSet[nm] then return true end
         if selectedSet["Mossy Coin"] and (nm == "Mossy Coin" or nm:match("^Mossy Coin%d+$")) then return true end
         if selectedSet["Cultist"] and m and m:IsA("Model") and l:find("cultist",1,true) and hasHumanoid(m) then return true end
@@ -1009,9 +1017,16 @@ return function(C, R, UI)
                             end
                         end
 
-                        if skipFoodRot and m:GetAttribute("FoodRot") ~= nil then
-                            continue
+                        if skipFoodRot then
+                            local rot = m:GetAttribute("FoodRot")
+                            if rot ~= nil then
+                                local rk = "Rotten " .. tostring(m.Name or "")
+                                if not selectedSet[rk] then
+                                    continue
+                                end
+                            end
                         end
+
                         if not isExcludedModel(m) and not isUnderLogWall(m) then
                             local nm = m.Name
                             if not (nm == "Log" and isWallVariant(m)) then
