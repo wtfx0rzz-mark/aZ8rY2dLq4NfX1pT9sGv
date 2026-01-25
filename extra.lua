@@ -358,6 +358,7 @@ return function(C, R, UI)
         ["Tactical Shotgun"] = true,
         ["Morningstar"] = true,
         ["Laser Cannon"] = true,
+        ["Scythe"] = true
     }
 
     local function isSwordName(n)
