@@ -39,10 +39,11 @@ return function(C, R, UI)
     }
     local fuelItems = {"Log","Coal","Fuel Canister","Oil Barrel","Biofuel","Chair"}
     local foodItems = {
-        "Morsel","Rotten Morsel","Cooked Morsel",
-        "Steak","Rotten Steak","Cooked Steak",
+        "Rotten",
+        "Morsel","Cooked Morsel",
+        "Steak","Cooked Steak",
         "Ribs","Cooked Ribs","Cake","Berry",
-        "Carrot","Rotten Carrot",
+        "Carrot",
         "Chilli","Stew","Pumpkin","Hearty Stew","Corn","BBQ ribs","Apple","Mackerel","Salmon","Swordfish","Acorn","Strawberry"
     }
     local medicalItems = {"Bandage","MedKit"}
@@ -58,9 +59,10 @@ return function(C, R, UI)
     }
     local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"}
 
-    local fuelSet, junkSet, cookSet, scrapAlso = {}, {}, {}, {}
+    local fuelSet, junkSet, cookSet, scrapAlso, foodSet = {}, {}, {}, {}, {}
     for _,n in ipairs(fuelItems) do fuelSet[n] = true end
     for _,n in ipairs(junkItems) do junkSet[n] = true end
+    for _,n in ipairs(foodItems) do if n ~= "Rotten" then foodSet[n] = true end end
     cookSet["Morsel"] = true; cookSet["Steak"] = true; cookSet["Ribs"] = true
     scrapAlso["Log"] = true;  scrapAlso["Chair"] = true
 
@@ -723,6 +725,20 @@ return function(C, R, UI)
             return true
         end
 
+        if selectedSet["Rotten"] and m:GetAttribute("FoodRot") ~= nil and foodSet[nm] then
+            if nm == "Apple" then
+                if itemsFolder and m.Parent ~= itemsFolder then return false end
+                if isInsideTree(m) then return false end
+                return true
+            end
+            if nm == "Berry" then
+                if itemsFolder and m.Parent ~= itemsFolder then return false end
+                if isInsideTree(m) then return false end
+                return true
+            end
+            return true
+        end
+
         local rk = "Rotten " .. nm
         if selectedSet[rk] then
             return m:GetAttribute("FoodRot") ~= nil
@@ -1020,8 +1036,12 @@ return function(C, R, UI)
                         if skipFoodRot then
                             local rot = m:GetAttribute("FoodRot")
                             if rot ~= nil then
-                                local rk = "Rotten " .. tostring(m.Name or "")
-                                if not selectedSet[rk] then
+                                local nm0 = tostring(m.Name or "")
+                                local rk = "Rotten " .. nm0
+                                local allow = false
+                                if selectedSet["Rotten"] and foodSet[nm0] then allow = true end
+                                if selectedSet[rk] then allow = true end
+                                if not allow then
                                     continue
                                 end
                             end
