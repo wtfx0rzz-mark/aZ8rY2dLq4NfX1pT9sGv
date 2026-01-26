@@ -18,15 +18,17 @@ return function(C, R, UI)
     C.Config = C.Config or {}
 
     local TUNE = C.Config
-    TUNE.CHOP_SWING_DELAY     = TUNE.CHOP_SWING_DELAY     or 0.50
-    TUNE.TREE_NAME            = TUNE.TREE_NAME            or "Small Tree"
-    TUNE.UID_SUFFIX           = TUNE.UID_SUFFIX           or "0000000000"
-    TUNE.ChopPrefer           = TUNE.ChopPrefer           or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
-    TUNE.MAX_TARGETS_PER_WAVE = TUNE.MAX_TARGETS_PER_WAVE or 20
-    TUNE.CHAR_MAX_PER_WAVE    = TUNE.CHAR_MAX_PER_WAVE    or 20
-    TUNE.CHAR_DEBOUNCE_SEC    = TUNE.CHAR_DEBOUNCE_SEC    or 0.5
-    TUNE.CHAR_HIT_STEP_WAIT   = TUNE.CHAR_HIT_STEP_WAIT   or 0.0
-    TUNE.CHAR_SORT            = (TUNE.CHAR_SORT ~= false)
+    TUNE.CHOP_SWING_DELAY         = TUNE.CHOP_SWING_DELAY         or 0.50
+    TUNE.TREE_NAME                = TUNE.TREE_NAME                or "Small Tree"
+    TUNE.UID_SUFFIX               = TUNE.UID_SUFFIX               or "0000000000"
+    TUNE.ChopPrefer               = TUNE.ChopPrefer               or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
+    TUNE.MAX_TARGETS_PER_WAVE     = TUNE.MAX_TARGETS_PER_WAVE     or 20
+    TUNE.CHAR_MAX_PER_WAVE        = TUNE.CHAR_MAX_PER_WAVE        or 20
+    TUNE.CHAR_DEBOUNCE_SEC        = TUNE.CHAR_DEBOUNCE_SEC        or 0.5
+    TUNE.CHAR_HIT_STEP_WAIT       = TUNE.CHAR_HIT_STEP_WAIT       or 0.0
+    TUNE.CHAR_SORT                = (TUNE.CHAR_SORT ~= false)
+    TUNE.EQUIP_VERIFY_TIMEOUT_SEC = TUNE.EQUIP_VERIFY_TIMEOUT_SEC or 0.08
+    TUNE.EQUIP_VERIFY_STEP_SEC    = TUNE.EQUIP_VERIFY_STEP_SEC    or 0.02
 
     local TRAP_MAX_RADIUS = 20
 
@@ -326,10 +328,12 @@ return function(C, R, UI)
             local tool = char_findItem(wantedName)
             if tool then
                 char_SafeEquip(tool)
+                local timeout = tonumber(TUNE.EQUIP_VERIFY_TIMEOUT_SEC) or 0.08
+                local step = tonumber(TUNE.EQUIP_VERIFY_STEP_SEC) or 0.02
                 local t0 = os.clock()
-                while os.clock() - t0 < 0.25 do
+                while os.clock() - t0 < timeout do
                     if char_equippedToolName() == wantedName then break end
-                    task.wait(0.02)
+                    task.wait(step)
                 end
             end
             return tool
@@ -356,8 +360,7 @@ return function(C, R, UI)
             if head and head:IsA("BasePart") then return head.Position end
             local r = ch:FindFirstChild("HumanoidRootPart")
             if r and r:IsA("BasePart") then return r.Position + Vector3.new(0, 2.5, 0) end
-            return nil
-        end
+            return nil end
 
         local function char_modelOf(inst)
             if not inst then return nil end
@@ -636,10 +639,12 @@ return function(C, R, UI)
             local tool = st_findItem(wantedName)
             if tool then
                 st_SafeEquip(tool)
+                local timeout = tonumber(TUNE.EQUIP_VERIFY_TIMEOUT_SEC) or 0.08
+                local step = tonumber(TUNE.EQUIP_VERIFY_STEP_SEC) or 0.02
                 local t0 = os.clock()
-                while os.clock() - t0 < 0.25 do
+                while os.clock() - t0 < timeout do
                     if st_equippedToolName() == wantedName then break end
-                    task.wait(0.02)
+                    task.wait(step)
                 end
             end
             return tool
@@ -995,10 +1000,12 @@ return function(C, R, UI)
             local tool = bt_findItem(wantedName)
             if tool then
                 bt_SafeEquip(tool)
+                local timeout = tonumber(TUNE.EQUIP_VERIFY_TIMEOUT_SEC) or 0.08
+                local step = tonumber(TUNE.EQUIP_VERIFY_STEP_SEC) or 0.02
                 local t0 = os.clock()
-                while os.clock() - t0 < 0.25 do
+                while os.clock() - t0 < timeout do
                     if bt_equippedToolName() == wantedName then break end
-                    task.wait(0.02)
+                    task.wait(step)
                 end
             end
             return tool
