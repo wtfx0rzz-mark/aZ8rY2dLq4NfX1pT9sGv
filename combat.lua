@@ -929,10 +929,12 @@ return function(C, R, UI)
         local function bt_isBigTreeName(n)
             if BIG_TREE_NAMES[n] then return true end
             if type(n) ~= "string" then return false end
+            if n:match("^TreeBig%d+$") ~= nil then return true end
             return (n:match("^WebbedTreeBig%d*$") ~= nil)
                 or (n:match("^FairyTreeBig%d+$") ~= nil)
                 or (n:match("^Corrupted%s+TreeBig%d+$") ~= nil)
         end
+
 
         local function bt_findItem(name)
             if not (lp and name) then return nil end
@@ -1039,7 +1041,10 @@ return function(C, R, UI)
             while current do
                 if current:IsA("Model") then
                     if bt_isBigTreeName(current.Name) then
-                        return current
+                        local p = current.Parent
+                        if not (p and p.Name == "Snare Trap") then
+                            return current
+                        end
                     end
                 end
                 current = current.Parent
