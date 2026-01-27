@@ -579,11 +579,8 @@ return function(C, R, UI)
             end)
         end
 
-        task.delay(0.5, function()
-            pcall(function()
-                if model_attach and model_attach.Parent then end
-            end)
-        end)
+        task.delay(0.5, function() end)
+
         task.delay(0.5, function()
             pcall(function()
                 if model and model.Parent then
@@ -880,7 +877,7 @@ return function(C, R, UI)
 
         while model and model.Parent do
             local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
-            if not pivot then break)
+            if not pivot then break end
             local pos = pivot.Position
             local dy = riserY - pos.Y
             if math.abs(dy) <= 0.4 then break end
