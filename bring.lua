@@ -5,6 +5,8 @@ return function(C, R, UI)
     local Run     = C.Services.Run or game:GetService("RunService")
     local lp      = Players.LocalPlayer
 
+    C.State = C.State or {}
+
     local function now() return os.clock() end
 
     local Tabs = UI and UI.Tabs or {}
@@ -30,8 +32,10 @@ return function(C, R, UI)
     local AIR_DROP_WAVE_AMPLITUDE = 1.0
     local AIR_DROP_WAVE_FREQUENCY = 1.3
 
-    local CAMPFIRE_PATH = workspace.Map.Campground.MainFire
-    local SCRAPPER_PATH = workspace.Map.Campground.Scrapper
+    local _map  = workspace:FindFirstChild("Map")
+    local _camp = _map and _map:FindFirstChild("Campground")
+    local CAMPFIRE_PATH = _camp and _camp:FindFirstChild("MainFire")
+    local SCRAPPER_PATH = _camp and _camp:FindFirstChild("Scrapper")
 
     local junkItems = {
         "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
@@ -551,11 +555,6 @@ return function(C, R, UI)
 
         task.delay(0.5, function()
             pcall(function()
-                if model_attach and model_attach.Parent then end
-            end)
-        end)
-        task.delay(0.5, function()
-            pcall(function()
                 if model and model.Parent then
                     model:SetAttribute("OrbInFlightAt", nil)
                     model:SetAttribute("OrbJob", nil)
@@ -792,9 +791,9 @@ return function(C, R, UI)
         if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
         if isExcludedModel(m) or isUnderLogWall(m) then return false end
         if m.Name == "Log" and isWallVariant(m) then return false end
-        local tIn = m:GetAttribute(INFLT_ATTR)
+        local tIn = tonumber(m:GetAttribute(INFLT_ATTR))
         local jIn = m:GetAttribute(JOB_ATTR)
-        if tIn and jIn and tostring(jIn) ~= tostring(jobId) and now() - tIn < STUCK_TTL then
+        if tIn and jIn and tostring(jIn) ~= tostring(jobId) and (now() - tIn) < STUCK_TTL then
             return false
         end
         if not nameMatches(selectedSet, m) then
@@ -1136,33 +1135,33 @@ return function(C, R, UI)
         end
     })
 
-    tab:Section({ Title = "Junk → Ground (Multi)" })
-    multiSelectDropdown({ title = "Select Junk Items", values = junkItems, setter = function(s) selJunkMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selJunkMany) end })
+    tab:Section({ Title = "Bring Scrap" })
+    multiSelectDropdown({ title = "Bring Scrap", values = junkItems, setter = function(s) selJunkMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selJunkMany) end })
 
-    tab:Section({ Title = "Fuel → Ground (Multi)" })
-    multiSelectDropdown({ title = "Select Fuel Items", values = fuelItems, setter = function(s) selFuelMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selFuelMany) end })
+    tab:Section({ Title = "Bring Fuel" })
+    multiSelectDropdown({ title = "Bring Fuel", values = fuelItems, setter = function(s) selFuelMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selFuelMany) end })
 
-    tab:Section({ Title = "Food → Ground (Multi)" })
-    multiSelectDropdown({ title = "Select Food Items", values = foodItems, setter = function(s) selFoodMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selFoodMany, { SkipFoodRot = true }) end })
+    tab:Section({ Title = "Bring Food" })
+    multiSelectDropdown({ title = "Bring Food", values = foodItems, setter = function(s) selFoodMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selFoodMany, { SkipFoodRot = true }) end })
 
-    tab:Section({ Title = "Medical → Ground (Multi)" })
-    multiSelectDropdown({ title = "Select Medical Items", values = medicalItems, setter = function(s) selMedicalMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selMedicalMany) end })
+    tab:Section({ Title = "Bring Medical" })
+    multiSelectDropdown({ title = "Bring Medical", values = medicalItems, setter = function(s) selMedicalMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selMedicalMany) end })
 
-    tab:Section({ Title = "Weapons/Armor → Ground (Multi)" })
-    multiSelectDropdown({ title = "Select Weapons/Armor", values = weaponsArmor, setter = function(s) selWAMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selWAMany) end })
+    tab:Section({ Title = "Bring Weapons/Armor" })
+    multiSelectDropdown({ title = "Bring Weapons/Armor", values = weaponsArmor, setter = function(s) selWAMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selWAMany) end })
 
-    tab:Section({ Title = "Ammo & Misc → Ground (Multi)" })
-    multiSelectDropdown({ title = "Select Ammo/Misc", values = ammoMisc, setter = function(s) selMiscMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selMiscMany) end })
+    tab:Section({ Title = "Bring Ammo & Misc" })
+    multiSelectDropdown({ title = "Bring Ammo & Misc", values = ammoMisc, setter = function(s) selMiscMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selMiscMany) end })
 
-    tab:Section({ Title = "Pelts → Ground (Multi)" })
-    multiSelectDropdown({ title = "Select Pelts", values = pelts, setter = function(s) selPeltMany = s end })
-    tab:Button({ Title = "Bring Selected (Fast)", Callback = function() fastBringToGround(selPeltMany, { ExcludeCorpse = true }) end })
+    tab:Section({ Title = "Bring Pelts" })
+    multiSelectDropdown({ title = "Bring Pelts", values = pelts, setter = function(s) selPeltMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selPeltMany, { ExcludeCorpse = true }) end })
 
     do
         local ORB_RADIUS     = 2.2
