@@ -282,6 +282,7 @@ return function(C, R, UI)
         local function isBigTreeName(name)
             if BIG_TREE_NAMES[name] then return true end
             if type(name) ~= "string" then return false end
+            if name:match("^TreeBig%d+$") ~= nil then return true end
             return name:match("^WebbedTreeBig%d*$") ~= nil
         end
 
@@ -314,6 +315,14 @@ return function(C, R, UI)
         local function isBigTreeModel(model)
             if not (model and model:IsA("Model")) then return false end
             if shouldSkipTree(model) then return false end
+
+            if type(model.Name) == "string" and model.Name:match("^TreeBig%d+$") then
+                local parent = model.Parent
+                if parent and parent.Name == "Snare Trap" then
+                    return false
+                end
+            end
+
             if not isBigTreeName(model.Name) then return false end
             local p = bestTreeHitPart(model)
             return p ~= nil and not looksDestroyed(model, p)
