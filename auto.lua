@@ -861,28 +861,37 @@ return function(C, R, UI)
         })
         task.defer(enableGod)
 
-        local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.2
-        local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
-        local EXCLUDE_ANCESTOR_SUBSTR = { "closetdoors", "closet", "door", "landmarks" }
-        local function strfindAny(s, list)
-            s = string.lower(s or "")
-            for _, w in ipairs(list) do if string.find(s, w, 1, true) then return true end end
-            return false
-        end
-        local function shouldSkipPrompt(p)
-            if not p or not p.Parent then return true end
-            if strfindAny(p.Name, EXCLUDE_NAME_SUBSTR) then return true end
-            pcall(function()
-                if strfindAny(p.ObjectText, EXCLUDE_NAME_SUBSTR) then error(true) end
-                if strfindAny(p.ActionText, EXCLUDE_NAME_SUBSTR) then error(true) end
-            end)
-            local a = p.Parent
-            while a and a ~= workspace do
-                if strfindAny(a.Name, EXCLUDE_ANCESTOR_SUBSTR) then return true end
-                a = a.Parent
-            end
-            return false
-        end
+local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.2
+local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
+local EXCLUDE_ANCESTOR_SUBSTR = { "closetdoors", "closet", "door", "landmarks" }
+
+local function strfindAny(s, list)
+    s = string.lower(s or "")
+    for _, w in ipairs(list) do
+        if string.find(s, w, 1, true) then return true end
+    end
+    return false
+end
+local function shouldSkipPrompt(p)
+    if not p or not p.Parent then return true end
+    if strfindAny(p.Name, EXCLUDE_NAME_SUBSTR) then return true end
+    -- PATCH: skip ONLY if the prompt text is exactly "TELEPORT" (case-insensitive)
+    local ot = string.upper(tostring(p.ObjectText or ""))
+    local at = string.upper(tostring(p.ActionText or ""))
+    if ot == "TELEPORT" or at == "TELEPORT" then return true end
+
+    pcall(function()
+        if strfindAny(p.ObjectText, EXCLUDE_NAME_SUBSTR) then error(true) end
+        if strfindAny(p.ActionText, EXCLUDE_NAME_SUBSTR) then error(true) end
+    end)
+
+    local a = p.Parent
+    while a and a ~= workspace do
+        if strfindAny(a.Name, EXCLUDE_ANCESTOR_SUBSTR) then return true end
+        a = a.Parent
+    end
+    return false
+end
         local promptDurations = setmetatable({}, { __mode = "k" })
         local shownConn, trigConn, hiddenConn
         local function restorePrompt(prompt)
