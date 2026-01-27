@@ -491,7 +491,6 @@ return function(C, R, UI)
             teleportSticky(returnCF, true)
         end
 
-        -- Unified: "Edge Button: Skip Night" exact sequence (used by both edge click + timer)
         local function runSkipNightEdgeSequence()
             doSkipNightSequence(0)
         end
@@ -612,7 +611,7 @@ return function(C, R, UI)
                 skipNightTimerThread = nil
             end
             skipNightTimerThread = task.spawn(function()
-                fireSkipNightOnce() -- one time immediately on enable
+                fireSkipNightOnce()
                 local nextAt = os.clock() + SKIP_NIGHT_TIMER_SECONDS
                 while skipNightTimerOn do
                     local now = os.clock()
@@ -875,7 +874,6 @@ end
 local function shouldSkipPrompt(p)
     if not p or not p.Parent then return true end
     if strfindAny(p.Name, EXCLUDE_NAME_SUBSTR) then return true end
-    -- PATCH: skip ONLY if the prompt text is exactly "TELEPORT" (case-insensitive)
     local ot = string.upper(tostring(p.ObjectText or ""))
     local at = string.upper(tostring(p.ActionText or ""))
     if ot == "TELEPORT" or at == "TELEPORT" then return true end
@@ -1121,158 +1119,127 @@ end
         end
         tab:Toggle({ Title = "Hide Big Trees (Local)", Value = false, Callback = function(state) if state then enableHideBigTrees() else disableHideBigTrees() end end })
 
-        local COIN_RADIUS      = 20
-        local COIN_INTERVAL    = 0.12
-        local COIN_TTL         = 1.0
-        local COIN_FORWARD     = 2.0
-        local COIN_HEAD_UP     = 0.5
-        local coinSeen = {}
-        local coinConn, coinAcc = nil, 0
-        local coinDirs = {}
-        do
-            local pitches = { -24, -12, 0, 12, 24 }
-            for i = 0, 15 do
-                local yaw = math.rad(i * 22.5)
-                local cy, sy = math.cos(yaw), math.sin(yaw)
-                for _,deg in ipairs(pitches) do
-                    local p = math.rad(deg)
-                    local cp, sp = math.cos(p), math.sin(p)
-                    coinDirs[#coinDirs+1] = Vector3.new(cy*cp, sp, sy*cp).Unit
-                end
-            end
+        local COIN_STATE = {
+            Radius = 75,
+            ScanInterval = 0.15,
+            FireCooldown = 0.35,
+            MaxPerScan = 8,
+        }
+        local lastCoinFireAt = setmetatable({}, { __mode = "k" })
+
+        local function coinNow() return os.clock() end
+
+        local function coinItemsFolder()
+            return WS:FindFirstChild("Items") or WS
         end
-        local coinParams = RaycastParams.new()
-        coinParams.FilterType = Enum.RaycastFilterType.Exclude
-        coinParams.IgnoreWater = true
-        local function getNil(name, class)
-            local ok, arr = pcall(getnilinstances)
-            if not ok or type(arr) ~= "table" then return nil end
-            for _, v in next, arr do
-                if v and v.ClassName == class and v.Name == name then
-                    return v
-                end
-            end
-        end
-        local function isMossyName(n)
-            if n == "Mossy Coin" then return true end
-            return n and n:match("^Mossy Coin%d+$") ~= nil
-        end
-        local function findCoinCarrier(inst)
-            local cur = inst
-            for _ = 1, 8 do
-                if not cur then break end
-                if cur:IsA("Model") and cur.Name == "Coin Stack" then return cur end
-                if cur:IsA("Model") and isMossyName(cur.Name) and cur.Parent and cur.Parent:IsA("Model") and cur.Parent.Name == "Coin Stack" then
-                    return cur.Parent
-                end
+
+        local function coinTopModelUnderItems(part, items)
+            local cur = part
+            local lastModel = nil
+            while cur and cur ~= WS and cur ~= items do
+                if cur:IsA("Model") then lastModel = cur end
                 cur = cur.Parent
             end
+            return lastModel
+        end
+
+        local function coinResolveTopModelFromPart(part)
+            if not (part and part.Parent) then return nil end
+            local items = coinItemsFolder()
+            local m = coinTopModelUnderItems(part, items)
+            if m and m.Parent and (not items or m:IsDescendantOf(items)) then
+                return m
+            end
+            local anc = part:FindFirstAncestorOfClass("Model")
+            if anc and anc.Parent and (not items or anc:IsDescendantOf(items)) then
+                return anc
+            end
+            if part:IsA("Model") then return part end
             return nil
         end
-        local function findMossyOrStack(inst)
-            local stack = findCoinCarrier(inst)
-            if stack then return stack end
-            local cur = inst
-            for _ = 1, 8 do
-                if not cur then break end
-                if cur:IsA("Model") and isMossyName(cur.Name) then return cur end
-                cur = cur.Parent
-            end
-            return nil
+
+        local function getCollectCointsRemote()
+            local re = RS:FindFirstChild("RemoteEvents")
+            if not re then return nil end
+            return re:FindFirstChild("RequestCollectCoints")
         end
-        local function triggerPromptOn(model)
-            local p = model:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if p and p.Enabled then PPS:TriggerPrompt(p); return true end
-            return false
-        end
-        local function clickDetectorOn(model)
-            local cd = model:FindFirstChildWhichIsA("ClickDetector", true)
-            if not cd then return false end
-            local pos = (model.PrimaryPart and model.PrimaryPart.Position) or model:GetPivot().Position
-            if not cam then return false end
-            local v2, onScreen = cam:WorldToViewportPoint(pos)
-            if not onScreen then return false end
-            VIM:SendMouseMoveEvent(v2.X, v2.Y, game)
-            VIM:SendMouseButtonEvent(v2.X, v2.Y, 0, true, game, 0)
-            VIM:SendMouseButtonEvent(v2.X, v2.Y, 0, false, game, 0)
-            return true
-        end
-        local function tryRemote(targetModel)
-            local remote = RS:WaitForChild("RemoteEvents"):WaitForChild("RequestCollectCoints")
-            local ok = false
-            do
-                local s, r = pcall(function() return remote:InvokeServer(targetModel) end)
-                ok = s and (r ~= nil or true)
-                if ok then return true end
-            end
-            do
-                local stack = findCoinCarrier(targetModel)
-                if stack then
-                    local s, r = pcall(function() return remote:InvokeServer(stack) end)
-                    ok = s and (r ~= nil or true)
-                    if ok then return true end
-                end
-            end
-            do
-                local ghost = getNil("Coin Stack", "Model")
-                if ghost then
-                    local s, r = pcall(function() return remote:InvokeServer(ghost) end)
-                    ok = s and (r ~= nil or true)
-                    if ok then return true end
-                end
-            end
-            do
-                local s, r = pcall(function() return remote:InvokeServer() end)
-                ok = s and (r ~= nil or true)
-            end
+
+        local collectCointsRemote = getCollectCointsRemote()
+
+        local function invokeCollect(remote, a1)
+            if not (remote and remote.Parent) then return false end
+            if not (a1 and a1.Parent) then return false end
+            local ok = pcall(function()
+                remote:InvokeServer(a1)
+            end)
             return ok
         end
+
+        local function shouldFireCoin(inst)
+            local lt = lastCoinFireAt[inst]
+            if lt and (coinNow() - lt) < COIN_STATE.FireCooldown then return false end
+            lastCoinFireAt[inst] = coinNow()
+            return true
+        end
+
+        local function isCoinModel(m)
+            return m and m.Parent and m:IsA("Model") and m.Name == "Coin Stack"
+        end
+
+        local function coinScanOnce()
+            local root = hrp()
+            if not root then return end
+
+            if not collectCointsRemote or not collectCointsRemote.Parent then
+                collectCointsRemote = getCollectCointsRemote()
+            end
+            if not (collectCointsRemote and collectCointsRemote.Parent) then return end
+
+            local center = root.Position
+            local params = OverlapParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = { lp.Character }
+
+            local parts = WS:GetPartBoundsInRadius(center, COIN_STATE.Radius, params) or {}
+            local uniq = {}
+            local fired = 0
+
+            for _, p in ipairs(parts) do
+                if fired >= COIN_STATE.MaxPerScan then break end
+                if p:IsA("BasePart") then
+                    local m = coinResolveTopModelFromPart(p)
+                    if m and isCoinModel(m) and not uniq[m] then
+                        uniq[m] = true
+                        if shouldFireCoin(m) then
+                            if invokeCollect(collectCointsRemote, m) then
+                                fired += 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
         local coinOn = true
+        local coinConn, coinAcc = nil, 0
+
         local function enableCoin()
             if coinConn then return end
             coinOn = true
             coinAcc = 0
             coinConn = Run.Heartbeat:Connect(function(dt)
                 coinAcc += dt
-                if coinAcc < COIN_INTERVAL then return end
+                if coinAcc < COIN_STATE.ScanInterval then return end
                 coinAcc = 0
-                local root = hrp(); if not root then return end
-                local ch = lp.Character
-                local head = ch and ch:FindFirstChild("Head")
-                local origin = root.Position
-                if head then
-                    origin = head.Position + root.CFrame.LookVector * COIN_FORWARD + Vector3.new(0, COIN_HEAD_UP, 0)
-                end
-                coinParams.FilterDescendantsInstances = { lp.Character }
-                local now = os.clock()
-                for i=1,#coinDirs do
-                    local res = WS:Raycast(origin, coinDirs[i] * COIN_RADIUS, coinParams)
-                    if res and res.Instance then
-                        local target = findMossyOrStack(res.Instance)
-                        if target and target.Parent then
-                            local pos = (target.PrimaryPart and target.PrimaryPart.Position) or target:GetPivot().Position
-                            if (pos - origin).Magnitude <= COIN_RADIUS then
-                                local t = coinSeen[target]
-                                if not t or now - t > COIN_TTL then
-                                    local done = triggerPromptOn(target)
-                                    if not done then done = clickDetectorOn(target) end
-                                    if not done then tryRemote(target) end
-                                    coinSeen[target] = now
-                                end
-                            end
-                        end
-                    end
-                end
-                for m, t in pairs(coinSeen) do
-                    if (not m) or (not m.Parent) or now - t > 5 then coinSeen[m] = nil end
-                end
+                pcall(coinScanOnce)
             end)
         end
+
         local function disableCoin()
             coinOn = false
             if coinConn then coinConn:Disconnect(); coinConn = nil end
-            coinSeen = {}
         end
+
         tab:Toggle({ Title = "Auto Collect Coins", Value = true, Callback = function(state) if state then enableCoin() else disableCoin() end end })
         if coinOn then enableCoin() end
 
