@@ -54,7 +54,7 @@ return function(C, R, UI)
     local weaponsArmor = {
         "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
         "Chainsaw","Crossbow","Katana","Kunai","Laser Cannon","Laser Sword","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
-        "Sword","Ice Axe", "Thorn Body","Impact Grenade","Dynamite"
+        "Sword","Ice Axe","Scythe","Thorn Body","Impact Grenade","Dynamite"
     }
     local ammoMisc = {
         "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Alien","Alien Elite","Sapling",
