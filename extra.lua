@@ -349,6 +349,8 @@ return function(C, R, UI)
     local ALWAYS_TAKE_NAMES = {
         ["Bandage"] = true,
         ["MedKit"] = true,
+        ["Impact Grenade"] = true,
+        ["Wildfire"] = true,
     }
 
     local SPECIAL_TAKE_NAMES = {
