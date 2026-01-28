@@ -8,8 +8,14 @@ return function(C, R, UI)
     local lp      = C.LocalPlayer
     local VisualsTab = UI.Tabs.Visuals
 
+    local Lighting   = game:GetService("Lighting")
+    local RunService = game:GetService("RunService")
+
     C.State = C.State or { AuraRadius = 150, Toggles = {} }
     C.State.Toggles.PlayerTracker = true
+    if C.State.Toggles.RemoveFog == nil then
+        C.State.Toggles.RemoveFog = true
+    end
 
     local function auraRadius()
         return math.clamp(tonumber(C.State.AuraRadius) or 150, 0, 1_000_000)
@@ -44,6 +50,77 @@ return function(C, R, UI)
     local function clearHighlight(parent, name)
         local hl = parent and parent:FindFirstChild(name)
         if hl and hl:IsA("Highlight") then hl:Destroy() end
+    end
+
+    local fogRunning = false
+    local fogConns = {}
+    local fogOriginal
+    local atmoOriginal = setmetatable({}, { __mode = "k" })
+    local lastFogApply = 0
+
+    local function captureFogOriginal()
+        if fogOriginal then return end
+        fogOriginal = {
+            FogStart = Lighting.FogStart,
+            FogEnd   = Lighting.FogEnd,
+            FogColor = Lighting.FogColor,
+        }
+    end
+
+    local function touchAtmosphere(inst)
+        if not inst or not inst:IsA("Atmosphere") then return end
+        if not atmoOriginal[inst] then
+            atmoOriginal[inst] = { Density = inst.Density, Haze = inst.Haze, Glare = inst.Glare }
+        end
+        inst.Density = 0
+        inst.Haze = 0
+        inst.Glare = 0
+    end
+
+    local function applyNoFog()
+        Lighting.FogStart = 1e6
+        Lighting.FogEnd = 1e6 + 1
+        for _, d in ipairs(Lighting:GetDescendants()) do
+            touchAtmosphere(d)
+        end
+    end
+
+    local function startRemoveFog()
+        if fogRunning then return end
+        fogRunning = true
+        captureFogOriginal()
+        applyNoFog()
+        fogConns[#fogConns+1] = Lighting.DescendantAdded:Connect(function(inst)
+            if not fogRunning then return end
+            touchAtmosphere(inst)
+        end)
+        fogConns[#fogConns+1] = RunService.Heartbeat:Connect(function()
+            if not fogRunning then return end
+            local t = os.clock()
+            if (t - lastFogApply) < 0.25 then return end
+            lastFogApply = t
+            applyNoFog()
+        end)
+    end
+
+    local function stopRemoveFog()
+        fogRunning = false
+        for _, c in ipairs(fogConns) do pcall(function() c:Disconnect() end) end
+        fogConns = {}
+        if fogOriginal then
+            Lighting.FogStart = fogOriginal.FogStart
+            Lighting.FogEnd   = fogOriginal.FogEnd
+            Lighting.FogColor = fogOriginal.FogColor
+        end
+        for inst, orig in pairs(atmoOriginal) do
+            if inst and inst.Parent then
+                pcall(function()
+                    inst.Density = orig.Density
+                    inst.Haze = orig.Haze
+                    inst.Glare = orig.Glare
+                end)
+            end
+        end
     end
 
     local runningPlayers = false
@@ -84,8 +161,8 @@ return function(C, R, UI)
                                 if p0 then
                                     local d = (p0 - lhrp.Position).Magnitude
                                     local t = math.clamp(d / math.max(R, 1), 0, 1)
-                                    h.FillTransparency   = 1 - (0.85 * t)   -- near: 1.0, far: 0.15
-                                    h.OutlineTransparency = 0.2 * (1 - t)    -- near: 0.2, far: 0.0
+                                    h.FillTransparency   = 1 - (0.85 * t)
+                                    h.OutlineTransparency = 0.2 * (1 - t)
                                 end
                             end
                         end
@@ -268,6 +345,15 @@ return function(C, R, UI)
     })
 
     VisualsTab:Toggle({
+        Title = "Remove Fog",
+        Value = C.State.Toggles.RemoveFog or false,
+        Callback = function(on)
+            C.State.Toggles.RemoveFog = on
+            if on then startRemoveFog() else stopRemoveFog() end
+        end
+    })
+
+    VisualsTab:Toggle({
         Title = "Highlight Trees In Aura",
         Value = C.State.Toggles.HighlightTrees or false,
         Callback = function(on)
@@ -286,4 +372,5 @@ return function(C, R, UI)
     })
 
     if C.State.Toggles.PlayerTracker then startPlayerTracker() end
+    if C.State.Toggles.RemoveFog then startRemoveFog() end
 end
