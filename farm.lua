@@ -22,6 +22,9 @@ return function(C, R, UI)
             pcall(C.Farm._cleanup)
         end
 
+        C.State = C.State or {}
+        if C.State.HasStrongAxe == nil then C.State.HasStrongAxe = false end
+
         local UID_SUFFIX = "0000000000"
         local BIG_MAX_HITS_BEFORE_SKIP = 36
         local DEAD_SKIP_SEC = 6.0
@@ -36,7 +39,6 @@ return function(C, R, UI)
         local Y_ABOVE_TARGET_PAD = 0.5
 
         local SPACE_TAP_EVERY = 60.0
-        local TARGET_LOCK_MIN_SEC = 2.0
 
         local RecentSkipUntil = {}
 
@@ -95,9 +97,7 @@ return function(C, R, UI)
 
         local function looksDestroyed(treeModel, hitPart)
             if not treeModel then return true end
-            if treeModel:IsDescendantOf(WS) == false then
-                return true
-            end
+            if treeModel:IsDescendantOf(WS) == false then return true end
             if treeModel.GetAttribute then
                 local a =
                     treeModel:GetAttribute("Destroyed") or
@@ -116,9 +116,7 @@ return function(C, R, UI)
             end
             if treeModel:FindFirstChild("HitRegisters") == nil then
                 local anyPart = treeModel:FindFirstChildWhichIsA("BasePart", true)
-                if not anyPart then
-                    return true
-                end
+                if not anyPart then return true end
             end
             return false
         end
@@ -195,12 +193,57 @@ return function(C, R, UI)
                 end
             end
             if not isBigTreeName(model.Name) then return false end
-            if getCurrentHitCount(model) >= BIG_MAX_HITS_BEFORE_SKIP then
-                return false
-            end
+            if getCurrentHitCount(model) >= BIG_MAX_HITS_BEFORE_SKIP then return false end
             local p = bestTreeHitPart(model)
             if not p or looksDestroyed(model, p) then return false end
             return true
+        end
+
+        local function normName(s)
+            return string.lower(tostring(s or ""))
+        end
+
+        local function classifyAxeName(nameLower)
+            if nameLower:find("strong", 1, true) and nameLower:find("axe", 1, true) then return "Strong" end
+            if nameLower:find("good", 1, true) and nameLower:find("axe", 1, true) then return "Good" end
+            if nameLower:find("old", 1, true) and nameLower:find("axe", 1, true) then return "Old" end
+            return nil
+        end
+
+        local function findBestAxeTierIn(container)
+            if not container then return nil end
+            local best
+            for _, inst in ipairs(container:GetChildren()) do
+                local tier = classifyAxeName(normName(inst.Name))
+                if tier == "Strong" then return "Strong" end
+                if tier == "Good" then best = best or "Good" end
+                if tier == "Old" then best = best or "Old" end
+            end
+            return best
+        end
+
+        local function detectAxeTier()
+            if C.State.HasStrongAxe then return "Strong" end
+            local ch = lp.Character
+            local tool = ch and ch:FindFirstChildOfClass("Tool")
+            local tier = tool and classifyAxeName(normName(tool.Name))
+            if tier == "Strong" then C.State.HasStrongAxe = true return "Strong" end
+            if tier then return tier end
+            local bp = lp:FindFirstChild("Backpack")
+            tier = findBestAxeTierIn(bp)
+            if tier == "Strong" then C.State.HasStrongAxe = true return "Strong" end
+            if tier then return tier end
+            local inv = lp:FindFirstChild("Inventory")
+            tier = findBestAxeTierIn(inv)
+            if tier == "Strong" then C.State.HasStrongAxe = true return "Strong" end
+            return tier
+        end
+
+        local function requiredHitsTotal(isBig, tier)
+            if tier == "Strong" then return isBig and 35 or 1 end
+            if tier == "Good" then return isBig and math.huge or 6 end
+            if tier == "Old" then return isBig and math.huge or 13 end
+            return math.huge
         end
 
         local SmallCandidates = {}
@@ -251,9 +294,7 @@ return function(C, R, UI)
         local function pivotCharacterTo(cf)
             local ch = lp.Character or lp.CharacterAdded:Wait()
             if not ch then return false end
-            local ok = pcall(function()
-                ch:PivotTo(cf)
-            end)
+            local ok = pcall(function() ch:PivotTo(cf) end)
             return ok
         end
 
@@ -273,16 +314,18 @@ return function(C, R, UI)
             local okSmall = moveSmall and isSmallTreeModel(tree)
             local okBig = moveBig and isBigTreeModel(tree)
             if not (okSmall or okBig) then return false end
-            if okBig then
-                if getCurrentHitCount(tree) >= BIG_MAX_HITS_BEFORE_SKIP then
-                    markSkip(tree, DEAD_SKIP_SEC)
-                    return false
-                end
+            if okBig and getCurrentHitCount(tree) >= BIG_MAX_HITS_BEFORE_SKIP then
+                markSkip(tree, DEAD_SKIP_SEC)
+                return false
             end
             return true
         end
 
-        local function findNearestTree(rootPos)
+        local function xzDist(a, b)
+            return (Vector3.new(a.X, 0, a.Z) - Vector3.new(b.X, 0, b.Z)).Magnitude
+        end
+
+        local function findNearestTree(rootPos, tier)
             local bestTree, bestPart, bestD, bestIsBig = nil, nil, nil, false
 
             if moveSmall then
@@ -291,7 +334,7 @@ return function(C, R, UI)
                         if isSmallTreeModel(tree) then
                             local part = bestTreeHitPart(tree)
                             if part and not looksDestroyed(tree, part) then
-                                local d = (part.Position - rootPos).Magnitude
+                                local d = xzDist(part.Position, rootPos)
                                 if bestD == nil or d < bestD then
                                     bestTree, bestPart, bestD, bestIsBig = tree, part, d, false
                                 end
@@ -301,13 +344,13 @@ return function(C, R, UI)
                 end
             end
 
-            if moveBig then
+            if moveBig and tier == "Strong" then
                 for tree in pairs(BigCandidates) do
                     if tree and tree.Parent and not shouldSkipTree(tree) and tree:IsDescendantOf(WS) then
                         if isBigTreeModel(tree) then
                             local part = bestTreeHitPart(tree)
                             if part and not looksDestroyed(tree, part) then
-                                local d = (part.Position - rootPos).Magnitude
+                                local d = xzDist(part.Position, rootPos)
                                 if bestD == nil or d < bestD then
                                     bestTree, bestPart, bestD, bestIsBig = tree, part, d, true
                                 end
@@ -330,9 +373,7 @@ return function(C, R, UI)
                 local look = cam and cam.CFrame.LookVector or Vector3.new(0, 0, -1)
                 dir = Vector3.new(-look.X, 0, -look.Z)
             end
-            if dir.Magnitude < 1e-6 then
-                dir = Vector3.new(0, 0, 1)
-            end
+            if dir.Magnitude < 1e-6 then dir = Vector3.new(0, 0, 1) end
             dir = dir.Unit
 
             local posXZ = Vector3.new(targetPos.X, 0, targetPos.Z) + (dir * (standoff or ARRIVE_DIST))
@@ -361,7 +402,8 @@ return function(C, R, UI)
 
         local currentTarget = nil
         local currentIsBig = false
-        local targetSetAt = 0
+        local currentTier = nil
+        local currentNeedHits = math.huge
 
         local function clearTarget(skip)
             if currentTarget and skip then
@@ -369,7 +411,23 @@ return function(C, R, UI)
             end
             currentTarget = nil
             currentIsBig = false
-            targetSetAt = 0
+            currentTier = nil
+            currentNeedHits = math.huge
+        end
+
+        local function setTarget(tree, isBig, tier)
+            currentTarget = tree
+            currentIsBig = (isBig == true)
+            currentTier = tier
+            currentNeedHits = requiredHitsTotal(currentIsBig, tier)
+            if currentNeedHits == math.huge then
+                clearTarget(true)
+                return false
+            end
+            if currentIsBig and currentNeedHits > BIG_MAX_HITS_BEFORE_SKIP then
+                currentNeedHits = BIG_MAX_HITS_BEFORE_SKIP
+            end
+            return true
         end
 
         local function startTeleportLoop()
@@ -411,11 +469,13 @@ return function(C, R, UI)
                 if not currentTarget then
                     if (now - lastScanAt) >= RESCAN_COOLDOWN then
                         lastScanAt = now
-                        local pickedTree, pickedPart, pickedIsBig = findNearestTree(root.Position)
+                        local tier = detectAxeTier()
+                        local pickedTree, pickedPart, pickedIsBig = findNearestTree(root.Position, tier)
                         if pickedTree and pickedPart then
-                            currentTarget = pickedTree
-                            currentIsBig = pickedIsBig
-                            targetSetAt = now
+                            if setTarget(pickedTree, pickedIsBig, tier) then
+                            else
+                                clearTarget(true)
+                            end
                         end
                     end
 
@@ -436,8 +496,7 @@ return function(C, R, UI)
 
                 local rootPos = root.Position
                 local targetPos = part.Position
-
-                local dXZ = (Vector3.new(targetPos.X, 0, targetPos.Z) - Vector3.new(rootPos.X, 0, rootPos.Z)).Magnitude
+                local dXZ = xzDist(targetPos, rootPos)
 
                 if currentIsBig and dXZ <= BIG_GIVEUP_DIST then
                     local hits = getCurrentHitCount(currentTarget)
@@ -452,7 +511,16 @@ return function(C, R, UI)
                     return
                 end
 
-                if (now - targetSetAt) < TARGET_LOCK_MIN_SEC then
+                local hitsNow = getCurrentHitCount(currentTarget)
+                if hitsNow >= currentNeedHits then
+                    clearTarget(false)
+                    lastScanAt = 0
+                    return
+                end
+
+                if looksDestroyed(currentTarget, part) then
+                    clearTarget(true)
+                    lastScanAt = 0
                     return
                 end
             end)
@@ -472,7 +540,7 @@ return function(C, R, UI)
 
         C.Farm._cleanup = cleanupAll
 
-        tab:Section({ Title = "Tree Teleport (Locked Target)" })
+        tab:Section({ Title = "Tree Teleport (Wait For Required Hits)" })
 
         tab:Toggle({
             Title = "Teleport to Small Trees",
@@ -480,11 +548,7 @@ return function(C, R, UI)
             Callback = function(state)
                 moveSmall = (state == true)
                 clearTarget(false)
-                if enabledNow() then
-                    startTeleportLoop()
-                else
-                    stopTeleportLoop()
-                end
+                if enabledNow() then startTeleportLoop() else stopTeleportLoop() end
             end
         })
 
@@ -494,11 +558,7 @@ return function(C, R, UI)
             Callback = function(state)
                 moveBig = (state == true)
                 clearTarget(false)
-                if enabledNow() then
-                    startTeleportLoop()
-                else
-                    stopTeleportLoop()
-                end
+                if enabledNow() then startTeleportLoop() else stopTeleportLoop() end
             end
         })
     end
