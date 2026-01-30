@@ -30,24 +30,56 @@ return function(C, R, UI)
 
     local junkItems = {
         "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
-        "UFO Junk","UFO Component"
+        "Metal Chair","UFO Junk","UFO Component","Gears"
     }
-    local fuelItems = {"Log","Coal","Fuel Canister","Oil Barrel","Biofuel","Chair"}
+
+    local fuelItems = {
+        "Log","Coal","Fuel Canister","Oil Barrel","Biofuel","Chair"
+    }
+
     local foodItems = {
-        "Morsel","Cooked Morsel","Steak","Cooked Steak","Ribs","Cooked Ribs","Cake","Berry","Carrot",
-        "Chilli","Stew","Pumpkin","Hearty Stew","Corn","BBQ ribs","Apple","Mackerel"
+        "Rotten",
+        "Morsel","Cooked Morsel",
+        "Steak","Cooked Steak",
+        "Ribs","Cooked Ribs",
+        "Cake","Berry",
+        "Carrot",
+        "Chilli","Stew","Pumpkin","Hearty Stew","Corn","BBQ ribs","Apple",
+        "Mackerel","Salmon","Swordfish","Shark",
+        "Acorn","Strawberry"
     }
-    local medicalItems = {"Bandage","MedKit"}
+
+    local medicalItems = {
+        "Bandage","MedKit"
+    }
+
     local weaponsArmor = {
-        "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
-        "Chainsaw","Crossbow","Katana","Kunai","Laser cannon","Laser sword","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
-        "Sword","Ice Axe","Thorn Body"
+        "Revolver","Rifle",
+        "Leather Body","Iron Body","Thorn Body",
+        "Good Axe","Strong Axe","Hammer","Ice Axe","Scythe",
+        "Chainsaw","Crossbow","Katana","Kunai",
+        "Laser Cannon","Laser Sword",
+        "Morningstar","Riot Shield","Spear","Sword",
+        "Tactical Shotgun","Wildfire",
+        "Impact Grenade","Dynamite"
     }
+
     local ammoMisc = {
-        "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Sapling",
-        "Basketball","Blueprint","Diamond","Gem of the Forest Fragment","Key","Flashlight","Old Taming flute","Old Rod","Cultist Gem","Tusk","Infernal Sack"
+        "Revolver Ammo","Rifle Ammo",
+        "Giant Sack","Good Sack","Mossy Coin",
+        "Cultist","Cultist Gem",
+        "Alien","Alien Elite",
+        "Sapling",
+        "Basketball","Blueprint","Diamond","Gem of the Forest Fragment",
+        "Flashlight","Old Taming flute","Old Rod",
+        "Tusk","Infernal Sack",
+        "Sacrifice Totem",
+        "Anvil Back","Anvil Front","Anvil Base"
     }
-    local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"}
+
+    local pelts = {
+        "Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"
+    }
 
     local characterTargets = { "Kiwi" }
 
@@ -182,6 +214,7 @@ return function(C, R, UI)
     local SIZE_NEAR_SCALE      = 1.25
     local SIZE_FAR_SCALE       = 0.6
 
+    C.State = C.State or {}
     C.State.ESP = C.State.ESP or {}
     local S = C.State.ESP
     if S.Enabled == nil then S.Enabled = false end
@@ -451,7 +484,11 @@ return function(C, R, UI)
         local name = model.Name or "?"
         local gx = math.floor(pos.X / VERIFY_RADIUS)
         local gz = math.floor(pos.Z / VERIFY_RADIUS)
-        return name .. "|" .. gx .. "|" .. gz
+
+        local ok, did = pcall(function() return model:GetDebugId(2) end)
+        local suffix = ok and tostring(did) or tostring(model)
+
+        return name .. "|" .. gx .. "|" .. gz .. "|" .. suffix
     end
 
     local function makeCharKeyFor(model, pos)
@@ -463,7 +500,7 @@ return function(C, R, UI)
     tab:Section({ Title = "ESP Controls" })
     tab:Toggle({
         Title = "Enable ESP",
-        Default = S.Enabled,
+        Value = S.Enabled,
         Callback = function(on)
             S.Enabled = on and true or false
             for _,entry in pairs(espCache) do
@@ -475,7 +512,7 @@ return function(C, R, UI)
     })
     tab:Toggle({
         Title = "Item cache (remember last positions)",
-        Default = S.CacheEnabled,
+        Value = S.CacheEnabled,
         Callback = function(on)
             S.CacheEnabled = on and true or false
             if not S.CacheEnabled then
