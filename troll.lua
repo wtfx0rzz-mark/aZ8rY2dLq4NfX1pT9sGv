@@ -97,9 +97,11 @@ return function(C, R, UI)
     -- PLAYER FLING STATE
     ---------------------------------------------------------------------
 
-    local flingEnabled      = false
-    local flingPower        = 10000
-    local flingLoopStarted  = false
+    local flingEnabled = false
+    local flingPower   = 10000
+
+    -- FIX: hold a connection so we can actually stop the loop
+    local flingConn = nil
 
     ---------------------------------------------------------------------
     -- BEAR TRAP HEIGHT CONFIG
@@ -430,41 +432,42 @@ return function(C, R, UI)
     end
 
     ---------------------------------------------------------------------
-    -- PLAYER FLING LOOP
+    -- PLAYER FLING LOOP (FIXED: can stop)
     ---------------------------------------------------------------------
 
-    local function ensureFlingLoop()
-        if flingLoopStarted then return end
-        flingLoopStarted = true
+    local function startFlingLoop()
+        if flingConn then return end
 
-        task.spawn(function()
-            local c, root, vel
-            local movel = 0.1
-            while true do
-                Run.Heartbeat:Wait()
-                if flingEnabled then
-                    while flingEnabled and not (c and c.Parent and root and root.Parent) do
-                        Run.Heartbeat:Wait()
-                        c = lp.Character
-                        root = c and c:FindFirstChild("HumanoidRootPart")
-                    end
+        flingConn = Run.Heartbeat:Connect(function()
+            if not flingEnabled then return end
 
-                    if flingEnabled and root and root.Parent then
-                        vel = root.Velocity
-                        root.Velocity = vel * flingPower + Vector3.new(0, flingPower, 0)
-                        Run.RenderStepped:Wait()
-                        if flingEnabled and c and c.Parent and root and root.Parent then
-                            root.Velocity = vel
-                        end
-                        Run.Stepped:Wait()
-                        if flingEnabled and c and c.Parent and root and root.Parent then
-                            root.Velocity = vel + Vector3.new(0, movel, 0)
-                            movel = -movel
-                        end
-                    end
-                end
+            local c = lp.Character
+            local root = c and c:FindFirstChild("HumanoidRootPart")
+            if not (root and root.Parent) then return end
+
+            local vel = root.Velocity
+            root.Velocity = vel * flingPower + Vector3.new(0, flingPower, 0)
+
+            Run.RenderStepped:Wait()
+            if not flingEnabled then return end
+            if root and root.Parent then
+                root.Velocity = vel
+            end
+
+            Run.Stepped:Wait()
+            if not flingEnabled then return end
+            if root and root.Parent then
+                root.Velocity = vel + Vector3.new(0, 0.1, 0)
             end
         end)
+    end
+
+    local function stopFlingLoop()
+        flingEnabled = false
+        if flingConn then
+            pcall(function() flingConn:Disconnect() end)
+            flingConn = nil
+        end
     end
 
     ---------------------------------------------------------------------
@@ -1206,7 +1209,6 @@ return function(C, R, UI)
                                 if not trap or not trap.Parent then return end
                                 safeStartDrag(trap)
 
-                                -- Adjustable trap height relative to player
                                 local targetCF = root.CFrame * CFrame.new(0, trapHeightOffset, 0)
                                 setPivot(trap, targetCF)
 
@@ -1419,23 +1421,22 @@ return function(C, R, UI)
 
     tab:Section({ Title = "Fling Players" })
 
-tab:Slider({
-    Title = "Fling Power",
-    Value = { Min = 50, Max = 55000, Default = 10000 },
-    Callback = function(v)
-        local n
-        if type(v) == "table" then
-            n = v.Value or v.Current or v.Default
-        else
-            n = v
+    tab:Slider({
+        Title = "Fling Power",
+        Value = { Min = 50, Max = 55000, Default = 10000 },
+        Callback = function(v)
+            local n
+            if type(v) == "table" then
+                n = v.Value or v.Current or v.Default
+            else
+                n = v
+            end
+            n = tonumber(n)
+            if n then
+                flingPower = math.clamp(math.floor(n + 0.5), 50, 55000)
+            end
         end
-        n = tonumber(n)
-        if n then
-            flingPower = math.clamp(math.floor(n + 0.5), 50, 55000)
-        end
-    end
-})
-
+    })
 
     tab:Toggle({
         Title = "Fling Players",
@@ -1443,7 +1444,9 @@ tab:Slider({
         Callback = function(on)
             flingEnabled = (on == true)
             if flingEnabled then
-                ensureFlingLoop()
+                startFlingLoop()
+            else
+                stopFlingLoop()
             end
         end
     })
