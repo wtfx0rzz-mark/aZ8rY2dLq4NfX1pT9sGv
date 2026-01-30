@@ -36,8 +36,7 @@ return function(C, R, UI)
         local Y_ABOVE_TARGET_PAD = 0.5
 
         local SPACE_TAP_EVERY = 60.0
-        local DEBUG_DISTANCE = true
-        local DEBUG_PRINT_EVERY = 0.6
+        local TARGET_LOCK_MIN_SEC = 2.0
 
         local RecentSkipUntil = {}
 
@@ -94,18 +93,11 @@ return function(C, R, UI)
             return tree:FindFirstChildWhichIsA("BasePart")
         end
 
-        -- UPDATED: stronger "cut down" detection based on your logs:
-        -- - Destroyed/LocalDestroyed attribute flips true
-        -- - model/hitPart can reparent to ReplicatedStorage
-        -- - HitRegisters/parts get removed
         local function looksDestroyed(treeModel, hitPart)
             if not treeModel then return true end
-
-            -- if it leaves Workspace (logs show it reparenting to ReplicatedStorage), treat as destroyed/invalid
             if treeModel:IsDescendantOf(WS) == false then
                 return true
             end
-
             if treeModel.GetAttribute then
                 local a =
                     treeModel:GetAttribute("Destroyed") or
@@ -114,7 +106,6 @@ return function(C, R, UI)
                     treeModel:GetAttribute("Dead")
                 if a == true then return true end
             end
-
             if hitPart and hitPart.GetAttribute then
                 local b =
                     hitPart:GetAttribute("Destroyed") or
@@ -123,15 +114,12 @@ return function(C, R, UI)
                     hitPart:GetAttribute("Dead")
                 if b == true then return true end
             end
-
-            -- Post-cut behavior: HitRegisters removed and/or parts removed. Treat as destroyed if no HitRegisters and no parts.
             if treeModel:FindFirstChild("HitRegisters") == nil then
                 local anyPart = treeModel:FindFirstChildWhichIsA("BasePart", true)
                 if not anyPart then
                     return true
                 end
             end
-
             return false
         end
 
@@ -179,49 +167,39 @@ return function(C, R, UI)
             return isBigTreeName(name)
         end
 
-        -- UPDATED: ensure we only consider trees still in Workspace and not destroyed.
         local function isSmallTreeModel(model)
             if not (model and model:IsA("Model")) then return false end
             if model:IsDescendantOf(WS) == false then return false end
             if shouldSkipTree(model) then return false end
-
             local name = model.Name
             if TREE_NAMES[name] then
                 local p = bestTreeHitPart(model)
                 return p ~= nil and not looksDestroyed(model, p)
             end
-
             local lower = string.lower(name or "")
             if lower:find("small", 1, true) and lower:find("tree", 1, true) then
                 local p = bestTreeHitPart(model)
                 return p ~= nil and not looksDestroyed(model, p)
             end
-
             return false
         end
 
-        -- UPDATED: same for big trees + hit ceiling pre-filter.
         local function isBigTreeModel(model)
             if not (model and model:IsA("Model")) then return false end
             if model:IsDescendantOf(WS) == false then return false end
             if shouldSkipTree(model) then return false end
-
             if type(model.Name) == "string" and model.Name:match("^TreeBig%d+$") then
                 local parent = model.Parent
                 if parent and parent.Name == "Snare Trap" then
                     return false
                 end
             end
-
             if not isBigTreeName(model.Name) then return false end
-
             if getCurrentHitCount(model) >= BIG_MAX_HITS_BEFORE_SKIP then
                 return false
             end
-
             local p = bestTreeHitPart(model)
             if not p or looksDestroyed(model, p) then return false end
-
             return true
         end
 
@@ -292,26 +270,18 @@ return function(C, R, UI)
             if shouldSkipTree(tree) then return false end
             local part = bestTreeHitPart(tree)
             if not part or looksDestroyed(tree, part) then return false end
-
             local okSmall = moveSmall and isSmallTreeModel(tree)
             local okBig = moveBig and isBigTreeModel(tree)
             if not (okSmall or okBig) then return false end
-
-            -- extra big-tree safeguard: skip maxed hit-count trees even if still present
             if okBig then
                 if getCurrentHitCount(tree) >= BIG_MAX_HITS_BEFORE_SKIP then
                     markSkip(tree, DEAD_SKIP_SEC)
                     return false
                 end
             end
-
             return true
         end
 
-        -- This already satisfies:
-        -- - only small toggle on => only scans SmallCandidates/isSmallTreeModel
-        -- - only big toggle on   => only scans BigCandidates/isBigTreeModel
-        -- - both on             => chooses nearest across both via shared bestD
         local function findNearestTree(rootPos)
             local bestTree, bestPart, bestD, bestIsBig = nil, nil, nil, false
 
@@ -366,8 +336,6 @@ return function(C, R, UI)
             dir = dir.Unit
 
             local posXZ = Vector3.new(targetPos.X, 0, targetPos.Z) + (dir * (standoff or ARRIVE_DIST))
-
-            -- ensure we never go below target tree's Y
             local newY = math.max(rootPos.Y, targetPos.Y + Y_ABOVE_TARGET_PAD)
             local newPos = Vector3.new(posXZ.X, newY, posXZ.Z)
 
@@ -390,10 +358,19 @@ return function(C, R, UI)
         local lastScanAt = 0
         local lastNoCandStepAt = 0
         local lastSpaceTapAt = 0
-        local lastDebugAt = 0
 
         local currentTarget = nil
         local currentIsBig = false
+        local targetSetAt = 0
+
+        local function clearTarget(skip)
+            if currentTarget and skip then
+                markSkip(currentTarget, DEAD_SKIP_SEC)
+            end
+            currentTarget = nil
+            currentIsBig = false
+            targetSetAt = 0
+        end
 
         local function startTeleportLoop()
             if loopConn then loopConn:Disconnect() loopConn = nil end
@@ -402,15 +379,12 @@ return function(C, R, UI)
             lastScanAt = 0
             lastNoCandStepAt = 0
             lastSpaceTapAt = os.clock()
-            lastDebugAt = 0
-            currentTarget = nil
-            currentIsBig = false
+            clearTarget(false)
 
             loopConn = RunService.Heartbeat:Connect(function(dt)
                 if not running then return end
                 if not enabledNow() then
-                    currentTarget = nil
-                    currentIsBig = false
+                    clearTarget(false)
                     return
                 end
 
@@ -420,8 +394,7 @@ return function(C, R, UI)
 
                 local root = hrp()
                 if not root then
-                    currentTarget = nil
-                    currentIsBig = false
+                    clearTarget(false)
                     return
                 end
 
@@ -432,35 +405,32 @@ return function(C, R, UI)
                 end
 
                 if currentTarget and (not isTreeValidForMode(currentTarget)) then
-                    currentTarget = nil
-                    currentIsBig = false
-                end
-
-                if (now - lastScanAt) >= RESCAN_COOLDOWN then
-                    lastScanAt = now
-                    local pickedTree, pickedPart, pickedIsBig, pickedD = findNearestTree(root.Position)
-                    if pickedTree and pickedPart then
-                        currentTarget = pickedTree
-                        currentIsBig = pickedIsBig
-                    else
-                        currentTarget = nil
-                        currentIsBig = false
-                    end
+                    clearTarget(true)
                 end
 
                 if not currentTarget then
-                    if (now - lastNoCandStepAt) >= NO_CANDIDATE_STEP_COOLDOWN then
-                        lastNoCandStepAt = now
-                        teleportRandomStep(root)
+                    if (now - lastScanAt) >= RESCAN_COOLDOWN then
+                        lastScanAt = now
+                        local pickedTree, pickedPart, pickedIsBig = findNearestTree(root.Position)
+                        if pickedTree and pickedPart then
+                            currentTarget = pickedTree
+                            currentIsBig = pickedIsBig
+                            targetSetAt = now
+                        end
                     end
-                    return
+
+                    if not currentTarget then
+                        if (now - lastNoCandStepAt) >= NO_CANDIDATE_STEP_COOLDOWN then
+                            lastNoCandStepAt = now
+                            teleportRandomStep(root)
+                        end
+                        return
+                    end
                 end
 
                 local part = bestTreeHitPart(currentTarget)
                 if not part or looksDestroyed(currentTarget, part) then
-                    markSkip(currentTarget, DEAD_SKIP_SEC)
-                    currentTarget = nil
-                    currentIsBig = false
+                    clearTarget(true)
                     return
                 end
 
@@ -468,34 +438,22 @@ return function(C, R, UI)
                 local targetPos = part.Position
 
                 local dXZ = (Vector3.new(targetPos.X, 0, targetPos.Z) - Vector3.new(rootPos.X, 0, rootPos.Z)).Magnitude
-                local dY = (targetPos.Y - rootPos.Y)
 
                 if currentIsBig and dXZ <= BIG_GIVEUP_DIST then
                     local hits = getCurrentHitCount(currentTarget)
                     if hits >= BIG_MAX_HITS_BEFORE_SKIP then
-                        markSkip(currentTarget, DEAD_SKIP_SEC)
-                        currentTarget = nil
-                        currentIsBig = false
+                        clearTarget(true)
                         return
                     end
                 end
 
-                if DEBUG_DISTANCE and (now - lastDebugAt) >= DEBUG_PRINT_EVERY then
-                    lastDebugAt = now
-                    local hits = (currentIsBig and getCurrentHitCount(currentTarget)) or 0
-                    warn(("[FarmTP] target=%s isBig=%s d=%.1f dXZ=%.1f dY=%.1f arrive=%d hits=%d"):format(
-                        tostring(currentTarget.Name),
-                        tostring(currentIsBig),
-                        ((targetPos - rootPos).Magnitude),
-                        dXZ,
-                        dY,
-                        ARRIVE_DIST,
-                        hits
-                    ))
-                end
-
                 if dXZ > ARRIVE_DIST then
                     teleportNearTree(root, part, ARRIVE_DIST)
+                    return
+                end
+
+                if (now - targetSetAt) < TARGET_LOCK_MIN_SEC then
+                    return
                 end
             end)
         end
@@ -503,8 +461,7 @@ return function(C, R, UI)
         local function stopTeleportLoop()
             running = false
             if loopConn then loopConn:Disconnect() loopConn = nil end
-            currentTarget = nil
-            currentIsBig = false
+            clearTarget(false)
         end
 
         local function cleanupAll()
@@ -515,13 +472,14 @@ return function(C, R, UI)
 
         C.Farm._cleanup = cleanupAll
 
-        tab:Section({ Title = "Tree Teleport (Nearest Candidate)" })
+        tab:Section({ Title = "Tree Teleport (Locked Target)" })
 
         tab:Toggle({
             Title = "Teleport to Small Trees",
             Value = false,
             Callback = function(state)
                 moveSmall = (state == true)
+                clearTarget(false)
                 if enabledNow() then
                     startTeleportLoop()
                 else
@@ -535,6 +493,7 @@ return function(C, R, UI)
             Value = false,
             Callback = function(state)
                 moveBig = (state == true)
+                clearTarget(false)
                 if enabledNow() then
                     startTeleportLoop()
                 else
