@@ -871,12 +871,22 @@ local function strfindAny(s, list)
     end
     return false
 end
+local function trimUpper(s)
+    s = tostring(s or "")
+    s = s:gsub("^%s+", ""):gsub("%s+$", "")
+    return string.upper(s)
+end
+
 local function shouldSkipPrompt(p)
     if not p or not p.Parent then return true end
     if strfindAny(p.Name, EXCLUDE_NAME_SUBSTR) then return true end
-    local ot = string.upper(tostring(p.ObjectText or ""))
-    local at = string.upper(tostring(p.ActionText or ""))
-    if ot == "TELEPORT" or at == "TELEPORT" then return true end
+
+    local ot = trimUpper(p.ObjectText)
+    local at = trimUpper(p.ActionText)
+
+    if ot == "TELEPORT" or at == "TELEPORT" then
+        return true
+    end
 
     pcall(function()
         if strfindAny(p.ObjectText, EXCLUDE_NAME_SUBSTR) then error(true) end
@@ -890,6 +900,7 @@ local function shouldSkipPrompt(p)
     end
     return false
 end
+
         local promptDurations = setmetatable({}, { __mode = "k" })
         local shownConn, trigConn, hiddenConn
         local function restorePrompt(prompt)
