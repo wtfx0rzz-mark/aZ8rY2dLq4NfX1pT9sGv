@@ -32,6 +32,17 @@ return function(C, R, UI)
 
     local TRAP_MAX_RADIUS = 20
 
+    local __COMBAT_KEY = "__CombatLua_CombatModule_v1"
+    if _G[__COMBAT_KEY] and type(_G[__COMBAT_KEY].Destroy) == "function" then
+        pcall(function() _G[__COMBAT_KEY].Destroy() end)
+    end
+    local __COMBAT = {}
+    _G[__COMBAT_KEY] = __COMBAT
+
+    local function __enabled(key)
+        return (C and C.State and C.State.Toggles and C.State.Toggles[key]) == true
+    end
+
     --------------------------------------------------------------------
     -- AURA VISUAL (CIRCLE) (NO RAYCASTS)
     --------------------------------------------------------------------
@@ -360,7 +371,8 @@ return function(C, R, UI)
             if head and head:IsA("BasePart") then return head.Position end
             local r = ch:FindFirstChild("HumanoidRootPart")
             if r and r:IsA("BasePart") then return r.Position + Vector3.new(0, 2.5, 0) end
-            return nil end
+            return nil
+        end
 
         local function char_modelOf(inst)
             if not inst then return nil end
@@ -546,6 +558,11 @@ return function(C, R, UI)
             CharacterAura.running = true
             task.spawn(function()
                 while CharacterAura.running do
+                    if not __enabled("CharacterAura") then
+                        CharacterAura.running = false
+                        break
+                    end
+
                     local ch = lp.Character or lp.CharacterAdded:Wait()
                     local hrp = ch:FindFirstChild("HumanoidRootPart")
                     if not hrp then
@@ -875,6 +892,11 @@ return function(C, R, UI)
             SmallTreeAura.running = true
             task.spawn(function()
                 while SmallTreeAura.running do
+                    if not __enabled("SmallTreeAura") then
+                        SmallTreeAura.running = false
+                        break
+                    end
+
                     local ch = lp.Character or lp.CharacterAdded:Wait()
                     local hrp = ch:FindFirstChild("HumanoidRootPart")
                     if not hrp then
@@ -934,7 +956,6 @@ return function(C, R, UI)
                 or (n:match("^FairyTreeBig%d+$") ~= nil)
                 or (n:match("^Corrupted%s+TreeBig%d+$") ~= nil)
         end
-
 
         local function bt_findItem(name)
             if not (lp and name) then return nil end
@@ -1216,6 +1237,11 @@ return function(C, R, UI)
             BigTreeAura.running = true
             task.spawn(function()
                 while BigTreeAura.running do
+                    if not __enabled("BigTreeAura") then
+                        BigTreeAura.running = false
+                        break
+                    end
+
                     local ch = lp.Character or lp.CharacterAdded:Wait()
                     local hrp = ch:FindFirstChild("HumanoidRootPart")
                     if not hrp then
@@ -1591,6 +1617,11 @@ return function(C, R, UI)
             task.spawn(function()
                 ta_resolveTrapRemotes()
                 while TrapAura.running do
+                    if not __enabled("TrapAura") then
+                        TrapAura.running = false
+                        break
+                    end
+
                     local ch = lp.Character or lp.CharacterAdded:Wait()
                     local hrp = ch:FindFirstChild("HumanoidRootPart")
                     if not hrp then
@@ -1746,6 +1777,24 @@ return function(C, R, UI)
             check()
         end
     end)
+
+    __COMBAT.Destroy = function()
+        pcall(function() C.State.Toggles.CharacterAura = false end)
+        pcall(function() C.State.Toggles.SmallTreeAura = false end)
+        pcall(function() C.State.Toggles.BigTreeAura = false end)
+        pcall(function() C.State.Toggles.TrapAura = false end)
+        pcall(function() C.State.Toggles.TrapManualControls = false end)
+        pcall(function() C.State.Toggles.DrawAuraCircle = false end)
+
+        pcall(function() CharacterAura.Stop() end)
+        pcall(function() SmallTreeAura.Stop() end)
+        pcall(function() BigTreeAura.Stop() end)
+        pcall(function() TrapAura.Stop() end)
+
+        pcall(function() TrapAura.DestroyPanel() end)
+        pcall(function() auraVis:stop() end)
+        pcall(function() auraVis:cleanupLegacy() end)
+    end
 
     if C.State.Toggles.SmallTreeAura then SmallTreeAura.Start() end
     if C.State.Toggles.BigTreeAura then BigTreeAura.Start() end
