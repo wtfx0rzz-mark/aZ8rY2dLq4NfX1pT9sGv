@@ -21,7 +21,7 @@ return function(C, R, UI)
     TUNE.CHOP_SWING_DELAY         = TUNE.CHOP_SWING_DELAY         or 0.50
     TUNE.TREE_NAME                = TUNE.TREE_NAME                or "Small Tree"
     TUNE.UID_SUFFIX               = TUNE.UID_SUFFIX               or "0000000000"
-    TUNE.ChopPrefer               = TUNE.ChopPrefer               or { "Admin Axe", "Chainsaw", "Corrupted Axe", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
+    TUNE.ChopPrefer               = TUNE.ChopPrefer               or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
     TUNE.MAX_TARGETS_PER_WAVE     = TUNE.MAX_TARGETS_PER_WAVE     or 20
     TUNE.CHAR_MAX_PER_WAVE        = TUNE.CHAR_MAX_PER_WAVE        or 20
     TUNE.CHAR_DEBOUNCE_SEC        = TUNE.CHAR_DEBOUNCE_SEC        or 0.5
@@ -285,7 +285,6 @@ return function(C, R, UI)
             { "Laser Sword",       0.5 },
             { "Poison Spear",      0.5 },
             { "Spear",             0.5 },
-            { "Corrupted Axe",     0.5 },
             { "Strong Axe",        0.5 },
             { "Chainsaw",          0.5 },
             { "Ice Axe",           0.5 },
@@ -818,10 +817,9 @@ return function(C, R, UI)
 
         local function st_pickToolName()
             if st_findItem("Admin Axe") then return "Admin Axe" end
-            if st_findItem("Corrupted Axe") then return "Corrupted Axe" end
             if st_findItem("Strong Axe") then return "Strong Axe" end
             for _, n in ipairs(TUNE.ChopPrefer) do
-                if n ~= "Admin Axe" and n ~= "Corrupted Axe" and n ~= "Strong Axe" then
+                if n ~= "Admin Axe" and n ~= "Strong Axe" then
                     if st_findItem(n) then return n end
                 end
             end
@@ -961,51 +959,46 @@ return function(C, R, UI)
 
         local function bt_findItem(name)
             if not (lp and name) then return nil end
-
             local inv = lp:FindFirstChild("Inventory")
-            if not inv then inv = lp:WaitForChild("Inventory", 1) end
             if inv then
                 local it = inv:FindFirstChild(name)
                 if it then return it end
             end
-
             local bp = lp:FindFirstChild("Backpack")
-            if not bp then bp = lp:WaitForChild("Backpack", 1) end
             if bp then
                 local it = bp:FindFirstChild(name)
                 if it then return it end
             end
-
             local sg = lp:FindFirstChild("StarterGear")
             if sg then
                 local it = sg:FindFirstChild(name)
                 if it then return it end
             end
-
             local ch = lp.Character
             if ch then
                 local it = ch:FindFirstChild(name)
                 if it then return it end
             end
-
             return nil
         end
 
-        local function bt_pickToolName()
+        local function bt_hasStrongAxe()
+            return bt_findItem("Strong Axe") ~= nil
+        end
+
+        local function bt_hasChainsaw()
+            return bt_findItem("Chainsaw") ~= nil
+        end
+
+        local function bt_hasBigTreeTool()
             if bt_findItem("Admin Axe") then return "Admin Axe" end
-            if bt_findItem("Corrupted Axe") then return "Corrupted Axe" end
-            if bt_findItem("Strong Axe") then return "Strong Axe" end
-            if bt_findItem("Chainsaw") then return "Chainsaw" end
-            for _, n in ipairs(TUNE.ChopPrefer) do
-                if n ~= "Admin Axe" and n ~= "Corrupted Axe" and n ~= "Strong Axe" and n ~= "Chainsaw" then
-                    if bt_findItem(n) then return n end
-                end
-            end
+            if bt_hasStrongAxe() then return "Strong Axe" end
+            if bt_hasChainsaw() then return "Chainsaw" end
             return nil
         end
 
         function BigTreeAura.HasTool()
-            return bt_pickToolName()
+            return bt_hasBigTreeTool()
         end
 
         local function bt_equippedToolName()
@@ -1181,7 +1174,7 @@ return function(C, R, UI)
         local function bt_chopWaveTrees(targetModels, swingDelay)
             swingDelay = tonumber(swingDelay) or 0.5
 
-            local toolName = bt_pickToolName()
+            local toolName = bt_hasBigTreeTool()
             if not toolName then
                 task.wait(0.5)
                 return
