@@ -434,6 +434,20 @@ return function(C, R, UI)
             return placement, rot, true
         end
 
+        local function placementFromOrb(model, orbPos)
+            if not (model and orbPos) then return nil, nil, nil end
+            local ok, cf0 = pcall(function() return model:GetPivot() end)
+            if not ok or not cf0 then return nil, nil, nil end
+            local fallbackY = hrp() and hrp().Position.Y or cf0.Position.Y
+            local gy0 = groundYAtSnap(Vector3.new(cf0.Position.X, cf0.Position.Y, cf0.Position.Z), fallbackY, model)
+            local yOff = (cf0.Position.Y - gy0)
+            local pos = Vector3.new(orbPos.X, orbPos.Y, orbPos.Z)
+            local cf = yawOnly(Vector3.new(pos.X, pos.Y + yOff, pos.Z), cf0.LookVector)
+            local placement = { Valid = true, Position = pos, CFrame = cf }
+            local rot = (cf - cf.Position)
+            return placement, rot, true
+        end
+
         local function findPickUpRemote()
             local re = RS:FindFirstChild("RemoteEvents")
             if re then
@@ -544,8 +558,159 @@ return function(C, R, UI)
 
         local edgeBtn = makeEdgeBtn("TemporalAccelEdge", "Temporal Cycle", 40)
 
+        local function makeMiniBtn(parent, name, label, order)
+            local b = parent:FindFirstChild(name)
+            if not b then
+                b = Instance.new("TextButton")
+                b.Name = name
+                b.Size = UDim2.new(1, 0, 0, 30)
+                b.Text = label
+                b.TextSize = 12
+                b.Font = Enum.Font.GothamBold
+                b.BackgroundColor3 = Color3.fromRGB(25,25,28)
+                b.TextColor3 = Color3.new(1,1,1)
+                b.BorderSizePixel = 0
+                b.LayoutOrder = order or 10
+                b.Parent = parent
+                local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 8); corner.Parent = b
+            else
+                b.Text = label
+                b.LayoutOrder = order or b.LayoutOrder
+            end
+            return b
+        end
+
+        local setupMenu = edgeGui:FindFirstChild("TemporalSetupMenu")
+        if not setupMenu then
+            setupMenu = Instance.new("Frame")
+            setupMenu.Name = "TemporalSetupMenu"
+            setupMenu.AnchorPoint = Vector2.new(1, 0)
+            setupMenu.Position = UDim2.new(1, -6, 0, 46)
+            setupMenu.Size = UDim2.new(0, 150, 0, 108)
+            setupMenu.BackgroundTransparency = 1
+            setupMenu.BorderSizePixel = 0
+            setupMenu.Visible = false
+            setupMenu.Parent = edgeGui
+            local list = Instance.new("UIListLayout")
+            list.Name = "VList"
+            list.FillDirection = Enum.FillDirection.Vertical
+            list.SortOrder = Enum.SortOrder.LayoutOrder
+            list.Padding = UDim.new(0, 6)
+            list.HorizontalAlignment = Enum.HorizontalAlignment.Right
+            list.Parent = setupMenu
+        end
+
+        local btnSetPlace   = makeMiniBtn(setupMenu, "SetTemporalLocation", "Set Temporal Location", 10)
+        local btnSetTP      = makeMiniBtn(setupMenu, "SetTeleportLocation", "Set Teleport Location", 20)
+        local btnClearOrbs  = makeMiniBtn(setupMenu, "ClearLocations", "Clear Locations", 30)
+
+        local temporalOrb = nil
+        local teleportOrb = nil
+
+        local function makeOrb(name, pos, color)
+            local p = Instance.new("Part")
+            p.Name = name
+            p.Shape = Enum.PartType.Ball
+            p.Material = Enum.Material.Neon
+            p.Size = Vector3.new(1.6, 1.6, 1.6)
+            p.Anchored = true
+            p.CanCollide = false
+            p.CanTouch = false
+            p.CanQuery = false
+            p.CastShadow = false
+            p.Color = color
+            p.CFrame = CFrame.new(pos)
+            p.Parent = RootWS
+            local c = Instance.new("UICorner")
+            c.CornerRadius = UDim.new(1, 0)
+            c.Parent = p
+            return p
+        end
+
+        local function setOrbVisible(orb, on)
+            if not orb then return end
+            if on then
+                orb.Transparency = 0.05
+            else
+                orb.Transparency = 1
+            end
+        end
+
+        local function ensureOrbsFromState()
+            if C.State.MoreTemporalPlacePos and typeof(C.State.MoreTemporalPlacePos) == "Vector3" then
+                if not (temporalOrb and temporalOrb.Parent) then
+                    temporalOrb = makeOrb("__cg_temporal_place_orb__", C.State.MoreTemporalPlacePos + Vector3.new(0, 0.8, 0), Color3.fromRGB(0, 200, 255))
+                end
+            end
+            if C.State.MoreTemporalTeleportPos and typeof(C.State.MoreTemporalTeleportPos) == "Vector3" then
+                if not (teleportOrb and teleportOrb.Parent) then
+                    teleportOrb = makeOrb("__cg_temporal_tp_orb__", C.State.MoreTemporalTeleportPos + Vector3.new(0, 0.8, 0), Color3.fromRGB(255, 200, 0))
+                end
+            end
+        end
+
+        local function applySetupVisibility()
+            local on = (C.State.Toggles.MoreTemporalSetup == true)
+            setupMenu.Visible = on
+            ensureOrbsFromState()
+            setOrbVisible(temporalOrb, on)
+            setOrbVisible(teleportOrb, on)
+        end
+
+        local function safeFlatForwardUnit(cf)
+            local lv = cf.LookVector
+            local v = Vector3.new(lv.X, 0, lv.Z)
+            if v.Magnitude < 1e-6 then
+                return Vector3.new(0, 0, -1)
+            end
+            return v.Unit
+        end
+
+        local function clearLocations()
+            C.State.MoreTemporalPlacePos = nil
+            C.State.MoreTemporalTeleportPos = nil
+            C.State.MoreTemporalTeleportCF = nil
+            if temporalOrb then pcall(function() temporalOrb:Destroy() end) end
+            if teleportOrb then pcall(function() teleportOrb:Destroy() end) end
+            temporalOrb = nil
+            teleportOrb = nil
+            applySetupVisibility()
+        end
+
+        local setupConns = {}
+
+        setupConns[#setupConns+1] = btnSetPlace.MouseButton1Click:Connect(function()
+            local root = hrp()
+            if not root then return end
+            local fwd = safeFlatForwardUnit(root.CFrame)
+            local desired = root.Position + fwd * 10
+            local g = groundBelow(desired)
+            local placePos = Vector3.new(desired.X, g.Y, desired.Z)
+            C.State.MoreTemporalPlacePos = placePos
+            if temporalOrb then pcall(function() temporalOrb:Destroy() end) end
+            temporalOrb = makeOrb("__cg_temporal_place_orb__", placePos + Vector3.new(0, 0.8, 0), Color3.fromRGB(0, 200, 255))
+            applySetupVisibility()
+        end)
+
+        setupConns[#setupConns+1] = btnSetTP.MouseButton1Click:Connect(function()
+            local root = hrp()
+            if not root then return end
+            local g = groundBelow(root.Position)
+            local tpPos = Vector3.new(root.Position.X, g.Y, root.Position.Z)
+            local tpCF = yawOnly(Vector3.new(tpPos.X, tpPos.Y + 3.0, tpPos.Z), root.CFrame.LookVector)
+            C.State.MoreTemporalTeleportPos = tpPos
+            C.State.MoreTemporalTeleportCF = tpCF
+            if teleportOrb then pcall(function() teleportOrb:Destroy() end) end
+            teleportOrb = makeOrb("__cg_temporal_tp_orb__", tpPos + Vector3.new(0, 0.8, 0), Color3.fromRGB(255, 200, 0))
+            applySetupVisibility()
+        end)
+
+        setupConns[#setupConns+1] = btnClearOrbs.MouseButton1Click:Connect(function()
+            clearLocations()
+        end)
+
         local busy = false
-        local function runTemporalSequence()
+        local function runTemporalSequence(fromTimer)
             if busy then return end
             busy = true
 
@@ -553,13 +718,26 @@ return function(C, R, UI)
             local returnCF = root0 and root0.CFrame or nil
 
             local ok = pcall(function()
+                if fromTimer == true then
+                    local tp = C.State.MoreTemporalTeleportCF
+                    if typeof(tp) == "CFrame" then
+                        teleportSticky(tp, true)
+                        task.wait(0.75)
+                    end
+                end
+
                 local machine = resolveAccelModel()
                 if not machine then return end
 
                 local destCF = nightSkipTeleportCF(machine)
                 if not destCF then return end
 
-                local placement, rot = placementFromExistingModel(machine)
+                local placement, rot
+                if C.State.MoreTemporalPlacePos and typeof(C.State.MoreTemporalPlacePos) == "Vector3" then
+                    placement, rot = placementFromOrb(machine, C.State.MoreTemporalPlacePos)
+                else
+                    placement, rot = placementFromExistingModel(machine)
+                end
                 if not placement then return end
 
                 teleportSticky(destCF, true)
@@ -592,7 +770,7 @@ return function(C, R, UI)
         end
 
         local edgeConn = edgeBtn.MouseButton1Click:Connect(function()
-            runTemporalSequence()
+            runTemporalSequence(false)
         end)
 
         if C.State.Toggles.MoreTemporalEdge == nil then
@@ -600,6 +778,9 @@ return function(C, R, UI)
         end
         if C.State.Toggles.MoreTemporalTimer == nil then
             C.State.Toggles.MoreTemporalTimer = false
+        end
+        if C.State.Toggles.MoreTemporalSetup == nil then
+            C.State.Toggles.MoreTemporalSetup = false
         end
 
         edgeBtn.Visible = (C.State.Toggles.MoreTemporalEdge == true)
@@ -618,7 +799,7 @@ return function(C, R, UI)
         tab:Button({
             Title = "Run Temporal Cycle Now",
             Callback = function()
-                runTemporalSequence()
+                runTemporalSequence(false)
             end
         })
 
@@ -629,6 +810,17 @@ return function(C, R, UI)
                 if not ok then
                     warn("[More] pickup failed (no target/remote or invoke error)")
                 end
+            end
+        })
+
+        tab:Section({ Title = "Temporal Setup" })
+
+        tab:Toggle({
+            Title = "Temporal Setup",
+            Value = (C.State.Toggles.MoreTemporalSetup == true),
+            Callback = function(state)
+                C.State.Toggles.MoreTemporalSetup = (state == true)
+                applySetupVisibility()
             end
         })
 
@@ -652,12 +844,12 @@ return function(C, R, UI)
                 timerThread = nil
             end
             timerThread = task.spawn(function()
-                runTemporalSequence()
+                runTemporalSequence(true)
                 local nextAt = os.clock() + TIMER_SECONDS
                 while timerOn do
                     local now = os.clock()
                     if now >= nextAt then
-                        runTemporalSequence()
+                        runTemporalSequence(true)
                         nextAt = nextAt + TIMER_SECONDS
                         if now >= nextAt + TIMER_SECONDS then
                             nextAt = now + TIMER_SECONDS
@@ -710,15 +902,6 @@ return function(C, R, UI)
                 local n = lower(m.Name or "")
                 if selectedSet["Cultist"] and n:find("cultist", 1, true) then return true end
                 if selectedSet["Alien"] and n:find("alien", 1, true) then return true end
-                return false
-            end
-
-            local function isSelectedItemName(ln, selectedSet)
-                if selectedSet["Sapling"] and ln == "sapling" then return true end
-                if selectedSet["Sacrifice Totem"] then
-                    if ln == "sacrifice totem" or ln == "sacrificetotem" then return true end
-                    if ln:find("sacrifice", 1, true) and ln:find("totem", 1, true) then return true end
-                end
                 return false
             end
 
@@ -899,18 +1082,27 @@ return function(C, R, UI)
             })
         end
 
-        Players.LocalPlayer.CharacterAdded:Connect(function()
+        local charConn = Players.LocalPlayer.CharacterAdded:Connect(function()
             local pg = lp:WaitForChild("PlayerGui")
             local eg = pg:FindFirstChild("EdgeButtons")
             if eg and eg.Parent ~= pg then eg.Parent = pg end
             if edgeBtn then edgeBtn.Visible = (C.State.Toggles.MoreTemporalEdge == true) end
+            applySetupVisibility()
         end)
+
+        applySetupVisibility()
 
         _G.__MoreTemporal = {
             Destroy = function()
                 stopTimer()
                 if rollbackThread then pcall(function() task.cancel(rollbackThread) end) rollbackThread = nil end
                 if edgeConn then pcall(function() edgeConn:Disconnect() end) edgeConn = nil end
+                if charConn then pcall(function() charConn:Disconnect() end) charConn = nil end
+                for i=1,#setupConns do pcall(function() setupConns[i]:Disconnect() end) end
+                setupConns = {}
+                if temporalOrb then pcall(function() temporalOrb:Destroy() end) temporalOrb = nil end
+                if teleportOrb then pcall(function() teleportOrb:Destroy() end) teleportOrb = nil end
+                if setupMenu and setupMenu.Parent then pcall(function() setupMenu:Destroy() end) end
                 if edgeBtn and edgeBtn.Parent then pcall(function() edgeBtn:Destroy() end) end
                 if DUMMY_MODEL then pcall(function() DUMMY_MODEL:Destroy() end) end
             end
