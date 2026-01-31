@@ -21,7 +21,7 @@ return function(C, R, UI)
     TUNE.CHOP_SWING_DELAY         = TUNE.CHOP_SWING_DELAY         or 0.50
     TUNE.TREE_NAME                = TUNE.TREE_NAME                or "Small Tree"
     TUNE.UID_SUFFIX               = TUNE.UID_SUFFIX               or "0000000000"
-    TUNE.ChopPrefer               = TUNE.ChopPrefer               or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
+    TUNE.ChopPrefer               = TUNE.ChopPrefer               or { "Admin Axe", "Chainsaw", "Corrupted Axe", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
     TUNE.MAX_TARGETS_PER_WAVE     = TUNE.MAX_TARGETS_PER_WAVE     or 20
     TUNE.CHAR_MAX_PER_WAVE        = TUNE.CHAR_MAX_PER_WAVE        or 20
     TUNE.CHAR_DEBOUNCE_SEC        = TUNE.CHAR_DEBOUNCE_SEC        or 0.5
@@ -285,6 +285,7 @@ return function(C, R, UI)
             { "Laser Sword",       0.5 },
             { "Poison Spear",      0.5 },
             { "Spear",             0.5 },
+            { "Corrupted Axe",     0.5 },
             { "Strong Axe",        0.5 },
             { "Chainsaw",          0.5 },
             { "Ice Axe",           0.5 },
