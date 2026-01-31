@@ -816,18 +816,17 @@ return function(C, R, UI)
             return out
         end
 
-local function st_pickToolName()
-    if st_findItem("Admin Axe") then return "Admin Axe" end
-    if st_findItem("Corrupted Axe") then return "Corrupted Axe" end
-    if st_findItem("Strong Axe") then return "Strong Axe" end
-    for _, n in ipairs(TUNE.ChopPrefer) do
-        if n ~= "Admin Axe" and n ~= "Corrupted Axe" and n ~= "Strong Axe" then
-            if st_findItem(n) then return n end
+        local function st_pickToolName()
+            if st_findItem("Admin Axe") then return "Admin Axe" end
+            if st_findItem("Corrupted Axe") then return "Corrupted Axe" end
+            if st_findItem("Strong Axe") then return "Strong Axe" end
+            for _, n in ipairs(TUNE.ChopPrefer) do
+                if n ~= "Admin Axe" and n ~= "Corrupted Axe" and n ~= "Strong Axe" then
+                    if st_findItem(n) then return n end
+                end
+            end
+            return nil
         end
-    end
-    return nil
-end
-
 
         local function st_chopWaveTrees(targetModels, swingDelay)
             swingDelay = tonumber(swingDelay) or 0.5
@@ -962,48 +961,51 @@ end
 
         local function bt_findItem(name)
             if not (lp and name) then return nil end
+
             local inv = lp:FindFirstChild("Inventory")
+            if not inv then inv = lp:WaitForChild("Inventory", 1) end
             if inv then
                 local it = inv:FindFirstChild(name)
                 if it then return it end
             end
+
             local bp = lp:FindFirstChild("Backpack")
+            if not bp then bp = lp:WaitForChild("Backpack", 1) end
             if bp then
                 local it = bp:FindFirstChild(name)
                 if it then return it end
             end
+
             local sg = lp:FindFirstChild("StarterGear")
             if sg then
                 local it = sg:FindFirstChild(name)
                 if it then return it end
             end
+
             local ch = lp.Character
             if ch then
                 local it = ch:FindFirstChild(name)
                 if it then return it end
             end
+
             return nil
         end
 
-        local function bt_hasStrongAxe()
-            return bt_findItem("Strong Axe") ~= nil
+        local function bt_pickToolName()
+            if bt_findItem("Admin Axe") then return "Admin Axe" end
+            if bt_findItem("Corrupted Axe") then return "Corrupted Axe" end
+            if bt_findItem("Strong Axe") then return "Strong Axe" end
+            if bt_findItem("Chainsaw") then return "Chainsaw" end
+            for _, n in ipairs(TUNE.ChopPrefer) do
+                if n ~= "Admin Axe" and n ~= "Corrupted Axe" and n ~= "Strong Axe" and n ~= "Chainsaw" then
+                    if bt_findItem(n) then return n end
+                end
+            end
+            return nil
         end
-
-        local function bt_hasChainsaw()
-            return bt_findItem("Chainsaw") ~= nil
-        end
-
-        local function bt_hasBigTreeTool()
-    if bt_findItem("Admin Axe") then return "Admin Axe" end
-    if bt_findItem("Corrupted Axe") then return "Corrupted Axe" end
-    if bt_hasStrongAxe() then return "Strong Axe" end
-    if bt_hasChainsaw() then return "Chainsaw" end
-    return nil
-end
-
 
         function BigTreeAura.HasTool()
-            return bt_hasBigTreeTool()
+            return bt_pickToolName()
         end
 
         local function bt_equippedToolName()
@@ -1179,7 +1181,7 @@ end
         local function bt_chopWaveTrees(targetModels, swingDelay)
             swingDelay = tonumber(swingDelay) or 0.5
 
-            local toolName = bt_hasBigTreeTool()
+            local toolName = bt_pickToolName()
             if not toolName then
                 task.wait(0.5)
                 return
