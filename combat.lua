@@ -994,11 +994,13 @@ end
         end
 
         local function bt_hasBigTreeTool()
-            if bt_findItem("Admin Axe") then return "Admin Axe" end
-            if bt_hasStrongAxe() then return "Strong Axe" end
-            if bt_hasChainsaw() then return "Chainsaw" end
-            return nil
-        end
+    if bt_findItem("Admin Axe") then return "Admin Axe" end
+    if bt_findItem("Corrupted Axe") then return "Corrupted Axe" end
+    if bt_hasStrongAxe() then return "Strong Axe" end
+    if bt_hasChainsaw() then return "Chainsaw" end
+    return nil
+end
+
 
         function BigTreeAura.HasTool()
             return bt_hasBigTreeTool()
