@@ -38,9 +38,9 @@ return function(C, R, UI)
         }
         local medicalItems = { "Bandage", "MedKit" }
         local weaponsArmor = {
-            "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
-            "Chainsaw","Crossbow","Katana","Kunai","Laser Cannon","Laser Sword","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
-            "Sword","Ice Axe","Thorn Body"
+        "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
+        "Chainsaw","Crossbow","Katana","Kunai","Laser Cannon","Laser Sword","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
+        "Sword","Ice Axe","Scythe","Thorn Body","Corrupted Thorn Body","Impact Grenade","Dynamite","Corrupted Shotgun","Corrupted Revolver","Corrupted Thrown Axe"
         }
         local ammoMisc = {
             "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Alien","Alien Elite","Sapling",
