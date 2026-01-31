@@ -816,16 +816,18 @@ return function(C, R, UI)
             return out
         end
 
-        local function st_pickToolName()
-            if st_findItem("Admin Axe") then return "Admin Axe" end
-            if st_findItem("Strong Axe") then return "Strong Axe" end
-            for _, n in ipairs(TUNE.ChopPrefer) do
-                if n ~= "Admin Axe" and n ~= "Strong Axe" then
-                    if st_findItem(n) then return n end
-                end
-            end
-            return nil
+local function st_pickToolName()
+    if st_findItem("Admin Axe") then return "Admin Axe" end
+    if st_findItem("Corrupted Axe") then return "Corrupted Axe" end
+    if st_findItem("Strong Axe") then return "Strong Axe" end
+    for _, n in ipairs(TUNE.ChopPrefer) do
+        if n ~= "Admin Axe" and n ~= "Corrupted Axe" and n ~= "Strong Axe" then
+            if st_findItem(n) then return n end
         end
+    end
+    return nil
+end
+
 
         local function st_chopWaveTrees(targetModels, swingDelay)
             swingDelay = tonumber(swingDelay) or 0.5
