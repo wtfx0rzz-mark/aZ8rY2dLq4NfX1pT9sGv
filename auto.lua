@@ -1,4 +1,5 @@
 -- auto.lua
+
 return function(C, R, UI)
     local function run()
         local Players  = (C and C.Services and C.Services.Players)  or game:GetService("Players")
@@ -13,32 +14,6 @@ return function(C, R, UI)
         local Tabs = (UI and UI.Tabs) or {}
         local tab  = Tabs.Auto
         if not tab then return end
-
-        -- Optional Ugc root remap (safe / no-op if absent)
-        local function getRoot()
-            local ugc = rawget(getfenv(), "Ugc")
-            if typeof(ugc) == "table" then
-                local okRS, vRS = pcall(function() return ugc.ReplicatedStorage end)
-                local okWS, vWS = pcall(function() return ugc.Workspace end)
-                if okRS and typeof(vRS) == "Instance" then RS = vRS end
-                if okWS and typeof(vWS) == "Instance" then WS = vWS end
-            end
-        end
-        pcall(getRoot)
-
-        -- === FIX: single-instance guard + cleanup hook ===
-        if _G.__AutoLua and type(_G.__AutoLua.Destroy) == "function" then
-            pcall(function() _G.__AutoLua.Destroy() end)
-        end
-        local SELF = { _alive = true }
-        _G.__AutoLua = SELF
-
-        local deferredThreads = {}
-        local function defer(fn)
-            local th = task.defer(fn)
-            deferredThreads[#deferredThreads+1] = th
-            return th
-        end
 
         local function hrp()
             local ch = lp.Character or lp.CharacterAdded:Wait()
@@ -60,18 +35,6 @@ return function(C, R, UI)
         local function getRemote(name)
             local f = RS:FindFirstChild("RemoteEvents")
             return f and f:FindFirstChild(name) or nil
-        end
-        local function findRemoteDeep(name)
-            local roots = { RS }
-            local ok1, re = pcall(function() return RS:FindFirstChild("RemoteEvents") end)
-            if ok1 and re then table.insert(roots, re) end
-            for _, root in ipairs(roots) do
-                local r = root:FindFirstChild(name, true)
-                if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then
-                    return r
-                end
-            end
-            return nil
         end
 
         local DUMMY_MODEL = Instance.new("Model")
@@ -437,9 +400,6 @@ return function(C, R, UI)
         local campBtn  = makeEdgeBtn("CampEdge",    "Campfire", 5)
         local skipNightBtn = makeEdgeBtn("SkipNightEdge", "Skip Night", 6)
 
-        -- New teleporter edge button (only shown while in range AND Teleporter Switch enabled)
-        local useTeleporterBtn = makeEdgeBtn("UseTeleporterEdge", "Use Teleporter", 7)
-
         local showPhaseEdge, showPlantEdge = false, false
         local showTeleportEdge, showCampEdge = false, true
         local showSkipNightEdge = false
@@ -450,7 +410,6 @@ return function(C, R, UI)
         campBtn.Visible  = showCampEdge
         lostBtn.Visible  = false
         skipNightBtn.Visible = showSkipNightEdge
-        useTeleporterBtn.Visible = false
 
         phaseBtn.MouseButton1Click:Connect(function()
             local root = hrp(); if not root then return end
@@ -689,205 +648,6 @@ return function(C, R, UI)
             end
         })
 
-        -- =========================
-        -- Teleporter Switch feature
-        -- =========================
-        local teleOn = false
-        local teleHB = nil
-        local teleDescAdd = nil
-        local teleDescRem = nil
-
-        local TELE = {
-            Range = 10.0,
-            ScanInterval = 0.20,
-            ChargeCooldown = 2.0,
-            Target = nil,
-            TargetDist = math.huge,
-        }
-
-        local teleList = {}
-        local teleSet = setmetatable({}, { __mode = "k" })
-        local lastChargeAt = setmetatable({}, { __mode = "k" })
-
-        local RemoteCharge = nil
-        local RemoteUse = nil
-
-        local function isTeleporterModel(m)
-            return m and m.Parent and m:IsA("Model") and m.Name == "Teleporter"
-        end
-
-        local function addTeleporter(m)
-            if not isTeleporterModel(m) then return end
-            if teleSet[m] then return end
-            teleSet[m] = true
-            teleList[#teleList+1] = m
-            m.AncestryChanged:Connect(function(_, parent)
-                if not parent then
-                    teleSet[m] = nil
-                    if TELE.Target == m then TELE.Target = nil; TELE.TargetDist = math.huge end
-                end
-            end)
-        end
-
-        local function rebuildTeleporterList()
-            table.clear(teleList)
-            teleSet = setmetatable({}, { __mode = "k" })
-            local structures = WS:FindFirstChild("Structures", true)
-            if structures then
-                for _, d in ipairs(structures:GetDescendants()) do
-                    if isTeleporterModel(d) then addTeleporter(d) end
-                end
-            else
-                for _, d in ipairs(WS:GetDescendants()) do
-                    if isTeleporterModel(d) and (d:FindFirstAncestor("Structures") ~= nil) then
-                        addTeleporter(d)
-                    end
-                end
-            end
-        end
-
-        local function compactTeleporterList()
-            local out = {}
-            for i = 1, #teleList do
-                local m = teleList[i]
-                if m and m.Parent and teleSet[m] then
-                    out[#out+1] = m
-                else
-                    teleSet[m] = nil
-                end
-            end
-            teleList = out
-        end
-
-        local function getTeleporterTarget()
-            local root = hrp()
-            if not root then return nil, math.huge end
-            local best, bestD = nil, math.huge
-            local rp = root.Position
-
-            for i = 1, #teleList do
-                local m = teleList[i]
-                if m and m.Parent then
-                    local p = mainPart(m)
-                    if p then
-                        local d = (p.Position - rp).Magnitude
-                        if d <= TELE.Range and d < bestD then
-                            best, bestD = m, d
-                        end
-                    end
-                end
-            end
-
-            return best, bestD
-        end
-
-        local function fireRemoteOnTarget(r, target)
-            if not (r and target and target.Parent) then return false end
-            local ok = pcall(function()
-                if r:IsA("RemoteEvent") then
-                    r:FireServer(target)
-                else
-                    r:InvokeServer(target)
-                end
-            end)
-            return ok
-        end
-
-        local function maybeCharge(target)
-            if not target then return end
-            local now = os.clock()
-            local lt = lastChargeAt[target]
-            if lt and (now - lt) < TELE.ChargeCooldown then return end
-            lastChargeAt[target] = now
-            if not RemoteCharge or not RemoteCharge.Parent then
-                RemoteCharge = findRemoteDeep("ChargeTeleporter")
-            end
-            if RemoteCharge then
-                fireRemoteOnTarget(RemoteCharge, target)
-            end
-        end
-
-        local function showUseTeleporterButton(show)
-            if useTeleporterBtn then
-                useTeleporterBtn.Visible = show
-            end
-        end
-
-        useTeleporterBtn.MouseButton1Click:Connect(function()
-            if not teleOn then return end
-            local target = TELE.Target
-            if not (target and target.Parent) then return end
-            if not RemoteUse or not RemoteUse.Parent then
-                RemoteUse = findRemoteDeep("UseTeleporter")
-            end
-            if RemoteUse then
-                fireRemoteOnTarget(RemoteUse, target)
-            end
-        end)
-
-        local function enableTeleporterSwitch()
-            if teleOn then return end
-            teleOn = true
-            RemoteCharge = findRemoteDeep("ChargeTeleporter")
-            RemoteUse = findRemoteDeep("UseTeleporter")
-            rebuildTeleporterList()
-            showUseTeleporterButton(false)
-
-            if teleDescAdd then teleDescAdd:Disconnect(); teleDescAdd = nil end
-            if teleDescRem then teleDescRem:Disconnect(); teleDescRem = nil end
-
-            local structures = WS:FindFirstChild("Structures", true)
-            if structures then
-                teleDescAdd = structures.DescendantAdded:Connect(function(d)
-                    if teleOn and isTeleporterModel(d) then addTeleporter(d) end
-                end)
-                teleDescRem = structures.DescendantRemoving:Connect(function(d)
-                    if teleOn and teleSet[d] then teleSet[d] = nil end
-                end)
-            end
-
-            if teleHB then teleHB:Disconnect(); teleHB = nil end
-            local acc = 0
-            teleHB = Run.Heartbeat:Connect(function(dt)
-                if not teleOn then return end
-                acc += dt
-                if acc < TELE.ScanInterval then return end
-                acc = 0
-                compactTeleporterList()
-                local target, dist = getTeleporterTarget()
-                TELE.Target = target
-                TELE.TargetDist = dist
-                if target then
-                    maybeCharge(target)
-                    showUseTeleporterButton(true)
-                else
-                    showUseTeleporterButton(false)
-                end
-            end)
-        end
-
-        local function disableTeleporterSwitch()
-            teleOn = false
-            TELE.Target = nil
-            TELE.TargetDist = math.huge
-            showUseTeleporterButton(false)
-            if teleHB then teleHB:Disconnect(); teleHB = nil end
-            if teleDescAdd then teleDescAdd:Disconnect(); teleDescAdd = nil end
-            if teleDescRem then teleDescRem:Disconnect(); teleDescRem = nil end
-        end
-
-        tab:Toggle({
-            Title = "Teleporter Switch",
-            Value = false,
-            Callback = function(state)
-                if state then
-                    enableTeleporterSwitch()
-                else
-                    disableTeleporterSwitch()
-                end
-            end
-        })
-
         local MAX_TO_SAVE, savedCount = 4, 0
         local autoLostEnabled = false
         local lostEligible  = setmetatable({}, {__mode="k"})
@@ -1023,7 +783,7 @@ return function(C, R, UI)
                 if state then enableLostChild() else disableLostChild() end
             end
         })
-        defer(enableLostChild)
+        task.defer(enableLostChild)
 
         local godOn = false
         local godHB = nil
@@ -1098,33 +858,48 @@ return function(C, R, UI)
                 if state then enableGod() else disableGod() end
             end
         })
-        defer(enableGod)
+        task.defer(enableGod)
 
-        local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.2
-        local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
-        local EXCLUDE_ANCESTOR_SUBSTR = { "closetdoors", "closet", "door", "landmarks" }
+local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.2
+local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
+local EXCLUDE_ANCESTOR_SUBSTR = { "closetdoors", "closet", "door", "landmarks" }
 
-        local function strfindAny(s, list)
-            s = string.lower(s or "")
-            for _, w in ipairs(list) do
-                if string.find(s, w, 1, true) then return true end
-            end
-            return false
-        end
+local function strfindAny(s, list)
+    s = string.lower(s or "")
+    for _, w in ipairs(list) do
+        if string.find(s, w, 1, true) then return true end
+    end
+    return false
+end
+local function trimUpper(s)
+    s = tostring(s or "")
+    s = s:gsub("^%s+", ""):gsub("%s+$", "")
+    return string.upper(s)
+end
 
-        -- Teleporter logic removed from instant-interact filtering (per request)
-        local function shouldSkipPrompt(p)
-            if not p or not p.Parent then return true end
-            if strfindAny(p.Name, EXCLUDE_NAME_SUBSTR) then return true end
-            if strfindAny(p.ObjectText, EXCLUDE_NAME_SUBSTR) then return true end
-            if strfindAny(p.ActionText, EXCLUDE_NAME_SUBSTR) then return true end
-            local a = p.Parent
-            while a and a ~= workspace do
-                if strfindAny(a.Name, EXCLUDE_ANCESTOR_SUBSTR) then return true end
-                a = a.Parent
-            end
-            return false
-        end
+local function shouldSkipPrompt(p)
+    if not p or not p.Parent then return true end
+    if strfindAny(p.Name, EXCLUDE_NAME_SUBSTR) then return true end
+
+    local ot = trimUpper(p.ObjectText)
+    local at = trimUpper(p.ActionText)
+
+    if ot == "TELEPORT" or at == "TELEPORT" then
+        return true
+    end
+
+    pcall(function()
+        if strfindAny(p.ObjectText, EXCLUDE_NAME_SUBSTR) then error(true) end
+        if strfindAny(p.ActionText, EXCLUDE_NAME_SUBSTR) then error(true) end
+    end)
+
+    local a = p.Parent
+    while a and a ~= workspace do
+        if strfindAny(a.Name, EXCLUDE_ANCESTOR_SUBSTR) then return true end
+        a = a.Parent
+    end
+    return false
+end
 
         local promptDurations = setmetatable({}, { __mode = "k" })
         local shownConn, trigConn, hiddenConn
@@ -1280,8 +1055,6 @@ return function(C, R, UI)
         end
         local function disableAutoStun()
             autoStunOn = false
-            if autoStunThread then pcall(function() task.cancel(autoStunThread) end) autoStunThread = nil end
-            forceFlashlightOffAll()
         end
         tab:Toggle({
             Title = "Auto Stun Monster",
@@ -1290,7 +1063,7 @@ return function(C, R, UI)
                 if state then enableAutoStun() else disableAutoStun() end
             end
         })
-        defer(enableAutoStun)
+        task.defer(enableAutoStun)
 
         local noShadowsOn, lightConn = false, nil
         local origGlobalShadows = nil
@@ -2007,8 +1780,7 @@ return function(C, R, UI)
         local loadDefenseOnDefault = true
         if loadDefenseOnDefault then enableLoadDefenseSafe() end
 
-        local charAddedConn = nil
-        charAddedConn = Players.LocalPlayer.CharacterAdded:Connect(function()
+        Players.LocalPlayer.CharacterAdded:Connect(function()
             local playerGui2 = lp:WaitForChild("PlayerGui")
             local edgeGui2 = playerGui2:FindFirstChild("EdgeButtons")
             if edgeGui2 and edgeGui2.Parent ~= playerGui2 then edgeGui2.Parent = playerGui2 end
@@ -2018,7 +1790,6 @@ return function(C, R, UI)
             if campBtn  then campBtn.Visible  = showCampEdge end
             lostBtn.Visible = false
             if skipNightBtn then skipNightBtn.Visible = showSkipNightEdge end
-            if useTeleporterBtn then useTeleporterBtn.Visible = false end
             if noShadowsOn and not lightConn then enableNoShadows() end
             if loadDefenseOnDefault then enableLoadDefenseSafe() end
             pcall(function() WS.StreamingPauseMode = Enum.StreamingPauseMode.Disabled end)
@@ -2034,78 +1805,7 @@ return function(C, R, UI)
                 refreshLostBtn()
             end
         end)
-
-        -- === FIX: expose Destroy() so future reloads can cleanly stop this instance ===
-        SELF.Destroy = function()
-            if not SELF._alive then return end
-            SELF._alive = false
-
-            pcall(function()
-                disableSkipNightTimer()
-            end)
-            pcall(function()
-                disableTeleporterSwitch()
-            end)
-            pcall(function()
-                disableInstantInteract()
-            end)
-            pcall(function()
-                disableAutoStun()
-            end)
-            pcall(function()
-                disableNoShadows()
-            end)
-            pcall(function()
-                disableHideBigTrees()
-            end)
-            pcall(function()
-                if chestFinderOn and disableChestFinder then disableChestFinder() end
-            end)
-            pcall(function()
-                disableCoin()
-            end)
-            pcall(function()
-                disableGod()
-            end)
-            pcall(function()
-                disableLostChild()
-            end)
-
-            pcall(function()
-                if rollbackThread then task.cancel(rollbackThread) rollbackThread = nil end
-            end)
-
-            pcall(function()
-                if charAddedConn then charAddedConn:Disconnect() charAddedConn = nil end
-            end)
-
-            pcall(function()
-                for i = 1, #deferredThreads do
-                    local th = deferredThreads[i]
-                    if th then task.cancel(th) end
-                end
-            end)
-
-            pcall(function()
-                if prevPauseMode ~= nil then
-                    WS.StreamingPauseMode = prevPauseMode
-                end
-            end)
-
-            pcall(function()
-                if phaseBtn then phaseBtn.Visible = false end
-                if plantBtn then plantBtn.Visible = false end
-                if tpBtn then tpBtn.Visible = false end
-                if campBtn then campBtn.Visible = false end
-                if lostBtn then lostBtn.Visible = false end
-                if skipNightBtn then skipNightBtn.Visible = false end
-                if useTeleporterBtn then useTeleporterBtn.Visible = false end
-                local nb = stack and stack:FindFirstChild("NextChestEdge")
-                if nb and nb:IsA("TextButton") then nb.Visible = false end
-            end)
-        end
     end
-
     local ok, err = pcall(run)
     if not ok then warn("[Auto] module error: " .. tostring(err)) end
 end
