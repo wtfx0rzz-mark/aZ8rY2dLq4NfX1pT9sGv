@@ -20,6 +20,10 @@ return function(C, R, UI)
         return math.clamp(v, 1, 100)
     end
 
+    if C.State.BringLimitAmount == nil then
+        C.State.BringLimitAmount = 10
+    end
+
     local COLLIDE_OFF_SEC       = 0.22
     local DROP_ABOVE_HEAD_STUDS = 10
     local FALLBACK_UP           = 4
@@ -1191,6 +1195,36 @@ return function(C, R, UI)
         })
     end
 
+    local function parseSliderNumber(v)
+        if type(v) == "number" then return v end
+        if type(v) == "string" then return tonumber(v) end
+        if type(v) ~= "table" then return nil end
+
+        local keys = {
+            "Value","value",
+            "Current","current",
+            "CurrentValue","currentValue",
+            "Number","number",
+            "Slider","slider",
+        }
+        for _,k in ipairs(keys) do
+            local n = tonumber(v[k])
+            if n then return n end
+        end
+
+        if type(v.Value) == "table" then
+            local n = tonumber(v.Value.Value) or tonumber(v.Value.Current) or tonumber(v.Value.CurrentValue)
+            if n then return n end
+        end
+
+        if #v >= 1 then
+            local n = tonumber(v[1])
+            if n then return n end
+        end
+
+        return nil
+    end
+
     tab:Section({ Title = "Actions" })
     tab:Button({ Title = "Burn/Cook Nearby", Callback = burnNearby })
     tab:Button({ Title = "Scrap Nearby",      Callback = scrapNearby })
@@ -1207,11 +1241,7 @@ return function(C, R, UI)
         Title = "Max per item name",
         Value = { Min = 1, Max = 100, Default = currentLimit() },
         Callback = function(v)
-            local nv = v
-            if type(v) == "table" then
-                nv = v.Value or v.Current or v.CurrentValue or v.Default or v.min or v.max
-            end
-            nv = tonumber(nv)
+            local nv = parseSliderNumber(v)
             if nv then
                 C.State.BringLimitAmount = math.clamp(nv, 1, 100)
             end
