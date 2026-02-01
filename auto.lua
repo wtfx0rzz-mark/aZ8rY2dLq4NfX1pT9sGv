@@ -368,6 +368,7 @@ return function(C, R, UI)
             list.HorizontalAlignment = Enum.HorizontalAlignment.Right
             list.Parent = stack
         end
+
         local function makeEdgeBtn(name, label, order)
             local b = stack:FindFirstChild(name)
             if not b then
@@ -398,18 +399,20 @@ return function(C, R, UI)
         local plantBtn = makeEdgeBtn("PlantEdge",   "Plant",    3)
         local lostBtn  = makeEdgeBtn("LostEdge",    "Lost Child", 4)
         local campBtn  = makeEdgeBtn("CampEdge",    "Campfire", 5)
-        local skipNightBtn = makeEdgeBtn("SkipNightEdge", "Skip Night", 6)
+
+        do
+            local old = stack:FindFirstChild("SkipNightEdge")
+            if old then pcall(function() old:Destroy() end) end
+        end
 
         local showPhaseEdge, showPlantEdge = false, false
         local showTeleportEdge, showCampEdge = false, true
-        local showSkipNightEdge = false
 
         phaseBtn.Visible = showPhaseEdge
         plantBtn.Visible = showPlantEdge
         tpBtn.Visible    = showTeleportEdge
         campBtn.Visible  = showCampEdge
         lostBtn.Visible  = false
-        skipNightBtn.Visible = showSkipNightEdge
 
         phaseBtn.MouseButton1Click:Connect(function()
             local root = hrp(); if not root then return end
@@ -439,64 +442,6 @@ return function(C, R, UI)
         campBtn.MouseButton1Click:Connect(function()
             local cf = campfireTeleportCF()
             if cf then teleportWithDive(cf) end
-        end)
-
-        local function resolveNightSkipMachineModel()
-            local structures = WS:FindFirstChild("Structures")
-            if not structures then return nil end
-            local machine = structures:FindFirstChild("Temporal Accelerometer")
-            if machine and machine:IsA("Model") then return machine end
-            return nil
-        end
-
-        local function nightSkipTeleportCF(machine)
-            machine = machine or resolveNightSkipMachineModel()
-            if not machine then return nil end
-            local mp = mainPart(machine) or machine.PrimaryPart
-            if not mp then
-                local ok, cf = pcall(function() return machine:GetPivot() end)
-                return ok and cf or nil
-            end
-            local look = mp.CFrame.LookVector
-            local desired = mp.Position - look * 8
-            local g = groundBelow(desired)
-            local standPos = Vector3.new(desired.X, g.Y + 3.0, desired.Z)
-            return CFrame.new(standPos, mp.Position)
-        end
-
-        local function doSkipNightSequence(preWaitSeconds)
-            local root = hrp(); if not root then return end
-            local returnCF = root.CFrame
-
-            local machine = resolveNightSkipMachineModel()
-            if not machine then return end
-
-            local destCF = nightSkipTeleportCF(machine)
-            if not destCF then return end
-
-            teleportSticky(destCF, true)
-
-            if preWaitSeconds and preWaitSeconds > 0 then
-                task.wait(preWaitSeconds)
-            end
-
-            local ev = getRemote("RequestActivateNightSkipMachine")
-            if ev and ev:IsA("RemoteEvent") then
-                pcall(function()
-                    ev:FireServer(machine)
-                end)
-            end
-
-            task.wait(1.0)
-            teleportSticky(returnCF, true)
-        end
-
-        local function runSkipNightEdgeSequence()
-            doSkipNightSequence(0)
-        end
-
-        skipNightBtn.MouseButton1Click:Connect(function()
-            runSkipNightEdgeSequence()
         end)
 
         local AHEAD_DIST, RAY_DEPTH = 3, 2000
@@ -580,71 +525,6 @@ return function(C, R, UI)
             Callback = function(state)
                 showCampEdge = state
                 if campBtn then campBtn.Visible = state end
-            end
-        })
-        tab:Toggle({
-            Title = "Edge Button: Skip Night",
-            Value = false,
-            Callback = function(state)
-                showSkipNightEdge = state
-                if skipNightBtn then skipNightBtn.Visible = state end
-            end
-        })
-
-        local skipNightTimerOn = false
-        local skipNightTimerThread = nil
-        local SKIP_NIGHT_TIMER_SECONDS = 180
-        local skipNightSavedCF = nil
-
-        local function fireSkipNightOnce()
-            pcall(function()
-                runSkipNightEdgeSequence()
-            end)
-        end
-
-        local function enableSkipNightTimer()
-            if skipNightTimerOn then return end
-            skipNightSavedCF = nil
-            skipNightTimerOn = true
-            if skipNightTimerThread then
-                pcall(function() task.cancel(skipNightTimerThread) end)
-                skipNightTimerThread = nil
-            end
-            skipNightTimerThread = task.spawn(function()
-                fireSkipNightOnce()
-                local nextAt = os.clock() + SKIP_NIGHT_TIMER_SECONDS
-                while skipNightTimerOn do
-                    local now = os.clock()
-                    if now >= nextAt then
-                        fireSkipNightOnce()
-                        nextAt = nextAt + SKIP_NIGHT_TIMER_SECONDS
-                        if now >= nextAt + SKIP_NIGHT_TIMER_SECONDS then
-                            nextAt = now + SKIP_NIGHT_TIMER_SECONDS
-                        end
-                    end
-                    task.wait(0.25)
-                end
-            end)
-        end
-
-        local function disableSkipNightTimer()
-            skipNightTimerOn = false
-            skipNightSavedCF = nil
-            if skipNightTimerThread then
-                pcall(function() task.cancel(skipNightTimerThread) end)
-                skipNightTimerThread = nil
-            end
-        end
-
-        tab:Toggle({
-            Title = "Skip Nights With Timer",
-            Value = false,
-            Callback = function(state)
-                if state then
-                    enableSkipNightTimer()
-                else
-                    disableSkipNightTimer()
-                end
             end
         })
 
@@ -860,46 +740,46 @@ return function(C, R, UI)
         })
         task.defer(enableGod)
 
-local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.2
-local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
-local EXCLUDE_ANCESTOR_SUBSTR = { "closetdoors", "closet", "door", "landmarks" }
+        local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.2
+        local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
+        local EXCLUDE_ANCESTOR_SUBSTR = { "closetdoors", "closet", "door", "landmarks" }
 
-local function strfindAny(s, list)
-    s = string.lower(s or "")
-    for _, w in ipairs(list) do
-        if string.find(s, w, 1, true) then return true end
-    end
-    return false
-end
-local function trimUpper(s)
-    s = tostring(s or "")
-    s = s:gsub("^%s+", ""):gsub("%s+$", "")
-    return string.upper(s)
-end
+        local function strfindAny(s, list)
+            s = string.lower(s or "")
+            for _, w in ipairs(list) do
+                if string.find(s, w, 1, true) then return true end
+            end
+            return false
+        end
+        local function trimUpper(s)
+            s = tostring(s or "")
+            s = s:gsub("^%s+", ""):gsub("%s+$", "")
+            return string.upper(s)
+        end
 
-local function shouldSkipPrompt(p)
-    if not p or not p.Parent then return true end
-    if strfindAny(p.Name, EXCLUDE_NAME_SUBSTR) then return true end
+        local function shouldSkipPrompt(p)
+            if not p or not p.Parent then return true end
+            if strfindAny(p.Name, EXCLUDE_NAME_SUBSTR) then return true end
 
-    local ot = trimUpper(p.ObjectText)
-    local at = trimUpper(p.ActionText)
+            local ot = trimUpper(p.ObjectText)
+            local at = trimUpper(p.ActionText)
 
-    if ot == "TELEPORT" or at == "TELEPORT" then
-        return true
-    end
+            if ot == "TELEPORT" or at == "TELEPORT" then
+                return true
+            end
 
-    pcall(function()
-        if strfindAny(p.ObjectText, EXCLUDE_NAME_SUBSTR) then error(true) end
-        if strfindAny(p.ActionText, EXCLUDE_NAME_SUBSTR) then error(true) end
-    end)
+            pcall(function()
+                if strfindAny(p.ObjectText, EXCLUDE_NAME_SUBSTR) then error(true) end
+                if strfindAny(p.ActionText, EXCLUDE_NAME_SUBSTR) then error(true) end
+            end)
 
-    local a = p.Parent
-    while a and a ~= workspace do
-        if strfindAny(a.Name, EXCLUDE_ANCESTOR_SUBSTR) then return true end
-        a = a.Parent
-    end
-    return false
-end
+            local a = p.Parent
+            while a and a ~= workspace do
+                if strfindAny(a.Name, EXCLUDE_ANCESTOR_SUBSTR) then return true end
+                a = a.Parent
+            end
+            return false
+        end
 
         local promptDurations = setmetatable({}, { __mode = "k" })
         local shownConn, trigConn, hiddenConn
@@ -1139,11 +1019,9 @@ end
         local lastCoinFireAt = setmetatable({}, { __mode = "k" })
 
         local function coinNow() return os.clock() end
-
         local function coinItemsFolder()
             return WS:FindFirstChild("Items") or WS
         end
-
         local function coinTopModelUnderItems(part, items)
             local cur = part
             local lastModel = nil
@@ -1153,7 +1031,6 @@ end
             end
             return lastModel
         end
-
         local function coinResolveTopModelFromPart(part)
             if not (part and part.Parent) then return nil end
             local items = coinItemsFolder()
@@ -1168,13 +1045,11 @@ end
             if part:IsA("Model") then return part end
             return nil
         end
-
         local function getCollectCointsRemote()
             local re = RS:FindFirstChild("RemoteEvents")
             if not re then return nil end
             return re:FindFirstChild("RequestCollectCoints")
         end
-
         local collectCointsRemote = getCollectCointsRemote()
 
         local function invokeCollect(remote, a1)
@@ -1185,14 +1060,12 @@ end
             end)
             return ok
         end
-
         local function shouldFireCoin(inst)
             local lt = lastCoinFireAt[inst]
             if lt and (coinNow() - lt) < COIN_STATE.FireCooldown then return false end
             lastCoinFireAt[inst] = coinNow()
             return true
         end
-
         local function isCoinModel(m)
             return m and m.Parent and m:IsA("Model") and m.Name == "Coin Stack"
         end
@@ -1789,7 +1662,6 @@ end
             if tpBtn    then tpBtn.Visible    = showTeleportEdge end
             if campBtn  then campBtn.Visible  = showCampEdge end
             lostBtn.Visible = false
-            if skipNightBtn then skipNightBtn.Visible = showSkipNightEdge end
             if noShadowsOn and not lightConn then enableNoShadows() end
             if loadDefenseOnDefault then enableLoadDefenseSafe() end
             pcall(function() WS.StreamingPauseMode = Enum.StreamingPauseMode.Disabled end)
