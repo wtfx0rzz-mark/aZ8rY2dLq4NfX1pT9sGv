@@ -891,6 +891,23 @@ return function(C, R, UI)
             return string.upper(s)
         end
 
+        local function findTeleporterRootFromPrompt(prompt)
+            local node = prompt and prompt.Parent
+            local hops = 0
+            while node and node ~= workspace and hops < 20 do
+                local ok, inter = pcall(function() return node:GetAttribute("Interaction") end)
+                if ok and inter == "TeleporterCharge" then
+                    return node
+                end
+                if node.Name == "Teleporter" then
+                    return node
+                end
+                node = node.Parent
+                hops += 1
+            end
+            return nil
+        end
+
         -- === FIX: make prompt skip checks actually work (previous pcall/error block did nothing) ===
         local function shouldSkipPrompt(p)
             if not p or not p.Parent then return true end
@@ -900,6 +917,14 @@ return function(C, R, UI)
             local at = trimUpper(p.ActionText)
 
             if ot == "TELEPORT" or at == "TELEPORT" then
+                local tpRoot = findTeleporterRootFromPrompt(p)
+                if tpRoot then
+                    local charging = tpRoot:GetAttribute("IsCharging")
+                    if charging == true then
+                        return false
+                    end
+                    return true
+                end
                 return true
             end
 
