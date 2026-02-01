@@ -557,7 +557,6 @@ return function(C, R, UI)
         end
 
         local edgeBtn = makeEdgeBtn("TemporalAccelEdge", "Temporal Cycle", 40)
-        local tpEdgeBtn = makeEdgeBtn("TeleporterEdge", "Teleport", 45)
 
         local function makeMiniBtn(parent, name, label, order)
             local b = parent:FindFirstChild(name)
@@ -710,15 +709,6 @@ return function(C, R, UI)
             clearLocations()
         end)
 
-        local function doTeleportEdge()
-            local tp = C.State.MoreTemporalTeleportCF
-            if typeof(tp) ~= "CFrame" then
-                warn("[More] Teleport Edge: no Teleport Location set")
-                return
-            end
-            teleportSticky(tp, true)
-        end
-
         local busy = false
         local function runTemporalSequence(fromTimer)
             if busy then return end
@@ -783,10 +773,6 @@ return function(C, R, UI)
             runTemporalSequence(false)
         end)
 
-        local tpEdgeConn = tpEdgeBtn.MouseButton1Click:Connect(function()
-            doTeleportEdge()
-        end)
-
         if C.State.Toggles.MoreTemporalEdge == nil then
             C.State.Toggles.MoreTemporalEdge = false
         end
@@ -796,12 +782,8 @@ return function(C, R, UI)
         if C.State.Toggles.MoreTemporalSetup == nil then
             C.State.Toggles.MoreTemporalSetup = false
         end
-        if C.State.Toggles.MoreTeleporterEdge == nil then
-            C.State.Toggles.MoreTeleporterEdge = false
-        end
 
         edgeBtn.Visible = (C.State.Toggles.MoreTemporalEdge == true)
-        tpEdgeBtn.Visible = (C.State.Toggles.MoreTeleporterEdge == true)
 
         tab:Section({ Title = "Temporal Accelerometer" })
 
@@ -811,15 +793,6 @@ return function(C, R, UI)
             Callback = function(state)
                 C.State.Toggles.MoreTemporalEdge = (state == true)
                 if edgeBtn then edgeBtn.Visible = (state == true) end
-            end
-        })
-
-        tab:Toggle({
-            Title = "Edge Button: Teleporter",
-            Value = (C.State.Toggles.MoreTeleporterEdge == true),
-            Callback = function(state)
-                C.State.Toggles.MoreTeleporterEdge = (state == true)
-                if tpEdgeBtn then tpEdgeBtn.Visible = (state == true) end
             end
         })
 
@@ -1114,7 +1087,6 @@ return function(C, R, UI)
             local eg = pg:FindFirstChild("EdgeButtons")
             if eg and eg.Parent ~= pg then eg.Parent = pg end
             if edgeBtn then edgeBtn.Visible = (C.State.Toggles.MoreTemporalEdge == true) end
-            if tpEdgeBtn then tpEdgeBtn.Visible = (C.State.Toggles.MoreTeleporterEdge == true) end
             applySetupVisibility()
         end)
 
@@ -1125,7 +1097,6 @@ return function(C, R, UI)
                 stopTimer()
                 if rollbackThread then pcall(function() task.cancel(rollbackThread) end) rollbackThread = nil end
                 if edgeConn then pcall(function() edgeConn:Disconnect() end) edgeConn = nil end
-                if tpEdgeConn then pcall(function() tpEdgeConn:Disconnect() end) tpEdgeConn = nil end
                 if charConn then pcall(function() charConn:Disconnect() end) charConn = nil end
                 for i=1,#setupConns do pcall(function() setupConns[i]:Disconnect() end) end
                 setupConns = {}
@@ -1133,7 +1104,6 @@ return function(C, R, UI)
                 if teleportOrb then pcall(function() teleportOrb:Destroy() end) teleportOrb = nil end
                 if setupMenu and setupMenu.Parent then pcall(function() setupMenu:Destroy() end) end
                 if edgeBtn and edgeBtn.Parent then pcall(function() edgeBtn:Destroy() end) end
-                if tpEdgeBtn and tpEdgeBtn.Parent then pcall(function() tpEdgeBtn:Destroy() end) end
                 if DUMMY_MODEL then pcall(function() DUMMY_MODEL:Destroy() end) end
             end
         }
