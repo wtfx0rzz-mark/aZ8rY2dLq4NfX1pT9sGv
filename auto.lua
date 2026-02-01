@@ -15,7 +15,6 @@ return function(C, R, UI)
         local tab  = Tabs.Auto
         if not tab then return end
 
-        -- === FIX: single-instance guard + cleanup hook ===
         if _G.__AutoLua and type(_G.__AutoLua.Destroy) == "function" then
             pcall(function() _G.__AutoLua.Destroy() end)
         end
@@ -49,6 +48,20 @@ return function(C, R, UI)
         local function getRemote(name)
             local f = RS:FindFirstChild("RemoteEvents")
             return f and f:FindFirstChild(name) or nil
+        end
+
+        local function findRemoteDeep(name)
+            local roots = {}
+            roots[#roots+1] = RS
+            local re = RS:FindFirstChild("RemoteEvents")
+            if re then roots[#roots+1] = re end
+            for i = 1, #roots do
+                local r = roots[i]:FindFirstChild(name, true)
+                if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then
+                    return r
+                end
+            end
+            return nil
         end
 
         local DUMMY_MODEL = Instance.new("Model")
@@ -414,6 +427,8 @@ return function(C, R, UI)
         local campBtn  = makeEdgeBtn("CampEdge",    "Campfire", 5)
         local skipNightBtn = makeEdgeBtn("SkipNightEdge", "Skip Night", 6)
 
+        local useTeleporterBtn = makeEdgeBtn("UseTeleporterEdge", "Use Teleporter", 7)
+
         local showPhaseEdge, showPlantEdge = false, false
         local showTeleportEdge, showCampEdge = false, true
         local showSkipNightEdge = false
@@ -424,6 +439,7 @@ return function(C, R, UI)
         campBtn.Visible  = showCampEdge
         lostBtn.Visible  = false
         skipNightBtn.Visible = showSkipNightEdge
+        useTeleporterBtn.Visible = false
 
         phaseBtn.MouseButton1Click:Connect(function()
             local root = hrp(); if not root then return end
@@ -885,49 +901,10 @@ return function(C, R, UI)
             end
             return false
         end
-        local function trimUpper(s)
-            s = tostring(s or "")
-            s = s:gsub("^%s+", ""):gsub("%s+$", "")
-            return string.upper(s)
-        end
 
-        local function findTeleporterRootFromPrompt(prompt)
-            local node = prompt and prompt.Parent
-            local hops = 0
-            while node and node ~= workspace and hops < 20 do
-                local ok, inter = pcall(function() return node:GetAttribute("Interaction") end)
-                if ok and inter == "TeleporterCharge" then
-                    return node
-                end
-                if node.Name == "Teleporter" then
-                    return node
-                end
-                node = node.Parent
-                hops += 1
-            end
-            return nil
-        end
-
-        -- === FIX: make prompt skip checks actually work (previous pcall/error block did nothing) ===
         local function shouldSkipPrompt(p)
             if not p or not p.Parent then return true end
             if strfindAny(p.Name, EXCLUDE_NAME_SUBSTR) then return true end
-
-            local ot = trimUpper(p.ObjectText)
-            local at = trimUpper(p.ActionText)
-
-            if ot == "TELEPORT" or at == "TELEPORT" then
-                local tpRoot = findTeleporterRootFromPrompt(p)
-                if tpRoot then
-                    local charging = tpRoot:GetAttribute("IsCharging")
-                    if charging == true then
-                        return false
-                    end
-                    return true
-                end
-                return true
-            end
-
             if strfindAny(p.ObjectText, EXCLUDE_NAME_SUBSTR) then return true end
             if strfindAny(p.ActionText, EXCLUDE_NAME_SUBSTR) then return true end
 
@@ -1304,6 +1281,195 @@ return function(C, R, UI)
             end)
         end
         enableNoStreamingPause()
+
+        local teleporterOn = false
+        local teleporterHB = nil
+        local teleporterAcc = 0
+        local TELEPORTER_SCAN_INTERVAL = 0.20
+        local TELEPORTER_RANGE = 10
+        local TELEPORTER_REFRESH_EVERY = 10.0
+        local TELEPORTER_CHARGE_COOLDOWN = 1.25
+
+        local tpCache = {}
+        local tpCacheNextRefresh = 0
+        local tpTargetModel = nil
+        local tpTargetDist = math.huge
+        local tpLastChargeAt = setmetatable({}, { __mode = "k" })
+
+        local RemoteChargeTeleporter = nil
+        local RemoteUseTeleporter = nil
+
+        local function resolveTeleporterRemotes()
+            if not RemoteChargeTeleporter or not RemoteChargeTeleporter.Parent then
+                RemoteChargeTeleporter = findRemoteDeep("ChargeTeleporter")
+            end
+            if not RemoteUseTeleporter or not RemoteUseTeleporter.Parent then
+                RemoteUseTeleporter = findRemoteDeep("UseTeleporter")
+            end
+        end
+
+        local function teleporterIsValid(m)
+            return m and m.Parent and m:IsA("Model") and m.Name == "Teleporter"
+        end
+
+        local function teleporterMainPart(m)
+            local p = mainPart(m)
+            if p and p:IsA("BasePart") then return p end
+            return nil
+        end
+
+        local function refreshTeleporterCache()
+            table.clear(tpCache)
+            local structures = WS:FindFirstChild("Structures", true)
+            if structures and structures:IsA("Folder") then
+                for _, child in ipairs(structures:GetChildren()) do
+                    if child:IsA("Model") and child.Name == "Teleporter" then
+                        local p = teleporterMainPart(child)
+                        if p then
+                            tpCache[#tpCache+1] = { m = child, p = p }
+                        end
+                    end
+                end
+            end
+            if #tpCache == 0 then
+                for _, inst in ipairs(WS:GetDescendants()) do
+                    if inst:IsA("Model") and inst.Name == "Teleporter" then
+                        local parentName = inst.Parent and inst.Parent.Name or ""
+                        if parentName == "Structures" or inst:FindFirstAncestor("Structures") then
+                            local p = teleporterMainPart(inst)
+                            if p then
+                                tpCache[#tpCache+1] = { m = inst, p = p }
+                            end
+                        end
+                    end
+                end
+            end
+            tpCacheNextRefresh = os.clock() + TELEPORTER_REFRESH_EVERY
+        end
+
+        local function findClosestTeleporterInRange()
+            local root = hrp()
+            if not root then
+                return nil, math.huge
+            end
+            if os.clock() >= (tpCacheNextRefresh or 0) then
+                refreshTeleporterCache()
+            end
+            local bestM, bestD2 = nil, math.huge
+            local rp = root.Position
+            for i = #tpCache, 1, -1 do
+                local rec = tpCache[i]
+                local m = rec and rec.m
+                local p = rec and rec.p
+                if not (teleporterIsValid(m) and p and p.Parent) then
+                    table.remove(tpCache, i)
+                else
+                    local d2 = (p.Position - rp).Magnitude
+                    if d2 < bestD2 then
+                        bestD2 = d2
+                        bestM = m
+                    end
+                end
+            end
+            if bestM and bestD2 <= TELEPORTER_RANGE then
+                return bestM, bestD2
+            end
+            return nil, math.huge
+        end
+
+        local function fireRemoteOnTarget(r, target)
+            if not (r and r.Parent and target and target.Parent) then return false end
+            local ok = pcall(function()
+                if r:IsA("RemoteEvent") then
+                    r:FireServer(target)
+                else
+                    r:InvokeServer(target)
+                end
+            end)
+            return ok
+        end
+
+        local function tryChargeTeleporter(target)
+            if not target then return end
+            resolveTeleporterRemotes()
+            if not (RemoteChargeTeleporter and RemoteChargeTeleporter.Parent) then return end
+            local lt = tpLastChargeAt[target]
+            local t = os.clock()
+            if lt and (t - lt) < TELEPORTER_CHARGE_COOLDOWN then return end
+            tpLastChargeAt[target] = t
+            pcall(function()
+                fireRemoteOnTarget(RemoteChargeTeleporter, target)
+            end)
+        end
+
+        local function setUseTeleporterBtnVisible(on)
+            if not useTeleporterBtn then return end
+            if on then
+                useTeleporterBtn.Visible = true
+                useTeleporterBtn.Text = "Use Teleporter"
+            else
+                useTeleporterBtn.Visible = false
+                useTeleporterBtn.Text = "Use Teleporter"
+            end
+        end
+
+        useTeleporterBtn.MouseButton1Click:Connect(function()
+            if not teleporterOn then return end
+            if not tpTargetModel then return end
+            resolveTeleporterRemotes()
+            if not (RemoteUseTeleporter and RemoteUseTeleporter.Parent) then return end
+            pcall(function()
+                fireRemoteOnTarget(RemoteUseTeleporter, tpTargetModel)
+            end)
+        end)
+
+        local function enableTeleporterSwitch()
+            if teleporterOn then return end
+            teleporterOn = true
+            tpTargetModel = nil
+            tpTargetDist = math.huge
+            tpCacheNextRefresh = 0
+            resolveTeleporterRemotes()
+            refreshTeleporterCache()
+            setUseTeleporterBtnVisible(false)
+
+            if teleporterHB then teleporterHB:Disconnect() teleporterHB = nil end
+            teleporterAcc = 0
+            teleporterHB = Run.Heartbeat:Connect(function(dt)
+                if not teleporterOn then return end
+                teleporterAcc += dt
+                if teleporterAcc < TELEPORTER_SCAN_INTERVAL then return end
+                teleporterAcc = 0
+
+                local target, dist = findClosestTeleporterInRange()
+                if target then
+                    tpTargetModel = target
+                    tpTargetDist = dist
+                    tryChargeTeleporter(target)
+                    setUseTeleporterBtnVisible(true)
+                else
+                    tpTargetModel = nil
+                    tpTargetDist = math.huge
+                    setUseTeleporterBtnVisible(false)
+                end
+            end)
+        end
+
+        local function disableTeleporterSwitch()
+            teleporterOn = false
+            tpTargetModel = nil
+            tpTargetDist = math.huge
+            if teleporterHB then teleporterHB:Disconnect() teleporterHB = nil end
+            setUseTeleporterBtnVisible(false)
+        end
+
+        tab:Toggle({
+            Title = "Teleporter Switch",
+            Value = false,
+            Callback = function(state)
+                if state then enableTeleporterSwitch() else disableTeleporterSwitch() end
+            end
+        })
 
         local function itemsFolder() return WS:FindFirstChild("Items") end
         local function collectSaplingsSnapshot()
@@ -1831,6 +1997,7 @@ return function(C, R, UI)
             if campBtn  then campBtn.Visible  = showCampEdge end
             lostBtn.Visible = false
             if skipNightBtn then skipNightBtn.Visible = showSkipNightEdge end
+            if useTeleporterBtn then useTeleporterBtn.Visible = false end
             if noShadowsOn and not lightConn then enableNoShadows() end
             if loadDefenseOnDefault then enableLoadDefenseSafe() end
             pcall(function() WS.StreamingPauseMode = Enum.StreamingPauseMode.Disabled end)
@@ -1847,11 +2014,13 @@ return function(C, R, UI)
             end
         end)
 
-        -- === FIX: expose Destroy() so future reloads can cleanly stop this instance ===
         SELF.Destroy = function()
             if not SELF._alive then return end
             SELF._alive = false
 
+            pcall(function()
+                disableTeleporterSwitch()
+            end)
             pcall(function()
                 disableSkipNightTimer()
             end)
@@ -1908,6 +2077,7 @@ return function(C, R, UI)
                 if campBtn then campBtn.Visible = false end
                 if lostBtn then lostBtn.Visible = false end
                 if skipNightBtn then skipNightBtn.Visible = false end
+                if useTeleporterBtn then useTeleporterBtn.Visible = false end
                 local nb = stack and stack:FindFirstChild("NextChestEdge")
                 if nb and nb:IsA("TextButton") then nb.Visible = false end
             end)
