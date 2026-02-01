@@ -15,6 +15,20 @@ return function(C, R, UI)
         local tab  = Tabs.Auto
         if not tab then return end
 
+        -- === FIX: single-instance guard + cleanup hook ===
+        if _G.__AutoLua and type(_G.__AutoLua.Destroy) == "function" then
+            pcall(function() _G.__AutoLua.Destroy() end)
+        end
+        local SELF = { _alive = true }
+        _G.__AutoLua = SELF
+
+        local deferredThreads = {}
+        local function defer(fn)
+            local th = task.defer(fn)
+            deferredThreads[#deferredThreads+1] = th
+            return th
+        end
+
         local function hrp()
             local ch = lp.Character or lp.CharacterAdded:Wait()
             return ch and ch:FindFirstChild("HumanoidRootPart")
@@ -783,7 +797,7 @@ return function(C, R, UI)
                 if state then enableLostChild() else disableLostChild() end
             end
         })
-        task.defer(enableLostChild)
+        defer(enableLostChild)
 
         local godOn = false
         local godHB = nil
@@ -858,48 +872,47 @@ return function(C, R, UI)
                 if state then enableGod() else disableGod() end
             end
         })
-        task.defer(enableGod)
+        defer(enableGod)
 
-local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.2
-local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
-local EXCLUDE_ANCESTOR_SUBSTR = { "closetdoors", "closet", "door", "landmarks" }
+        local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.2
+        local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
+        local EXCLUDE_ANCESTOR_SUBSTR = { "closetdoors", "closet", "door", "landmarks" }
 
-local function strfindAny(s, list)
-    s = string.lower(s or "")
-    for _, w in ipairs(list) do
-        if string.find(s, w, 1, true) then return true end
-    end
-    return false
-end
-local function trimUpper(s)
-    s = tostring(s or "")
-    s = s:gsub("^%s+", ""):gsub("%s+$", "")
-    return string.upper(s)
-end
+        local function strfindAny(s, list)
+            s = string.lower(s or "")
+            for _, w in ipairs(list) do
+                if string.find(s, w, 1, true) then return true end
+            end
+            return false
+        end
+        local function trimUpper(s)
+            s = tostring(s or "")
+            s = s:gsub("^%s+", ""):gsub("%s+$", "")
+            return string.upper(s)
+        end
 
-local function shouldSkipPrompt(p)
-    if not p or not p.Parent then return true end
-    if strfindAny(p.Name, EXCLUDE_NAME_SUBSTR) then return true end
+        -- === FIX: make prompt skip checks actually work (previous pcall/error block did nothing) ===
+        local function shouldSkipPrompt(p)
+            if not p or not p.Parent then return true end
+            if strfindAny(p.Name, EXCLUDE_NAME_SUBSTR) then return true end
 
-    local ot = trimUpper(p.ObjectText)
-    local at = trimUpper(p.ActionText)
+            local ot = trimUpper(p.ObjectText)
+            local at = trimUpper(p.ActionText)
 
-    if ot == "TELEPORT" or at == "TELEPORT" then
-        return true
-    end
+            if ot == "TELEPORT" or at == "TELEPORT" then
+                return true
+            end
 
-    pcall(function()
-        if strfindAny(p.ObjectText, EXCLUDE_NAME_SUBSTR) then error(true) end
-        if strfindAny(p.ActionText, EXCLUDE_NAME_SUBSTR) then error(true) end
-    end)
+            if strfindAny(p.ObjectText, EXCLUDE_NAME_SUBSTR) then return true end
+            if strfindAny(p.ActionText, EXCLUDE_NAME_SUBSTR) then return true end
 
-    local a = p.Parent
-    while a and a ~= workspace do
-        if strfindAny(a.Name, EXCLUDE_ANCESTOR_SUBSTR) then return true end
-        a = a.Parent
-    end
-    return false
-end
+            local a = p.Parent
+            while a and a ~= workspace do
+                if strfindAny(a.Name, EXCLUDE_ANCESTOR_SUBSTR) then return true end
+                a = a.Parent
+            end
+            return false
+        end
 
         local promptDurations = setmetatable({}, { __mode = "k" })
         local shownConn, trigConn, hiddenConn
@@ -1055,6 +1068,8 @@ end
         end
         local function disableAutoStun()
             autoStunOn = false
+            if autoStunThread then pcall(function() task.cancel(autoStunThread) end) autoStunThread = nil end
+            forceFlashlightOffAll()
         end
         tab:Toggle({
             Title = "Auto Stun Monster",
@@ -1063,7 +1078,7 @@ end
                 if state then enableAutoStun() else disableAutoStun() end
             end
         })
-        task.defer(enableAutoStun)
+        defer(enableAutoStun)
 
         local noShadowsOn, lightConn = false, nil
         local origGlobalShadows = nil
@@ -1780,7 +1795,8 @@ end
         local loadDefenseOnDefault = true
         if loadDefenseOnDefault then enableLoadDefenseSafe() end
 
-        Players.LocalPlayer.CharacterAdded:Connect(function()
+        local charAddedConn = nil
+        charAddedConn = Players.LocalPlayer.CharacterAdded:Connect(function()
             local playerGui2 = lp:WaitForChild("PlayerGui")
             local edgeGui2 = playerGui2:FindFirstChild("EdgeButtons")
             if edgeGui2 and edgeGui2.Parent ~= playerGui2 then edgeGui2.Parent = playerGui2 end
@@ -1805,7 +1821,74 @@ end
                 refreshLostBtn()
             end
         end)
+
+        -- === FIX: expose Destroy() so future reloads can cleanly stop this instance ===
+        SELF.Destroy = function()
+            if not SELF._alive then return end
+            SELF._alive = false
+
+            pcall(function()
+                disableSkipNightTimer()
+            end)
+            pcall(function()
+                disableInstantInteract()
+            end)
+            pcall(function()
+                disableAutoStun()
+            end)
+            pcall(function()
+                disableNoShadows()
+            end)
+            pcall(function()
+                disableHideBigTrees()
+            end)
+            pcall(function()
+                if chestFinderOn and disableChestFinder then disableChestFinder() end
+            end)
+            pcall(function()
+                disableCoin()
+            end)
+            pcall(function()
+                disableGod()
+            end)
+            pcall(function()
+                disableLostChild()
+            end)
+
+            pcall(function()
+                if rollbackThread then task.cancel(rollbackThread) rollbackThread = nil end
+            end)
+
+            pcall(function()
+                if charAddedConn then charAddedConn:Disconnect() charAddedConn = nil end
+            end)
+
+            pcall(function()
+                for i = 1, #deferredThreads do
+                    local th = deferredThreads[i]
+                    if th then task.cancel(th) end
+                end
+            end)
+
+            pcall(function()
+                if prevPauseMode ~= nil then
+                    WS.StreamingPauseMode = prevPauseMode
+                end
+            end)
+
+            pcall(function()
+                if phaseBtn then phaseBtn.Visible = false end
+                if plantBtn then plantBtn.Visible = false end
+                if tpBtn then tpBtn.Visible = false end
+                if campBtn then campBtn.Visible = false end
+                if lostBtn then lostBtn.Visible = false end
+                if skipNightBtn then skipNightBtn.Visible = false end
+                local nb = stack and stack:FindFirstChild("NextChestEdge")
+                if nb and nb:IsA("TextButton") then nb.Visible = false end
+            end)
+        end
     end
+
     local ok, err = pcall(run)
     if not ok then warn("[Auto] module error: " .. tostring(err)) end
 end
