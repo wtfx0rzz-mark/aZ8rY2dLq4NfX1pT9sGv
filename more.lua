@@ -391,7 +391,9 @@ return function(C, R, UI)
         end
 
         local cam = WS.CurrentCamera
-        WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function() cam = WS.CurrentCamera end)
+        local camConn = WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+            cam = WS.CurrentCamera
+        end)
 
         local function yawOnly(pos, lookVec)
             local lv = Vector3.new(lookVec.X, 0, lookVec.Z)
@@ -621,19 +623,12 @@ return function(C, R, UI)
             p.Color = color
             p.CFrame = CFrame.new(pos)
             p.Parent = RootWS
-            local c = Instance.new("UICorner")
-            c.CornerRadius = UDim.new(1, 0)
-            c.Parent = p
             return p
         end
 
         local function setOrbVisible(orb, on)
             if not orb then return end
-            if on then
-                orb.Transparency = 0.05
-            else
-                orb.Transparency = 1
-            end
+            if on then orb.Transparency = 0.05 else orb.Transparency = 1 end
         end
 
         local function ensureOrbsFromState()
@@ -660,9 +655,7 @@ return function(C, R, UI)
         local function safeFlatForwardUnit(cf)
             local lv = cf.LookVector
             local v = Vector3.new(lv.X, 0, lv.Z)
-            if v.Magnitude < 1e-6 then
-                return Vector3.new(0, 0, -1)
-            end
+            if v.Magnitude < 1e-6 then return Vector3.new(0, 0, -1) end
             return v.Unit
         end
 
@@ -773,15 +766,9 @@ return function(C, R, UI)
             runTemporalSequence(false)
         end)
 
-        if C.State.Toggles.MoreTemporalEdge == nil then
-            C.State.Toggles.MoreTemporalEdge = false
-        end
-        if C.State.Toggles.MoreTemporalTimer == nil then
-            C.State.Toggles.MoreTemporalTimer = false
-        end
-        if C.State.Toggles.MoreTemporalSetup == nil then
-            C.State.Toggles.MoreTemporalSetup = false
-        end
+        if C.State.Toggles.MoreTemporalEdge == nil then C.State.Toggles.MoreTemporalEdge = false end
+        if C.State.Toggles.MoreTemporalTimer == nil then C.State.Toggles.MoreTemporalTimer = false end
+        if C.State.Toggles.MoreTemporalSetup == nil then C.State.Toggles.MoreTemporalSetup = false end
 
         edgeBtn.Visible = (C.State.Toggles.MoreTemporalEdge == true)
 
@@ -865,11 +852,7 @@ return function(C, R, UI)
             Value = (C.State.Toggles.MoreTemporalTimer == true),
             Callback = function(state)
                 C.State.Toggles.MoreTemporalTimer = (state == true)
-                if state then
-                    startTimer()
-                else
-                    stopTimer()
-                end
+                if state then startTimer() else stopTimer() end
             end
         })
 
@@ -1098,6 +1081,7 @@ return function(C, R, UI)
                 if rollbackThread then pcall(function() task.cancel(rollbackThread) end) rollbackThread = nil end
                 if edgeConn then pcall(function() edgeConn:Disconnect() end) edgeConn = nil end
                 if charConn then pcall(function() charConn:Disconnect() end) charConn = nil end
+                if camConn then pcall(function() camConn:Disconnect() end) camConn = nil end
                 for i=1,#setupConns do pcall(function() setupConns[i]:Disconnect() end) end
                 setupConns = {}
                 if temporalOrb then pcall(function() temporalOrb:Destroy() end) temporalOrb = nil end
