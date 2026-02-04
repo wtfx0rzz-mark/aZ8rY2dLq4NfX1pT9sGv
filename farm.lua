@@ -330,127 +330,30 @@ return function(C, R, UI)
             return bestTree, bestPart, bestIsBig, bestD
         end
 
-        local function clampToDisk(center, radius, p)
-            local dx = p.X - center.X
-            local dz = p.Z - center.Z
+        local function teleportIntoRange(rootPos, targetPos, range)
+            local center = Vector3.new(targetPos.X, 0, targetPos.Z)
+            local me = Vector3.new(rootPos.X, 0, rootPos.Z)
+            local dx = me.X - center.X
+            local dz = me.Z - center.Z
             local d2 = dx*dx + dz*dz
-            local r2 = radius*radius
+            local r = range - 0.25
+            local r2 = r*r
             if d2 <= r2 then
-                return Vector3.new(p.X, p.Y, p.Z)
+                return nil
             end
             local d = math.sqrt(d2)
             if d < 1e-6 then
-                return Vector3.new(center.X, p.Y, center.Z)
+                return Vector3.new(center.X + r, 0, center.Z)
             end
-            local s = radius / d
-            return Vector3.new(center.X + dx*s, p.Y, center.Z + dz*s)
+            local s = r / d
+            return Vector3.new(center.X + dx*s, 0, center.Z + dz*s)
         end
 
-        local function scoreAnchor(anchorPos)
-            local cnt = 0
-            local aXZ = Vector3.new(anchorPos.X, 0, anchorPos.Z)
-            local r2 = CHOP_RANGE * CHOP_RANGE
-
-            if moveSmall then
-                for tree in pairs(SmallCandidates) do
-                    if tree and tree.Parent and tree:IsDescendantOf(WS) and not shouldSkipTree(tree) and isSmallTreeModel(tree) then
-                        local part = bestTreeHitPart(tree)
-                        if part and not looksDestroyed(tree, part) then
-                            local p = part.Position
-                            local d = Vector3.new(p.X, 0, p.Z) - aXZ
-                            local d2 = d.X*d.X + d.Z*d.Z
-                            if d2 <= r2 then
-                                cnt += 1
-                            end
-                        end
-                    end
-                end
-            end
-
-            if moveBig then
-                for tree in pairs(BigCandidates) do
-                    if tree and tree.Parent and tree:IsDescendantOf(WS) and not shouldSkipTree(tree) and isBigTreeModel(tree) then
-                        local part = bestTreeHitPart(tree)
-                        if part and not looksDestroyed(tree, part) then
-                            local p = part.Position
-                            local d = Vector3.new(p.X, 0, p.Z) - aXZ
-                            local d2 = d.X*d.X + d.Z*d.Z
-                            if d2 <= r2 then
-                                cnt += 1
-                            end
-                        end
-                    end
-                end
-            end
-
-            return cnt
-        end
-
-        local function computeBestAnchorForTarget(rootPos, targetPart)
-            local tPos = targetPart.Position
-            local center = Vector3.new(tPos.X, 0, tPos.Z)
-            local bestPos = Vector3.new(rootPos.X, 0, rootPos.Z)
-            bestPos = clampToDisk(center, CHOP_RANGE - 0.25, bestPos)
-            local bestScore = scoreAnchor(bestPos)
-
-            local candidates = {}
-            local function consider(pos)
-                candidates[#candidates+1] = pos
-            end
-
-            consider(bestPos)
-
-            local sampleLimit = 60
-            local taken = 0
-            local function sampleFromSet(setTbl, validator)
-                for tree in pairs(setTbl) do
-                    if taken >= sampleLimit then return end
-                    if tree and tree.Parent and tree:IsDescendantOf(WS) and not shouldSkipTree(tree) and validator(tree) then
-                        local p = bestTreeHitPart(tree)
-                        if p and not looksDestroyed(tree, p) then
-                            taken += 1
-                            local pp = p.Position
-                            local pos = Vector3.new(pp.X, 0, pp.Z)
-                            pos = clampToDisk(center, CHOP_RANGE - 0.25, pos)
-                            consider(pos)
-                        end
-                    end
-                end
-            end
-
-            if moveSmall then sampleFromSet(SmallCandidates, isSmallTreeModel) end
-            if moveBig then sampleFromSet(BigCandidates, isBigTreeModel) end
-
-            local offsets = {
-                Vector3.new(12, 0, 0), Vector3.new(-12, 0, 0),
-                Vector3.new(0, 0, 12), Vector3.new(0, 0, -12),
-                Vector3.new(12, 0, 12), Vector3.new(12, 0, -12),
-                Vector3.new(-12, 0, 12), Vector3.new(-12, 0, -12)
-            }
-            for i = 1, #offsets do
-                local pos = Vector3.new(bestPos.X, 0, bestPos.Z) + offsets[i]
-                pos = clampToDisk(center, CHOP_RANGE - 0.25, pos)
-                consider(pos)
-            end
-
-            for i = 1, #candidates do
-                local pos = candidates[i]
-                local sc = scoreAnchor(pos)
-                if sc > bestScore then
-                    bestScore = sc
-                    bestPos = pos
-                end
-            end
-
-            return bestPos, bestScore
-        end
-
-        local function teleportToAnchor(anchorPos, lookAtPos, baseY)
+        local function teleportToXZ(anchorXZ, lookAtPos, baseY)
             local newY = math.max(baseY, (lookAtPos and lookAtPos.Y or baseY) + Y_ABOVE_TARGET_PAD)
-            local newPos = Vector3.new(anchorPos.X, newY, anchorPos.Z)
+            local newPos = Vector3.new(anchorXZ.X, newY, anchorXZ.Z)
             local look = lookAtPos and Vector3.new(lookAtPos.X, newY, lookAtPos.Z) or (newPos + Vector3.new(0, 0, -1))
-            local cf = CFrame.new(newPos, look)
-            pivotCharacterTo(cf)
+            pivotCharacterTo(CFrame.new(newPos, look))
         end
 
         local function teleportRandomStep(root)
@@ -458,8 +361,7 @@ return function(C, R, UI)
             local dx = math.cos(ang) * NO_CANDIDATE_STEP
             local dz = math.sin(ang) * NO_CANDIDATE_STEP
             local step = Vector3.new(dx, 0, dz)
-            local cf = root.CFrame + step
-            pivotCharacterTo(cf)
+            pivotCharacterTo(root.CFrame + step)
         end
 
         local running = false
@@ -585,15 +487,10 @@ return function(C, R, UI)
                 end
 
                 if dXZ > CHOP_RANGE then
-                    local anchorXZ, score = computeBestAnchorForTarget(rootPos, part)
-                    teleportToAnchor(anchorXZ, tPos, math.max(rootPos.Y, tPos.Y))
-                    return
-                end
-
-                local anchorXZ, score = computeBestAnchorForTarget(rootPos, part)
-                local curScore = scoreAnchor(Vector3.new(rootPos.X, 0, rootPos.Z))
-                if score > curScore + 0 then
-                    teleportToAnchor(anchorXZ, tPos, math.max(rootPos.Y, tPos.Y))
+                    local anchorXZ = teleportIntoRange(rootPos, tPos, CHOP_RANGE)
+                    if anchorXZ then
+                        teleportToXZ(anchorXZ, tPos, math.max(rootPos.Y, tPos.Y))
+                    end
                     return
                 end
             end)
@@ -614,7 +511,7 @@ return function(C, R, UI)
 
         C.Farm._cleanup = cleanupAll
 
-        tab:Section({ Title = "Tree Teleport (Single Target, Cluster Positioning)" })
+        tab:Section({ Title = "Tree Teleport (Single Target, Fast)" })
 
         tab:Toggle({
             Title = "Teleport to Small Trees",
