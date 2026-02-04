@@ -370,6 +370,14 @@ return function(C, R, UI)
         return type(n) == "string" and (n:find("Sword", 1, true) ~= nil)
     end
 
+    local function isFlashlightVariantName(n)
+        return type(n) == "string" and (n:find("Flashlight", 1, true) ~= nil)
+    end
+
+    local function isRevolverVariantName(n)
+        return type(n) == "string" and (n:find("Revolver", 1, true) ~= nil)
+    end
+
     local function invFolder()
         return lp:FindFirstChild("Inventory")
     end
@@ -779,13 +787,24 @@ return function(C, R, UI)
         if CapturedSet[inst] then return false end
         if isChestInst(inst) then return false end
 
-        if inst.Name == "Thorn Body" then
+        local n = inst.Name
+
+        if isRevolverVariantName(n) then
+            return true
+        end
+
+        if isFlashlightVariantName(n) then
+            if n == "Strong Flashlight" and (not hasSpecialInInventory(n)) then
+                pcall(function() takeItemToInventory(inst) end)
+            end
+            return true
+        end
+
+        if n == "Thorn Body" then
             if tryEquipThornBody(inst) then
                 return true
             end
         end
-
-        local n = inst.Name
 
         if ALWAYS_TAKE_NAMES[n] then
             if takeItemToInventory(inst) then
@@ -1306,7 +1325,15 @@ return function(C, R, UI)
                     local did = false
                     local n = inst.Name
 
-                    if n == "Thorn Body" then
+                    if isRevolverVariantName(n) then
+                        if preSet then preSet[k] = true end
+                        did = false
+                    elseif isFlashlightVariantName(n) then
+                        if n == "Strong Flashlight" and (not hasSpecialInInventory(n)) then
+                            did = (takeItemToInventory(inst) and true or false)
+                        end
+                        if preSet then preSet[k] = true end
+                    elseif n == "Thorn Body" then
                         did = (tryEquipThornBody(inst) and true or false)
                     elseif ALWAYS_TAKE_NAMES[n] then
                         did = takeItemToInventory(inst) and true or false
@@ -1343,7 +1370,13 @@ return function(C, R, UI)
                 local n = inst.Name
                 local did = false
 
-                if n == "Thorn Body" then
+                if isRevolverVariantName(n) then
+                    did = false
+                elseif isFlashlightVariantName(n) then
+                    if n == "Strong Flashlight" and (not hasSpecialInInventory(n)) then
+                        did = (takeItemToInventory(inst) and true or false)
+                    end
+                elseif n == "Thorn Body" then
                     did = (tryEquipThornBody(inst) and true or false)
                 elseif ALWAYS_TAKE_NAMES[n] then
                     did = takeItemToInventory(inst) and true or false
@@ -1380,7 +1413,15 @@ return function(C, R, UI)
                     local n = inst.Name
                     local did = false
 
-                    if n == "Thorn Body" then
+                    if isRevolverVariantName(n) then
+                        preSet[k] = true
+                        did = false
+                    elseif isFlashlightVariantName(n) then
+                        if n == "Strong Flashlight" and (not hasSpecialInInventory(n)) then
+                            did = (takeItemToInventory(inst) and true or false)
+                        end
+                        preSet[k] = true
+                    elseif n == "Thorn Body" then
                         did = (tryEquipThornBody(inst) and true or false)
                     elseif ALWAYS_TAKE_NAMES[n] then
                         did = takeItemToInventory(inst) and true or false
@@ -1756,6 +1797,8 @@ return function(C, R, UI)
     local ITEM_SEARCH_INTERVAL_SECONDS = 0.75
 
     local function isSearchTargetName(n)
+        if isRevolverVariantName(n) then return false end
+        if isFlashlightVariantName(n) and n ~= "Strong Flashlight" then return false end
         if n == "Thorn Body" then return true end
         if ALWAYS_TAKE_NAMES[n] then return true end
         if SPECIAL_TAKE_NAMES[n] == true then return true end
@@ -1764,6 +1807,15 @@ return function(C, R, UI)
     end
 
     local function needsSearchItem(n)
+        if isRevolverVariantName(n) then
+            return false
+        end
+        if isFlashlightVariantName(n) then
+            if n == "Strong Flashlight" then
+                return (not hasSpecialInInventory(n))
+            end
+            return false
+        end
         if n == "Thorn Body" then
             return (not hasThornBodyOwned())
         end
@@ -1804,14 +1856,26 @@ return function(C, R, UI)
         local target = findNearestSearchTarget()
         if not (target and target.Parent) then return end
 
-        if target.Name == "Thorn Body" then
+        local n = target.Name
+
+        if isRevolverVariantName(n) then
+            return
+        end
+
+        if isFlashlightVariantName(n) then
+            if n == "Strong Flashlight" and (not hasSpecialInInventory(n)) then
+                pcall(function() takeItemToInventory(target) end)
+            end
+            return
+        end
+
+        if n == "Thorn Body" then
             pcall(function()
                 tryEquipThornBody(target)
             end)
             return
         end
 
-        local n = target.Name
         if ALWAYS_TAKE_NAMES[n] then
             pcall(function() takeItemToInventory(target) end)
             return
