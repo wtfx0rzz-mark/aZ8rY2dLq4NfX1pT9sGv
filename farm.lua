@@ -25,9 +25,9 @@ return function(C, R, UI)
         local BIG_MAX_HITS_BEFORE_SKIP = 36
         local DEAD_SKIP_SEC = 6.0
 
-        local ARRIVE_DIST = 10
+        local CHOP_RANGE = 75.0
         local TELEPORT_TICK = 0.20
-        local RESCAN_COOLDOWN = 0.25
+        local RESCAN_COOLDOWN = 0.00
         local NO_CANDIDATE_STEP = 30
         local NO_CANDIDATE_STEP_COOLDOWN = 0.35
 
@@ -35,10 +35,6 @@ return function(C, R, UI)
         local Y_ABOVE_TARGET_PAD = 0.5
 
         local SPACE_TAP_EVERY = 60.0
-        local TARGET_LOCK_MIN_SEC = 2.0
-
-        local HOLD_RADIUS = 75.0
-        local HOLD_AFTER_TELEPORT_SEC = 1.25
 
         local RecentSkipUntil = {}
 
@@ -78,6 +74,18 @@ return function(C, R, UI)
                 if n and n > maxN then maxN = n end
             end
             return maxN
+        end
+
+        local function findTrunkPart(tree)
+            if not (tree and tree:IsA("Model")) then return nil end
+            local hr = tree:FindFirstChild("HitRegisters")
+            if hr then
+                local t = hr:FindFirstChild("Trunk")
+                if t and t:IsA("BasePart") then return t end
+            end
+            local t2 = tree:FindFirstChild("Trunk")
+            if t2 and t2:IsA("BasePart") then return t2 end
+            return nil
         end
 
         local function bestTreeHitPart(tree)
@@ -322,28 +330,127 @@ return function(C, R, UI)
             return bestTree, bestPart, bestIsBig, bestD
         end
 
-        local function teleportNearTree(root, part, standoff)
-            local rootPos = root.Position
-            local targetPos = part.Position
-
-            local dir = Vector3.new(rootPos.X - targetPos.X, 0, rootPos.Z - targetPos.Z)
-            if dir.Magnitude < 1e-6 then
-                local cam = WS.CurrentCamera
-                local look = cam and cam.CFrame.LookVector or Vector3.new(0, 0, -1)
-                dir = Vector3.new(-look.X, 0, -look.Z)
+        local function clampToDisk(center, radius, p)
+            local dx = p.X - center.X
+            local dz = p.Z - center.Z
+            local d2 = dx*dx + dz*dz
+            local r2 = radius*radius
+            if d2 <= r2 then
+                return Vector3.new(p.X, p.Y, p.Z)
             end
-            if dir.Magnitude < 1e-6 then
-                dir = Vector3.new(0, 0, 1)
+            local d = math.sqrt(d2)
+            if d < 1e-6 then
+                return Vector3.new(center.X, p.Y, center.Z)
             end
-            dir = dir.Unit
+            local s = radius / d
+            return Vector3.new(center.X + dx*s, p.Y, center.Z + dz*s)
+        end
 
-            local posXZ = Vector3.new(targetPos.X, 0, targetPos.Z) + (dir * (standoff or ARRIVE_DIST))
-            local newY = math.max(rootPos.Y, targetPos.Y + Y_ABOVE_TARGET_PAD)
-            local newPos = Vector3.new(posXZ.X, newY, posXZ.Z)
+        local function scoreAnchor(anchorPos)
+            local cnt = 0
+            local aXZ = Vector3.new(anchorPos.X, 0, anchorPos.Z)
+            local r2 = CHOP_RANGE * CHOP_RANGE
 
-            local cf = CFrame.new(newPos, Vector3.new(targetPos.X, newY, targetPos.Z))
+            if moveSmall then
+                for tree in pairs(SmallCandidates) do
+                    if tree and tree.Parent and tree:IsDescendantOf(WS) and not shouldSkipTree(tree) and isSmallTreeModel(tree) then
+                        local part = bestTreeHitPart(tree)
+                        if part and not looksDestroyed(tree, part) then
+                            local p = part.Position
+                            local d = Vector3.new(p.X, 0, p.Z) - aXZ
+                            local d2 = d.X*d.X + d.Z*d.Z
+                            if d2 <= r2 then
+                                cnt += 1
+                            end
+                        end
+                    end
+                end
+            end
+
+            if moveBig then
+                for tree in pairs(BigCandidates) do
+                    if tree and tree.Parent and tree:IsDescendantOf(WS) and not shouldSkipTree(tree) and isBigTreeModel(tree) then
+                        local part = bestTreeHitPart(tree)
+                        if part and not looksDestroyed(tree, part) then
+                            local p = part.Position
+                            local d = Vector3.new(p.X, 0, p.Z) - aXZ
+                            local d2 = d.X*d.X + d.Z*d.Z
+                            if d2 <= r2 then
+                                cnt += 1
+                            end
+                        end
+                    end
+                end
+            end
+
+            return cnt
+        end
+
+        local function computeBestAnchorForTarget(rootPos, targetPart)
+            local tPos = targetPart.Position
+            local center = Vector3.new(tPos.X, 0, tPos.Z)
+            local bestPos = Vector3.new(rootPos.X, 0, rootPos.Z)
+            bestPos = clampToDisk(center, CHOP_RANGE - 0.25, bestPos)
+            local bestScore = scoreAnchor(bestPos)
+
+            local candidates = {}
+            local function consider(pos)
+                candidates[#candidates+1] = pos
+            end
+
+            consider(bestPos)
+
+            local sampleLimit = 60
+            local taken = 0
+            local function sampleFromSet(setTbl, validator)
+                for tree in pairs(setTbl) do
+                    if taken >= sampleLimit then return end
+                    if tree and tree.Parent and tree:IsDescendantOf(WS) and not shouldSkipTree(tree) and validator(tree) then
+                        local p = bestTreeHitPart(tree)
+                        if p and not looksDestroyed(tree, p) then
+                            taken += 1
+                            local pp = p.Position
+                            local pos = Vector3.new(pp.X, 0, pp.Z)
+                            pos = clampToDisk(center, CHOP_RANGE - 0.25, pos)
+                            consider(pos)
+                        end
+                    end
+                end
+            end
+
+            if moveSmall then sampleFromSet(SmallCandidates, isSmallTreeModel) end
+            if moveBig then sampleFromSet(BigCandidates, isBigTreeModel) end
+
+            local offsets = {
+                Vector3.new(12, 0, 0), Vector3.new(-12, 0, 0),
+                Vector3.new(0, 0, 12), Vector3.new(0, 0, -12),
+                Vector3.new(12, 0, 12), Vector3.new(12, 0, -12),
+                Vector3.new(-12, 0, 12), Vector3.new(-12, 0, -12)
+            }
+            for i = 1, #offsets do
+                local pos = Vector3.new(bestPos.X, 0, bestPos.Z) + offsets[i]
+                pos = clampToDisk(center, CHOP_RANGE - 0.25, pos)
+                consider(pos)
+            end
+
+            for i = 1, #candidates do
+                local pos = candidates[i]
+                local sc = scoreAnchor(pos)
+                if sc > bestScore then
+                    bestScore = sc
+                    bestPos = pos
+                end
+            end
+
+            return bestPos, bestScore
+        end
+
+        local function teleportToAnchor(anchorPos, lookAtPos, baseY)
+            local newY = math.max(baseY, (lookAtPos and lookAtPos.Y or baseY) + Y_ABOVE_TARGET_PAD)
+            local newPos = Vector3.new(anchorPos.X, newY, anchorPos.Z)
+            local look = lookAtPos and Vector3.new(lookAtPos.X, newY, lookAtPos.Z) or (newPos + Vector3.new(0, 0, -1))
+            local cf = CFrame.new(newPos, look)
             pivotCharacterTo(cf)
-            return newPos
         end
 
         local function teleportRandomStep(root)
@@ -355,10 +462,6 @@ return function(C, R, UI)
             pivotCharacterTo(cf)
         end
 
-        local function distToAnchorXZ(rootPos, anchorPos)
-            return (Vector3.new(rootPos.X, 0, rootPos.Z) - Vector3.new(anchorPos.X, 0, anchorPos.Z)).Magnitude
-        end
-
         local running = false
         local loopConn = nil
         local acc = 0
@@ -368,25 +471,39 @@ return function(C, R, UI)
 
         local currentTarget = nil
         local currentIsBig = false
-        local targetSetAt = 0
+        local currentHadTrunk = false
+        local targetConn = nil
 
-        local lastTeleportAt = 0
-        local lastTeleportTarget = nil
-        local lastTeleportAnchorPos = nil
+        local function disconnectTargetConn()
+            if targetConn then
+                pcall(function() targetConn:Disconnect() end)
+                targetConn = nil
+            end
+        end
 
         local function clearTarget(skip)
             if currentTarget and skip then
                 markSkip(currentTarget, DEAD_SKIP_SEC)
             end
+            disconnectTargetConn()
             currentTarget = nil
             currentIsBig = false
-            targetSetAt = 0
+            currentHadTrunk = false
         end
 
-        local function clearTeleportHold()
-            lastTeleportAt = 0
-            lastTeleportTarget = nil
-            lastTeleportAnchorPos = nil
+        local function attachCutDetector(tree)
+            disconnectTargetConn()
+            if not tree then return end
+            currentHadTrunk = (findTrunkPart(tree) ~= nil)
+            targetConn = tree.ChildRemoved:Connect(function(ch)
+                if not enabledNow() then return end
+                if not running then return end
+                if tree ~= currentTarget then return end
+                if not currentHadTrunk then return end
+                if ch and ch.Name == "Trunk" and ch:IsA("BasePart") then
+                    clearTarget(false)
+                end
+            end)
         end
 
         local function startTeleportLoop()
@@ -397,13 +514,11 @@ return function(C, R, UI)
             lastNoCandStepAt = 0
             lastSpaceTapAt = os.clock()
             clearTarget(false)
-            clearTeleportHold()
 
             loopConn = RunService.Heartbeat:Connect(function(dt)
                 if not running then return end
                 if not enabledNow() then
                     clearTarget(false)
-                    clearTeleportHold()
                     return
                 end
 
@@ -414,7 +529,6 @@ return function(C, R, UI)
                 local root = hrp()
                 if not root then
                     clearTarget(false)
-                    clearTeleportHold()
                     return
                 end
 
@@ -424,8 +538,12 @@ return function(C, R, UI)
                     tapSpace()
                 end
 
-                if currentTarget and (not isTreeValidForMode(currentTarget)) then
-                    clearTarget(true)
+                if currentTarget then
+                    if currentHadTrunk and findTrunkPart(currentTarget) == nil then
+                        clearTarget(false)
+                    elseif not isTreeValidForMode(currentTarget) then
+                        clearTarget(true)
+                    end
                 end
 
                 if not currentTarget then
@@ -435,7 +553,7 @@ return function(C, R, UI)
                         if pickedTree and pickedPart then
                             currentTarget = pickedTree
                             currentIsBig = pickedIsBig
-                            targetSetAt = nowT
+                            attachCutDetector(pickedTree)
                         end
                     end
 
@@ -451,39 +569,31 @@ return function(C, R, UI)
                 local part = bestTreeHitPart(currentTarget)
                 if not part or looksDestroyed(currentTarget, part) then
                     clearTarget(true)
-                    clearTeleportHold()
                     return
                 end
 
                 local rootPos = root.Position
-                local targetPos = part.Position
-                local dXZ = (Vector3.new(targetPos.X, 0, targetPos.Z) - Vector3.new(rootPos.X, 0, rootPos.Z)).Magnitude
+                local tPos = part.Position
+                local dXZ = (Vector3.new(tPos.X, 0, tPos.Z) - Vector3.new(rootPos.X, 0, rootPos.Z)).Magnitude
 
                 if currentIsBig and dXZ <= BIG_GIVEUP_DIST then
                     local hits = getCurrentHitCount(currentTarget)
                     if hits >= BIG_MAX_HITS_BEFORE_SKIP then
                         clearTarget(true)
-                        clearTeleportHold()
                         return
                     end
                 end
 
-                if lastTeleportTarget == currentTarget and lastTeleportAnchorPos ~= nil then
-                    local dHold = distToAnchorXZ(rootPos, lastTeleportAnchorPos)
-                    if dHold <= HOLD_RADIUS and (nowT - lastTeleportAt) >= HOLD_AFTER_TELEPORT_SEC then
-                        return
-                    end
-                end
-
-                if dXZ > ARRIVE_DIST then
-                    local anchorPos = teleportNearTree(root, part, ARRIVE_DIST)
-                    lastTeleportAt = nowT
-                    lastTeleportTarget = currentTarget
-                    lastTeleportAnchorPos = anchorPos
+                if dXZ > CHOP_RANGE then
+                    local anchorXZ, score = computeBestAnchorForTarget(rootPos, part)
+                    teleportToAnchor(anchorXZ, tPos, math.max(rootPos.Y, tPos.Y))
                     return
                 end
 
-                if (nowT - targetSetAt) < TARGET_LOCK_MIN_SEC then
+                local anchorXZ, score = computeBestAnchorForTarget(rootPos, part)
+                local curScore = scoreAnchor(Vector3.new(rootPos.X, 0, rootPos.Z))
+                if score > curScore + 0 then
+                    teleportToAnchor(anchorXZ, tPos, math.max(rootPos.Y, tPos.Y))
                     return
                 end
             end)
@@ -493,18 +603,18 @@ return function(C, R, UI)
             running = false
             if loopConn then loopConn:Disconnect() loopConn = nil end
             clearTarget(false)
-            clearTeleportHold()
         end
 
         local function cleanupAll()
             stopTeleportLoop()
+            disconnectTargetConn()
             if descAddedConn then pcall(function() descAddedConn:Disconnect() end) descAddedConn = nil end
             if descRemovingConn then pcall(function() descRemovingConn:Disconnect() end) descRemovingConn = nil end
         end
 
         C.Farm._cleanup = cleanupAll
 
-        tab:Section({ Title = "Tree Teleport (Hold Radius)" })
+        tab:Section({ Title = "Tree Teleport (Single Target, Cluster Positioning)" })
 
         tab:Toggle({
             Title = "Teleport to Small Trees",
@@ -512,7 +622,6 @@ return function(C, R, UI)
             Callback = function(state)
                 moveSmall = (state == true)
                 clearTarget(false)
-                clearTeleportHold()
                 if enabledNow() then
                     startTeleportLoop()
                 else
@@ -527,7 +636,6 @@ return function(C, R, UI)
             Callback = function(state)
                 moveBig = (state == true)
                 clearTarget(false)
-                clearTeleportHold()
                 if enabledNow() then
                     startTeleportLoop()
                 else
