@@ -46,11 +46,6 @@ return function(C, R, UI)
             return nil
         end
 
-        local function getRemote(name)
-            local f = RS:FindFirstChild("RemoteEvents")
-            return f and f:FindFirstChild(name) or nil
-        end
-
         local function getRoot()
             local ugc = game:FindFirstChild("Ugc")
             if ugc then
@@ -62,6 +57,18 @@ return function(C, R, UI)
         end
 
         local RootRS, RootWS = getRoot()
+
+        local function getRemote(name)
+            local f = RootRS:FindFirstChild("RemoteEvents")
+            local r = f and f:FindFirstChild(name)
+            if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then return r end
+            for _, d in ipairs(RootRS:GetDescendants()) do
+                if d.Name == name and (d:IsA("RemoteEvent") or d:IsA("RemoteFunction")) then
+                    return d
+                end
+            end
+            return nil
+        end
 
         local DUMMY_MODEL = Instance.new("Model")
         DUMMY_MODEL.Name = "__cg_dummy__"
@@ -186,13 +193,15 @@ return function(C, R, UI)
             local params = RaycastParams.new()
             params.FilterType = Enum.RaycastFilterType.Exclude
             local ex = { lp.Character }
-            local map = WS:FindFirstChild("Map")
+            local map = (RootWS and RootWS:FindFirstChild("Map")) or WS:FindFirstChild("Map")
             if map then
                 local fol = map:FindFirstChild("Foliage")
                 if fol then table.insert(ex, fol) end
             end
-            local items = WS:FindFirstChild("Items");      if items then table.insert(ex, items) end
-            local chars = WS:FindFirstChild("Characters"); if chars then table.insert(ex, chars) end
+            local items = (RootWS and RootWS:FindFirstChild("Items")) or WS:FindFirstChild("Items")
+            local chars = (RootWS and RootWS:FindFirstChild("Characters")) or WS:FindFirstChild("Characters")
+            if items then table.insert(ex, items) end
+            if chars then table.insert(ex, chars) end
             params.FilterDescendantsInstances = ex
             local start = pos + Vector3.new(0, 5, 0)
             local hit = WS:Raycast(start, Vector3.new(0, -1000, 0), params)
@@ -290,7 +299,7 @@ return function(C, R, UI)
         end
 
         local function structureFolder()
-            return WS:FindFirstChild("Structures")
+            return (RootWS and RootWS:FindFirstChild("Structures")) or WS:FindFirstChild("Structures")
         end
 
         local function modelPos(m)
@@ -451,33 +460,50 @@ return function(C, R, UI)
         end
 
         local function findPickUpRemote()
-            local re = RS:FindFirstChild("RemoteEvents")
+            local re = RootRS:FindFirstChild("RemoteEvents")
             if re then
                 local r = re:FindFirstChild("RequestPickUpStructure")
-                if r then return r end
+                if r and (r:IsA("RemoteFunction") or r:IsA("RemoteEvent")) then return r end
             end
-            local rf = RS:FindFirstChild("RemoteFunctions")
+            local rf = RootRS:FindFirstChild("RemoteFunctions")
             if rf then
                 local r = rf:FindFirstChild("RequestPickUpStructure")
-                if r then return r end
+                if r and (r:IsA("RemoteFunction") or r:IsA("RemoteEvent")) then return r end
             end
-            return RS:FindFirstChild("RequestPickUpStructure", true)
+            for _, d in ipairs(RootRS:GetDescendants()) do
+                if d.Name == "RequestPickUpStructure" and (d:IsA("RemoteFunction") or d:IsA("RemoteEvent")) then
+                    return d
+                end
+            end
+            return nil
         end
 
         local function doPickupNearest()
-            local target = nil
-            local nearest, _ = nearestStructure()
-            if nearest then target = nearest end
+            local nearest = nil
+            local m, _ = nearestStructure()
+            if m then nearest = m end
             local remote = findPickUpRemote()
-            if not (remote and target) then return false end
+            if not (remote and nearest and nearest.Parent) then return false end
             local ok = pcall(function()
                 if remote:IsA("RemoteFunction") then
-                    remote:InvokeServer(target)
-                elseif remote:IsA("RemoteEvent") then
-                    remote:FireServer(target)
+                    remote:InvokeServer(nearest)
+                else
+                    remote:FireServer(nearest)
                 end
             end)
             return ok
+        end
+
+        local function findPlaceRemote()
+            local re = RootRS:FindFirstChild("RemoteEvents")
+            local r = re and re:FindFirstChild("RequestPlaceStructure")
+            if r and r:IsA("RemoteFunction") then return r end
+            for _, d in ipairs(RootRS:GetDescendants()) do
+                if d.Name == "RequestPlaceStructure" and d:IsA("RemoteFunction") then
+                    return d
+                end
+            end
+            return nil
         end
 
         local function placeAccelAtSnap(placeRemote, bp, placement, rot)
@@ -498,7 +524,7 @@ return function(C, R, UI)
             local ok = pcall(function()
                 if r:IsA("RemoteEvent") then
                     r:FireServer(model)
-                elseif r:IsA("RemoteFunction") then
+                else
                     r:InvokeServer(model)
                 end
             end)
@@ -739,7 +765,9 @@ return function(C, R, UI)
                 doPickupNearest()
                 task.wait(1.0)
 
-                local placeRemote = RS:WaitForChild("RemoteEvents"):WaitForChild("RequestPlaceStructure")
+                local placeRemote = findPlaceRemote()
+                if not placeRemote then return end
+
                 local bp = waitForAccelBlueprint(8)
                 if not (bp and bp.Parent) then return end
 
@@ -852,12 +880,18 @@ return function(C, R, UI)
             Value = (C.State.Toggles.MoreTemporalTimer == true),
             Callback = function(state)
                 C.State.Toggles.MoreTemporalTimer = (state == true)
-                if state then startTimer() else stopTimer() end
+                if state then
+                    startTimer()
+                else
+                    stopTimer()
+                end
             end
         })
 
         if C.State.Toggles.MoreTemporalTimer == true then
             startTimer()
+        else
+            stopTimer()
         end
 
         do
@@ -1077,7 +1111,12 @@ return function(C, R, UI)
 
         _G.__MoreTemporal = {
             Destroy = function()
-                stopTimer()
+                pcall(function()
+                    if timerThread then task.cancel(timerThread) end
+                end)
+                timerThread = nil
+                timerOn = false
+
                 if rollbackThread then pcall(function() task.cancel(rollbackThread) end) rollbackThread = nil end
                 if edgeConn then pcall(function() edgeConn:Disconnect() end) edgeConn = nil end
                 if charConn then pcall(function() charConn:Disconnect() end) charConn = nil end
