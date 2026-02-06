@@ -36,7 +36,12 @@ return function(C, R, UI)
         local SKIP_SEC = 2.5
         local NO_PROGRESS_SEC = 1.25
 
-        local SPACE_TAP_EVERY = 60.0
+        -- Farm jump input: match diamonds.lua behavior (space tap every 5s while enabled)
+        local SPACE_TAP_EVERY = 5.0
+
+        -- Big-tree group mode: rotate among nearest 5 big trees, switching once per second
+        local BIG_GROUP_SIZE = 5
+        local BIG_GROUP_SWITCH_EVERY = 1.0
 
         local RecentSkipUntil = {}
 
@@ -244,12 +249,13 @@ return function(C, R, UI)
             if RecentSkipUntil[inst] then RecentSkipUntil[inst] = nil end
         end)
 
-        local function tapSpace()
-            pcall(function()
+        local function farmJumpSendSpaceTap()
+            local ok, err = pcall(function()
                 VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
                 task.wait(0.05)
                 VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
             end)
+            return ok, err
         end
 
         local function pivotCharacterTo(cf)
@@ -354,6 +360,28 @@ return function(C, R, UI)
             return bestTree, bestPart, bestIsBig, bestD
         end
 
+        local function findNearestBigTrees(rootPos, maxCount)
+            local list = {}
+            for tree in pairs(BigCandidates) do
+                if tree and tree.Parent and not shouldSkipTree(tree) and tree:IsDescendantOf(WS) then
+                    if isBigTreeModel(tree) then
+                        local part = bestTreeHitPart(tree)
+                        if part and not looksDestroyed(tree, part) then
+                            local d = (part.Position - rootPos).Magnitude
+                            list[#list + 1] = { tree = tree, part = part, d = d }
+                        end
+                    end
+                end
+            end
+            table.sort(list, function(a, b) return a.d < b.d end)
+            local out = {}
+            local n = math.min(#list, maxCount or BIG_GROUP_SIZE)
+            for i = 1, n do
+                out[#out + 1] = list[i].tree
+            end
+            return out
+        end
+
         local running = false
         local loopConn = nil
         local acc = 0
@@ -367,7 +395,15 @@ return function(C, R, UI)
         local trunkWasPresent = false
         local hitBaseline = 0
 
-        local function clearTarget(reason, doSkip)
+        -- Big-tree group rotation state
+        local bigGroup = nil
+        local bigGroupIndex = 1
+        local bigGroupLastSwitchAt = 0
+        local bigTreeHitBaseline = setmetatable({}, { __mode = "k" })
+        local bigTreeSetAt = setmetatable({}, { __mode = "k" })
+        local bigTreeTrunkWasPresent = setmetatable({}, { __mode = "k" })
+
+        local function clearTarget(_reason, doSkip)
             if currentTarget and doSkip then
                 markSkip(currentTarget, SKIP_SEC)
             end
@@ -376,6 +412,15 @@ return function(C, R, UI)
             targetSetAt = 0
             trunkWasPresent = false
             hitBaseline = 0
+        end
+
+        local function clearBigGroup(_reason)
+            bigGroup = nil
+            bigGroupIndex = 1
+            bigGroupLastSwitchAt = 0
+            bigTreeHitBaseline = setmetatable({}, { __mode = "k" })
+            bigTreeSetAt = setmetatable({}, { __mode = "k" })
+            bigTreeTrunkWasPresent = setmetatable({}, { __mode = "k" })
         end
 
         local function pickNewTarget(root)
@@ -400,6 +445,75 @@ return function(C, R, UI)
             return false
         end
 
+        local function ensureBigGroup(root)
+            local nowT = os.clock()
+            if (nowT - lastScanAt) < RESCAN_COOLDOWN then
+                return false
+            end
+            lastScanAt = nowT
+
+            local grp = findNearestBigTrees(root.Position, BIG_GROUP_SIZE)
+            if #grp == 0 then
+                clearBigGroup("none")
+                return false
+            end
+
+            bigGroup = grp
+            bigGroupIndex = 1
+            bigGroupLastSwitchAt = 0
+
+            bigTreeHitBaseline = setmetatable({}, { __mode = "k" })
+            bigTreeSetAt = setmetatable({}, { __mode = "k" })
+            bigTreeTrunkWasPresent = setmetatable({}, { __mode = "k" })
+
+            for i = 1, #bigGroup do
+                local t = bigGroup[i]
+                if t then
+                    bigTreeTrunkWasPresent[t] = (findTrunkPart(t) ~= nil)
+                    bigTreeHitBaseline[t] = getCurrentHitCount(t)
+                    bigTreeSetAt[t] = nowT
+                end
+            end
+
+            return true
+        end
+
+        local function pickNextBigFromGroup(root)
+            if not bigGroup or #bigGroup == 0 then
+                if not ensureBigGroup(root) then return false end
+            end
+
+            local alive = 0
+            for i = 1, #bigGroup do
+                local t = bigGroup[i]
+                if t and isTreeValid(t, true) then
+                    alive += 1
+                end
+            end
+            if alive <= 0 then
+                clearBigGroup("dead")
+                return ensureBigGroup(root)
+            end
+
+            local tries = #bigGroup
+            for _ = 1, tries do
+                if bigGroupIndex > #bigGroup then bigGroupIndex = 1 end
+                local t = bigGroup[bigGroupIndex]
+                bigGroupIndex += 1
+                if t and isTreeValid(t, true) then
+                    currentTarget = t
+                    currentIsBig = true
+                    targetSetAt = os.clock()
+                    trunkWasPresent = (findTrunkPart(t) ~= nil)
+                    hitBaseline = getCurrentHitCount(t)
+                    return true
+                end
+            end
+
+            clearBigGroup("no_valid")
+            return ensureBigGroup(root)
+        end
+
         local function startTeleportLoop()
             if loopConn then loopConn:Disconnect() loopConn = nil end
             running = true
@@ -408,11 +522,13 @@ return function(C, R, UI)
             lastNoCandStepAt = 0
             lastSpaceTapAt = os.clock()
             clearTarget("start", false)
+            clearBigGroup("start")
 
             loopConn = RunService.Heartbeat:Connect(function(dt)
                 if not running then return end
                 if not enabledNow() then
                     clearTarget("disabled", false)
+                    clearBigGroup("disabled")
                     return
                 end
 
@@ -423,21 +539,59 @@ return function(C, R, UI)
                 local root = hrp()
                 if not root then
                     clearTarget("no_hrp", false)
+                    clearBigGroup("no_hrp")
                     return
                 end
 
                 local nowT = os.clock()
                 if (nowT - lastSpaceTapAt) >= SPACE_TAP_EVERY then
                     lastSpaceTapAt = nowT
-                    tapSpace()
+                    farmJumpSendSpaceTap()
+                end
+
+                -- Big-tree group mode: rotate once per second among nearest 5 big trees
+                if moveBig then
+                    if (nowT - bigGroupLastSwitchAt) >= BIG_GROUP_SWITCH_EVERY or (not currentTarget) or (currentIsBig ~= true) then
+                        bigGroupLastSwitchAt = nowT
+                        if not pickNextBigFromGroup(root) then
+                            if (not moveSmall) and (nowT - lastNoCandStepAt) >= NO_CANDIDATE_STEP_COOLDOWN then
+                                lastNoCandStepAt = nowT
+                                teleportRandomStep(root)
+                            end
+                        end
+                    end
+                elseif currentIsBig then
+                    clearTarget("big_off", false)
+                    clearBigGroup("big_off")
+                end
+
+                -- Small trees keep single-target behavior
+                if moveSmall then
+                    if not currentTarget or currentIsBig then
+                        clearTarget("small_takeover", false)
+                        local okPick = pickNewTarget(root)
+                        if not okPick then
+                            if (not moveBig) and (nowT - lastNoCandStepAt) >= NO_CANDIDATE_STEP_COOLDOWN then
+                                lastNoCandStepAt = nowT
+                                teleportRandomStep(root)
+                            end
+                        end
+                        return
+                    end
+                else
+                    if currentTarget and currentIsBig == false then
+                        clearTarget("small_off", false)
+                    end
                 end
 
                 if not currentTarget then
-                    local okPick = pickNewTarget(root)
-                    if not okPick then
-                        if (nowT - lastNoCandStepAt) >= NO_CANDIDATE_STEP_COOLDOWN then
-                            lastNoCandStepAt = nowT
-                            teleportRandomStep(root)
+                    if moveSmall then
+                        local okPick = pickNewTarget(root)
+                        if not okPick and (not moveBig) then
+                            if (nowT - lastNoCandStepAt) >= NO_CANDIDATE_STEP_COOLDOWN then
+                                lastNoCandStepAt = nowT
+                                teleportRandomStep(root)
+                            end
                         end
                     end
                     return
@@ -445,13 +599,16 @@ return function(C, R, UI)
 
                 if not isTreeValid(currentTarget, currentIsBig) then
                     clearTarget("invalid", true)
-                    pickNewTarget(root)
+                    if currentIsBig then
+                        bigTreeHitBaseline[currentTarget] = nil
+                        bigTreeSetAt[currentTarget] = nil
+                        bigTreeTrunkWasPresent[currentTarget] = nil
+                    end
                     return
                 end
 
                 if trunkWasPresent and findTrunkPart(currentTarget) == nil then
                     clearTarget("trunk_removed", true)
-                    pickNewTarget(root)
                     return
                 end
 
@@ -459,22 +616,20 @@ return function(C, R, UI)
                 local noHitProgress = (hits <= hitBaseline)
                 local trunkStill = (findTrunkPart(currentTarget) ~= nil)
 
+                -- Keep the same no-progress + hit-cap behavior per tree (works for both, but big trees rotate so it’s less sticky)
                 if (nowT - targetSetAt) >= NO_PROGRESS_SEC and noHitProgress and trunkStill then
                     clearTarget("no_progress", true)
-                    pickNewTarget(root)
                     return
                 end
 
                 if currentIsBig and hits >= BIG_MAX_HITS_BEFORE_SKIP then
                     clearTarget("big_hit_cap", true)
-                    pickNewTarget(root)
                     return
                 end
 
                 local part = bestTreeHitPart(currentTarget)
                 if not part or looksDestroyed(currentTarget, part) then
                     clearTarget("no_part", true)
-                    pickNewTarget(root)
                     return
                 end
 
@@ -492,6 +647,7 @@ return function(C, R, UI)
             running = false
             if loopConn then loopConn:Disconnect() loopConn = nil end
             clearTarget("stop", false)
+            clearBigGroup("stop")
         end
 
         local function cleanupAll()
@@ -519,11 +675,12 @@ return function(C, R, UI)
         })
 
         tab:Toggle({
-            Title = "Teleport to Big Trees",
+            Title = "Teleport to Big Trees (Rotate 5)",
             Value = false,
             Callback = function(state)
                 moveBig = (state == true)
                 clearTarget("toggle_big", false)
+                clearBigGroup("toggle_big")
                 if enabledNow() then
                     startTeleportLoop()
                 else
