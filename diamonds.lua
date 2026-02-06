@@ -24,9 +24,15 @@ return function(C, R, UI)
     if C.State.DiamondsFirePrompts == nil then C.State.DiamondsFirePrompts = false end
 
     if C.State.DiamondsJumpInput == nil then C.State.DiamondsJumpInput = false end
+    if C.State.DiamondsKey1Input == nil then C.State.DiamondsKey1Input = false end
+
     if C.State._DiamondsJumpConn ~= nil then
         pcall(function() C.State._DiamondsJumpConn:Disconnect() end)
         C.State._DiamondsJumpConn = nil
+    end
+    if C.State._DiamondsKey1Conn ~= nil then
+        pcall(function() C.State._DiamondsKey1Conn:Disconnect() end)
+        C.State._DiamondsKey1Conn = nil
     end
 
     -- Cycle interval is stored in seconds (1 .. 1200)
@@ -466,6 +472,15 @@ return function(C, R, UI)
         return ok, err
     end
 
+    local function diamondsKey1SendTap()
+        local ok, err = pcall(function()
+            VIM:SendKeyEvent(true, Enum.KeyCode.One, false, game)
+            task.wait(0.05)
+            VIM:SendKeyEvent(false, Enum.KeyCode.One, false, game)
+        end)
+        return ok, err
+    end
+
     local function diamondsJumpStart()
         if C.State._DiamondsJumpConn then return end
         local lastSend = 0
@@ -482,6 +497,25 @@ return function(C, R, UI)
         if C.State._DiamondsJumpConn then
             pcall(function() C.State._DiamondsJumpConn:Disconnect() end)
             C.State._DiamondsJumpConn = nil
+        end
+    end
+
+    local function diamondsKey1Start()
+        if C.State._DiamondsKey1Conn then return end
+        local lastSend = 0
+        C.State._DiamondsKey1Conn = Run.Heartbeat:Connect(function()
+            if not (C.State and C.State.DiamondsKey1Input) then return end
+            local t = os.clock()
+            if (t - lastSend) < 5 then return end
+            lastSend = t
+            diamondsKey1SendTap()
+        end)
+    end
+
+    local function diamondsKey1Stop()
+        if C.State._DiamondsKey1Conn then
+            pcall(function() C.State._DiamondsKey1Conn:Disconnect() end)
+            C.State._DiamondsKey1Conn = nil
         end
     end
 
@@ -647,9 +681,28 @@ return function(C, R, UI)
         end
     })
 
+    tab:Toggle({
+        Title = "Input 1 (simulate One)",
+        Default = C.State.DiamondsKey1Input and true or false,
+        Callback = function(on)
+            C.State.DiamondsKey1Input = on and true or false
+            if C.State.DiamondsKey1Input then
+                diamondsKey1Start()
+            else
+                diamondsKey1Stop()
+            end
+        end
+    })
+
     if C.State.DiamondsJumpInput then
         diamondsJumpStart()
     else
         diamondsJumpStop()
+    end
+
+    if C.State.DiamondsKey1Input then
+        diamondsKey1Start()
+    else
+        diamondsKey1Stop()
     end
 end
