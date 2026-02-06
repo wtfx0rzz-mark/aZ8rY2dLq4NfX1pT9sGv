@@ -378,8 +378,23 @@ return function(C, R, UI)
         return type(n) == "string" and (n:find("Revolver", 1, true) ~= nil)
     end
 
+    local BANDAGE_LIMIT = 10
+    local MEDKIT_LIMIT  = 5
+
     local function invFolder()
         return lp:FindFirstChild("Inventory")
+    end
+
+    local function countInInventoryByName(itemName)
+        local inv = invFolder()
+        if not inv then return 0 end
+        local n = 0
+        for _,ch in ipairs(inv:GetChildren()) do
+            if ch and ch.Name == itemName then
+                n += 1
+            end
+        end
+        return n
     end
 
     local function armourFolder()
@@ -1819,6 +1834,12 @@ return function(C, R, UI)
         if n == "Thorn Body" then
             return (not hasThornBodyOwned())
         end
+        if n == "Bandage" then
+            return countInInventoryByName("Bandage") < BANDAGE_LIMIT
+        end
+        if n == "MedKit" then
+            return countInInventoryByName("MedKit") < MEDKIT_LIMIT
+        end
         if ALWAYS_TAKE_NAMES[n] then
             return true
         end
@@ -1873,6 +1894,20 @@ return function(C, R, UI)
             pcall(function()
                 tryEquipThornBody(target)
             end)
+            return
+        end
+
+        if n == "Bandage" then
+            if countInInventoryByName("Bandage") < BANDAGE_LIMIT then
+                pcall(function() takeItemToInventory(target) end)
+            end
+            return
+        end
+
+        if n == "MedKit" then
+            if countInInventoryByName("MedKit") < MEDKIT_LIMIT then
+                pcall(function() takeItemToInventory(target) end)
+            end
             return
         end
 
