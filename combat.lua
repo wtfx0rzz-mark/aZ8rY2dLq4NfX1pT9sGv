@@ -282,6 +282,7 @@ return function(C, R, UI)
             { "Ice Sword",         0.5 },
             { "Katana",            0.4 },
             { "Trident",           0.6 },
+            { "Shadow Dagger",     0.325},
             { "Laser Sword",       0.5 },
             { "Poison Spear",      0.5 },
             { "Spear",             0.5 },
