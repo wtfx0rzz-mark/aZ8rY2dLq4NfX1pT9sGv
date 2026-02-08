@@ -39,7 +39,7 @@ return function(C, R, UI)
     do
         local v = tonumber(C.State.DiamondsCycleInterval)
         if not v then
-            C.State.DiamondsCycleInterval = 30
+            C.State.DiamondsCycleInterval = 10
         else
             -- migrate legacy minutes-based values (old range 1..10) to seconds
             if v >= 1 and v <= 10 then
@@ -54,6 +54,7 @@ return function(C, R, UI)
     local SCAN_INTERVAL      = 0.15
     local FIRE_COOLDOWN_S    = 0.35
     local MAX_FIRES_PER_SCAN = 8
+    local CYCLE_JUMP_INTERVAL_S = 10
 
     local function now() return os.clock() end
 
@@ -527,10 +528,12 @@ return function(C, R, UI)
         Callback = function(on)
             C.State.DiamondsCycle = on and true or false
             if C.State.DiamondsCycle then
-                local seconds = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 30, 1, 1200)
+                local seconds = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 10, 1, 1200)
                 C.State._DiamondsCycleNextAt = now() + seconds
+                C.State._DiamondsCycleLastJumpAt = now()
             else
                 C.State._DiamondsCycleNextAt = nil
+                C.State._DiamondsCycleLastJumpAt = nil
             end
         end
     })
@@ -564,7 +567,7 @@ return function(C, R, UI)
 
     tab:Slider({
         Title = "Cycle Interval (sec)",
-        Value = { Min = 1, Max = 1200, Default = math.clamp(tonumber(C.State.DiamondsCycleInterval) or 30, 1, 1200) },
+        Value = { Min = 1, Max = 1200, Default = math.clamp(tonumber(C.State.DiamondsCycleInterval) or 10, 1, 1200) },
         Callback = function(v)
             local nv = v
             if type(v) == "table" then
@@ -619,14 +622,24 @@ return function(C, R, UI)
         task.spawn(function()
             while true do
                 if C.State and C.State.DiamondsCycle then
+                    local lj = tonumber(C.State._DiamondsCycleLastJumpAt)
+                    if not lj then
+                        C.State._DiamondsCycleLastJumpAt = now()
+                    else
+                        if (now() - lj) >= CYCLE_JUMP_INTERVAL_S then
+                            pcall(diamondsJumpSendSpaceTap)
+                            C.State._DiamondsCycleLastJumpAt = now()
+                        end
+                    end
+
                     local nextAt = tonumber(C.State._DiamondsCycleNextAt)
                     if not nextAt then
-                        local seconds = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 30, 1, 1200)
+                        local seconds = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 10, 1, 1200)
                         C.State._DiamondsCycleNextAt = now() + seconds
                     else
                         if now() >= nextAt then
                             pcall(cycleStep)
-                            local seconds = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 30, 1, 1200)
+                            local seconds = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 10, 1, 1200)
                             C.State._DiamondsCycleNextAt = now() + seconds
                         end
                     end
