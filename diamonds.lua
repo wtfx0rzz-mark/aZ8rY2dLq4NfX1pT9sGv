@@ -11,6 +11,7 @@ return function(C, R, UI)
     local Run      = Services.Run     or game:GetService("RunService")
     local PPS      = game:GetService("ProximityPromptService")
     local VIM      = game:GetService("VirtualInputManager")
+    local VU       = game:GetService("VirtualUser")
 
     local lp  = C.LocalPlayer or Players.LocalPlayer
     local tab = UI.Tabs.Diamonds
@@ -22,7 +23,6 @@ return function(C, R, UI)
     if C.State.DiamondsLocations == nil then C.State.DiamondsLocations = {} end
     if C.State.DiamondsCycleIndex == nil then C.State.DiamondsCycleIndex = 1 end
     if C.State.DiamondsFirePrompts == nil then C.State.DiamondsFirePrompts = false end
-
     if C.State.DiamondsJumpInput == nil then C.State.DiamondsJumpInput = false end
     if C.State.DiamondsKey1Input == nil then C.State.DiamondsKey1Input = false end
 
@@ -35,13 +35,11 @@ return function(C, R, UI)
         C.State._DiamondsKey1Conn = nil
     end
 
-    -- Cycle interval is stored in seconds (1 .. 1200)
     do
         local v = tonumber(C.State.DiamondsCycleInterval)
         if not v then
             C.State.DiamondsCycleInterval = 10
         else
-            -- migrate legacy minutes-based values (old range 1..10) to seconds
             if v >= 1 and v <= 10 then
                 C.State.DiamondsCycleInterval = math.clamp(v * 60, 1, 1200)
             else
@@ -54,9 +52,37 @@ return function(C, R, UI)
     local SCAN_INTERVAL      = 0.15
     local FIRE_COOLDOWN_S    = 0.35
     local MAX_FIRES_PER_SCAN = 8
-    local CYCLE_JUMP_INTERVAL_S = 10
+
+    local INPUT_BASE_INTERVAL_S = 5
 
     local function now() return os.clock() end
+
+    local _seeded = false
+    local function seedOnce()
+        if _seeded then return end
+        _seeded = true
+        pcall(function()
+            math.randomseed(tonumber(string.gsub(tostring(os.clock()), "%D", "")) or tick())
+        end)
+    end
+    seedOnce()
+
+    local function randf(a, b)
+        return a + (b - a) * math.random()
+    end
+
+    local function nextJitteredIntervalSeconds(base)
+        local b = tonumber(base) or INPUT_BASE_INTERVAL_S
+        local v = randf(b - 2.0, b + 1.5)
+        if v < 1.0 then v = 1.0 end
+        return v
+    end
+
+    local function cycleIntervalWithJitter()
+        local base = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 10, 1, 1200)
+        local j = randf(-2.0, 2.0)
+        return math.clamp(base + j, 1, 1200)
+    end
 
     local function hrp()
         local ch = lp.Character or lp.CharacterAdded:Wait()
@@ -68,7 +94,6 @@ return function(C, R, UI)
         return ch and ch:FindFirstChildOfClass("Humanoid")
     end
 
-    -- Camera snap: behind player, facing forward (aligned to HRP look)
     local CAM_BACK       = 12
     local CAM_UP         = 4.5
     local CAM_LOOK_AHEAD = 60
@@ -464,33 +489,78 @@ return function(C, R, UI)
         firePromptLastAt = setmetatable({}, { __mode = "k" })
     end
 
-    local function diamondsJumpSendSpaceTap()
-        local ok, err = pcall(function()
-            VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+    local function vimTap(keyCode)
+        local ok = pcall(function()
+            VIM:SendKeyEvent(true, keyCode, false, game)
             task.wait(0.05)
-            VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            VIM:SendKeyEvent(false, keyCode, false, game)
         end)
-        return ok, err
+        return ok
+    end
+
+    local function diamondsJumpSendSpaceTap()
+        return vimTap(Enum.KeyCode.Space)
     end
 
     local function diamondsKey1SendTap()
-        local ok, err = pcall(function()
-            VIM:SendKeyEvent(true, Enum.KeyCode.One, false, game)
-            task.wait(0.05)
-            VIM:SendKeyEvent(false, Enum.KeyCode.One, false, game)
+        return vimTap(Enum.KeyCode.One)
+    end
+
+    local function vuDoRandomAction()
+        local ok = pcall(function()
+            VU:CaptureController()
+            local cam = WS.CurrentCamera
+            local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+            local x = math.floor(randf(40, math.max(41, vp.X - 40)))
+            local y = math.floor(randf(40, math.max(41, vp.Y - 40)))
+            local pos = Vector2.new(x, y)
+            if math.random(1, 3) == 1 then
+                VU:ClickButton2(pos)
+            else
+                VU:ClickButton1(pos)
+            end
         end)
-        return ok, err
+        return ok
+    end
+
+    local AFK_KEYS = {
+        Enum.KeyCode.One,
+        Enum.KeyCode.Two,
+        Enum.KeyCode.Three,
+        Enum.KeyCode.W,
+        Enum.KeyCode.A,
+        Enum.KeyCode.S,
+        Enum.KeyCode.D,
+        Enum.KeyCode.Space,
+    }
+
+    local function afkKeyAction()
+        local kc = AFK_KEYS[math.random(1, #AFK_KEYS)]
+        return vimTap(kc)
+    end
+
+    local function afkComboAction()
+        local roll = math.random(1, 100)
+        if roll <= 45 then
+            afkKeyAction()
+        elseif roll <= 80 then
+            vuDoRandomAction()
+        else
+            afkKeyAction()
+            task.wait(0.08)
+            vuDoRandomAction()
+        end
     end
 
     local function diamondsJumpStart()
         if C.State._DiamondsJumpConn then return end
-        local lastSend = 0
+        local nextAt = now() + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
         C.State._DiamondsJumpConn = Run.Heartbeat:Connect(function()
             if not (C.State and C.State.DiamondsJumpInput) then return end
-            local t = os.clock()
-            if (t - lastSend) < 5 then return end
-            lastSend = t
-            diamondsJumpSendSpaceTap()
+            local t = now()
+            if t < nextAt then return end
+            afkComboAction()
+            nextAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
         end)
     end
 
@@ -503,13 +573,13 @@ return function(C, R, UI)
 
     local function diamondsKey1Start()
         if C.State._DiamondsKey1Conn then return end
-        local lastSend = 0
+        local nextAt = now() + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
         C.State._DiamondsKey1Conn = Run.Heartbeat:Connect(function()
             if not (C.State and C.State.DiamondsKey1Input) then return end
-            local t = os.clock()
-            if (t - lastSend) < 5 then return end
-            lastSend = t
+            local t = now()
+            if t < nextAt then return end
             diamondsKey1SendTap()
+            nextAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
         end)
     end
 
@@ -528,12 +598,14 @@ return function(C, R, UI)
         Callback = function(on)
             C.State.DiamondsCycle = on and true or false
             if C.State.DiamondsCycle then
-                local seconds = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 10, 1, 1200)
+                local seconds = cycleIntervalWithJitter()
                 C.State._DiamondsCycleNextAt = now() + seconds
-                C.State._DiamondsCycleLastJumpAt = now()
+                C.State._DiamondsCycleLastInputAt = now()
+                C.State._DiamondsCycleNextInputAt = now() + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
             else
                 C.State._DiamondsCycleNextAt = nil
-                C.State._DiamondsCycleLastJumpAt = nil
+                C.State._DiamondsCycleLastInputAt = nil
+                C.State._DiamondsCycleNextInputAt = nil
             end
         end
     })
@@ -622,25 +694,25 @@ return function(C, R, UI)
         task.spawn(function()
             while true do
                 if C.State and C.State.DiamondsCycle then
-                    local lj = tonumber(C.State._DiamondsCycleLastJumpAt)
-                    if not lj then
-                        C.State._DiamondsCycleLastJumpAt = now()
+                    local t = now()
+
+                    local nextInputAt = tonumber(C.State._DiamondsCycleNextInputAt)
+                    if not nextInputAt then
+                        C.State._DiamondsCycleNextInputAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
                     else
-                        if (now() - lj) >= CYCLE_JUMP_INTERVAL_S then
-                            pcall(diamondsJumpSendSpaceTap)
-                            C.State._DiamondsCycleLastJumpAt = now()
+                        if t >= nextInputAt then
+                            pcall(afkComboAction)
+                            C.State._DiamondsCycleNextInputAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
                         end
                     end
 
                     local nextAt = tonumber(C.State._DiamondsCycleNextAt)
                     if not nextAt then
-                        local seconds = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 10, 1, 1200)
-                        C.State._DiamondsCycleNextAt = now() + seconds
+                        C.State._DiamondsCycleNextAt = t + cycleIntervalWithJitter()
                     else
-                        if now() >= nextAt then
+                        if t >= nextAt then
                             pcall(cycleStep)
-                            local seconds = math.clamp(tonumber(C.State and C.State.DiamondsCycleInterval) or 10, 1, 1200)
-                            C.State._DiamondsCycleNextAt = now() + seconds
+                            C.State._DiamondsCycleNextAt = t + cycleIntervalWithJitter()
                         end
                     end
                 end
@@ -682,7 +754,7 @@ return function(C, R, UI)
     tab:Section({ Title = "Jump Debug" })
 
     tab:Toggle({
-        Title = "Input Jump (simulate Space)",
+        Title = "AFK",
         Default = C.State.DiamondsJumpInput and true or false,
         Callback = function(on)
             C.State.DiamondsJumpInput = on and true or false
