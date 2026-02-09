@@ -1,10 +1,8 @@
--- Split Lobby/Game loader (single-instance guard, raw URLs, teleport-persistent, forced GAME after teleport)
--- Put in autoexec OR run once in the lobby.
+-- Split Lobby/Game loader
 
 local LOBBY_URL = "https://raw.githubusercontent.com/wtfx0rzz-mark/universal-tjhredhytjerwgfgh/main/main.lua"
 local GAME_URL  = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/main/main.lua"
 
--- Optional: if your scripts rely on _G.UI tabs existing, set these.
 local LOBBY_TAB_NAME = ""
 local GAME_TAB_NAME  = ""
 
@@ -16,8 +14,6 @@ local function log(s)
     print("[SPLITBOOT] " .. tostring(s))
 end
 
--- Single-instance guard:
--- Prevents multiple bootstraps from running concurrently in the same server/job.
 local function acquireSingleton()
     local E = env()
     E.__SPLITBOOT_SINGLETON = E.__SPLITBOOT_SINGLETON or {}
