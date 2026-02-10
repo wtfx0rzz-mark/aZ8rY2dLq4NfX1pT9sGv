@@ -52,7 +52,7 @@ return function(C, R, UI)
         "Steak","Cooked Steak",
         "Ribs","Cooked Ribs","Cake","Berry",
         "Carrot",
-        "Chilli","Stew","Pumpkin","Hearty Stew","Corn","BBQ ribs","Apple","Mackerel","Salmon","Swordfish","Shark","Acorn","Strawberry"
+        "Chilli","Stew","Pumpkin","Hearty Stew","Corn","BBQ ribs","Apple","Mackerel","Salmon","Swordfish","Shark","Strawberry","Acorn"
     }
     local medicalItems = {"Bandage","MedKit"}
     local weaponsArmor = {
@@ -61,9 +61,9 @@ return function(C, R, UI)
         "Sword","Ice Axe","Scythe","Thorn Body","Corrupted Thorn Body","Impact Grenade","Dynamite","Corrupted Shotgun","Corrupted Revolver","Corrupted Thrown Axe"
     }
     local ammoMisc = {
-        "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Alien","Alien Elite","Sapling",
+        "Giant Sack","Infernal Sack","Good Sack","Mossy Coin","Cultist","Alien","Alien Elite","Sapling",
         "Basketball","Blueprint","Diamond","Gem of the Forest Fragment","Flashlight","Old Taming flute","Old Rod","Cultist Gem",
-        "Tusk","Infernal Sack","Sacrifice Totem","Anvil Back","Anvil Front","Anvil Base"
+        "Tusk","Revolver Ammo","Rifle Ammo","Shotgun Ammo","Explosive Revolver Ammo","Explosive Rifle Ammo","Sacrifice Totem","Anvil Back","Anvil Front","Anvil Base"
     }
     local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"}
 
