@@ -130,8 +130,16 @@ local function queueGameAfterTeleport()
     local payload =
         "local function env() return (getgenv and getgenv()) or _G end\n" ..
         "local E=env()\n" ..
-        "E.__SPLITBOOT_FORCE='GAME'\n" ..
         "local function log(s) print('[SPLITBOOT] '..tostring(s)) end\n" ..
+        "E.__SPLITBOOT_FORCE='GAME'\n" ..
+        -- Added: singleton + run-once guard in the post-teleport payload
+        "E.__SPLITBOOT_SINGLETON = E.__SPLITBOOT_SINGLETON or {}\n" ..
+        "local jobId=tostring(game.JobId or 'nojob')\n" ..
+        "if E.__SPLITBOOT_SINGLETON[jobId] then log('POST-TELEPORT singleton already active for JobId='..jobId..' (skipping)') return end\n" ..
+        "E.__SPLITBOOT_SINGLETON[jobId]=true\n" ..
+        "local ranKey='__SPLITBOOT_RAN_GAME_'..jobId\n" ..
+        "if E[ranKey] then log('POST-TELEPORT GAME already ran for this JobId (skipping)') return end\n" ..
+        "E[ranKey]=true\n" ..
         "local function httpGet(url)\n" ..
         "  if game and game.HttpGet then return game:HttpGet(url) end\n" ..
         "  if syn and syn.request then local r=syn.request({Url=url,Method='GET'}) if r and r.Body then return r.Body end end\n" ..
