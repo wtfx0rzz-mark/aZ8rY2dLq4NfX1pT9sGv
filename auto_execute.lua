@@ -1,4 +1,7 @@
--- Split Lobby/Game loader
+-- Split Lobby/Game loader (PlaceId-aware)
+
+local LOBBY_PLACE_ID = 79546208627805
+local GAME_PLACE_ID  = 126509999114328
 
 local LOBBY_URL = "https://raw.githubusercontent.com/wtfx0rzz-mark/universal-tjhredhytjerwgfgh/main/main.lua"
 local GAME_URL  = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/main/main.lua"
@@ -129,8 +132,6 @@ local function queueGameAfterTeleport()
         "local function env() return (getgenv and getgenv()) or _G end\n" ..
         "local E=env()\n" ..
         "E.__SPLITBOOT_FORCE='GAME'\n" ..
-        "E.__SPLITBOOT_SINGLETON = E.__SPLITBOOT_SINGLETON or {}\n" ..
-        "E.__SPLITBOOT_SINGLETON[tostring(game.JobId or 'nojob')] = true\n" ..
         "local function log(s) print('[SPLITBOOT] '..tostring(s)) end\n" ..
         "local function httpGet(url)\n" ..
         "  if game and game.HttpGet then return game:HttpGet(url) end\n" ..
@@ -187,6 +188,7 @@ end
 local E = env()
 local forced = E.__SPLITBOOT_FORCE -- nil / "LOBBY" / "GAME"
 
+-- If forced, obey it (used for post-teleport payload)
 if forced == "GAME" then
     runOnce("GAME", function()
         runUrl("GAME", GAME_URL, GAME_TAB_NAME)
@@ -199,13 +201,28 @@ elseif forced == "LOBBY" then
     return
 end
 
--- Default behavior when started in lobby:
--- 1) Queue GAME for teleport destination
--- 2) Run LOBBY now
-runOnce("QUEUE", function()
-    queueGameAfterTeleport()
-end)
+-- PlaceId-aware default behavior
+if game.PlaceId == LOBBY_PLACE_ID then
+    runOnce("QUEUE", function()
+        queueGameAfterTeleport()
+    end)
 
-runOnce("LOBBY", function()
-    runUrl("LOBBY", LOBBY_URL, LOBBY_TAB_NAME)
+    runOnce("LOBBY", function()
+        runUrl("LOBBY", LOBBY_URL, LOBBY_TAB_NAME)
+    end)
+
+    return
+end
+
+if game.PlaceId == GAME_PLACE_ID then
+    runOnce("GAME", function()
+        runUrl("GAME", GAME_URL, GAME_TAB_NAME)
+    end)
+    return
+end
+
+-- Fallback: unknown place, do NOT run both. Prefer GAME_URL.
+log("Unknown placeId=" .. tostring(game.PlaceId) .. " (running GAME_URL fallback)")
+runOnce("GAME_FALLBACK", function()
+    runUrl("GAME", GAME_URL, GAME_TAB_NAME)
 end)
