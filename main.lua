@@ -40,7 +40,7 @@ _G.R  = _G.R or {}
 _G.UI = UI
 
 -------------------------------------------------------
--- Main tab biome detector (Volcanic vs Snow)
+-- Main tab biome + event detector (Main tab text only)
 -------------------------------------------------------
 local function findBiomeName()
     local WS = C.Services.WS or game:GetService("Workspace")
@@ -57,18 +57,41 @@ local function findBiomeName()
     return "Unknown (neither Volcanic nor Snow found)"
 end
 
-local function setMainText(txt)
+local function findEventName()
+    local WS = C.Services.WS or game:GetService("Workspace")
+    local map = WS:FindFirstChild("Map")
+    local landmarks = map and map:FindFirstChild("Landmarks")
+    if not landmarks then return nil end
+
+    if landmarks:FindFirstChild("HalloweenMaze") then
+        return "Halloween Event"
+    end
+    if landmarks:FindFirstChild("FrogCave") then
+        return "Frog Event"
+    end
+    if landmarks:FindFirstChild("AlienMothership") then
+        return "Alien Event"
+    end
+    if landmarks:FindFirstChild("ToolWorkshopMeteorShower") then
+        return "Meteor Event"
+    end
+
+    return nil
+end
+
+local function setMainText(biomeTxt, eventTxt)
     local Tabs = (UI and UI.Tabs) or {}
     local tab = Tabs.Main
     if not tab then return end
 
-    -- Try common WindUI APIs (best-effort, no hard dependency on exact method names).
     local ok
 
-    -- Preferred: Paragraph/Label-style widget
     ok = pcall(function()
         if type(tab.Paragraph) == "function" then
-            tab:Paragraph({ Title = "Biome", Desc = tostring(txt) })
+            tab:Paragraph({ Title = "Biome", Desc = tostring(biomeTxt) })
+            if eventTxt and eventTxt ~= "" then
+                tab:Paragraph({ Title = "Event", Desc = tostring(eventTxt) })
+            end
             return
         end
         error("no Paragraph")
@@ -77,7 +100,10 @@ local function setMainText(txt)
 
     ok = pcall(function()
         if type(tab.Label) == "function" then
-            tab:Label("Biome: " .. tostring(txt))
+            tab:Label("Biome: " .. tostring(biomeTxt))
+            if eventTxt and eventTxt ~= "" then
+                tab:Label("Event: " .. tostring(eventTxt))
+            end
             return
         end
         error("no Label")
@@ -86,37 +112,73 @@ local function setMainText(txt)
 
     ok = pcall(function()
         if type(tab.Text) == "function" then
-            tab:Text("Biome: " .. tostring(txt))
+            tab:Text("Biome: " .. tostring(biomeTxt))
+            if eventTxt and eventTxt ~= "" then
+                tab:Text("Event: " .. tostring(eventTxt))
+            end
             return
         end
         error("no Text")
     end)
     if ok then return end
 
-    -- Fallback: use a Section then try Paragraph/Label inside it
     pcall(function()
         if type(tab.Section) == "function" then
-            tab:Section({ Title = "Biome" })
+            tab:Section({ Title = "World Status" })
         end
     end)
     pcall(function()
         if type(tab.Paragraph) == "function" then
-            tab:Paragraph({ Title = "Detected", Desc = tostring(txt) })
+            tab:Paragraph({ Title = "Biome", Desc = tostring(biomeTxt) })
+            if eventTxt and eventTxt ~= "" then
+                tab:Paragraph({ Title = "Event", Desc = tostring(eventTxt) })
+            end
         elseif type(tab.Label) == "function" then
-            tab:Label("Detected: " .. tostring(txt))
+            tab:Label("Biome: " .. tostring(biomeTxt))
+            if eventTxt and eventTxt ~= "" then
+                tab:Label("Event: " .. tostring(eventTxt))
+            end
         end
     end)
 end
 
+local currentBiome
+local currentEvent
+
+local function refreshUI()
+    setMainText(currentBiome or "Unknown", currentEvent or "")
+end
+
+-- Biome updates (polling)
 task.spawn(function()
     local last
     while true do
         local now = findBiomeName()
         if now ~= last then
             last = now
-            setMainText(now)
+            currentBiome = now
+            refreshUI()
         end
         task.wait(1.0)
+    end
+end)
+
+-- Event checks: now, +10m, +20m total (only retries while none found)
+task.spawn(function()
+    local waits = { 0, 600, 600 } -- now, +10m, +20m total
+    for i = 1, #waits do
+        if currentEvent then break end
+        local d = waits[i]
+        if d > 0 then task.wait(d) end
+
+        if not currentEvent then
+            local ev = findEventName()
+            if ev then
+                currentEvent = ev
+                refreshUI()
+                break
+            end
+        end
     end
 end)
 
@@ -154,9 +216,6 @@ end)
 -------------------------------------------------------
 -- 🔧 MODULE LOADER SECTION
 -------------------------------------------------------
--- Each module attaches its features to the corresponding tab
--- defined in ui.lua (Tabs.Main, Tabs.Combat, Tabs.Bring, Tabs.Auto, Tabs.Visuals)
-
 local paths = {
     Combat  = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/combat.lua",
     Bring   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/bring.lua",
@@ -168,13 +227,13 @@ local paths = {
     Debug   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/debug.lua",
     Troll   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/troll.lua",
     Nudge   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/nudge.lua",
-    Memory   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/memory.lua",
-    Farm   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/farm.lua",
-    Esp   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/esp.lua",
+    Memory  = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/memory.lua",
+    Farm    = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/farm.lua",
+    Esp     = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/esp.lua",
     Extra   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/extra.lua",
-    PlayerInspector   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/player_inspector.lua",
-    Diamonds   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/diamonds.lua",
-    More   = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/more.lua"
+    PlayerInspector = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/player_inspector.lua",
+    Diamonds = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/diamonds.lua",
+    More     = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX1pT9sGv/refs/heads/main/more.lua"
 }
 
 for name, url in pairs(paths) do
