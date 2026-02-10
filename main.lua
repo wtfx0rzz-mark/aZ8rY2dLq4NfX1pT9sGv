@@ -40,6 +40,87 @@ _G.R  = _G.R or {}
 _G.UI = UI
 
 -------------------------------------------------------
+-- Main tab biome detector (Volcanic vs Snow)
+-------------------------------------------------------
+local function findBiomeName()
+    local WS = C.Services.WS or game:GetService("Workspace")
+    local map = WS:FindFirstChild("Map")
+    local biomes = map and map:FindFirstChild("Biomes")
+    if not biomes then return "Unknown (Biomes folder missing)" end
+
+    if biomes:FindFirstChild("Volcanic") then
+        return "Volcanic"
+    end
+    if biomes:FindFirstChild("Snow") then
+        return "Snow"
+    end
+    return "Unknown (neither Volcanic nor Snow found)"
+end
+
+local function setMainText(txt)
+    local Tabs = (UI and UI.Tabs) or {}
+    local tab = Tabs.Main
+    if not tab then return end
+
+    -- Try common WindUI APIs (best-effort, no hard dependency on exact method names).
+    local ok
+
+    -- Preferred: Paragraph/Label-style widget
+    ok = pcall(function()
+        if type(tab.Paragraph) == "function" then
+            tab:Paragraph({ Title = "Biome", Desc = tostring(txt) })
+            return
+        end
+        error("no Paragraph")
+    end)
+    if ok then return end
+
+    ok = pcall(function()
+        if type(tab.Label) == "function" then
+            tab:Label("Biome: " .. tostring(txt))
+            return
+        end
+        error("no Label")
+    end)
+    if ok then return end
+
+    ok = pcall(function()
+        if type(tab.Text) == "function" then
+            tab:Text("Biome: " .. tostring(txt))
+            return
+        end
+        error("no Text")
+    end)
+    if ok then return end
+
+    -- Fallback: use a Section then try Paragraph/Label inside it
+    pcall(function()
+        if type(tab.Section) == "function" then
+            tab:Section({ Title = "Biome" })
+        end
+    end)
+    pcall(function()
+        if type(tab.Paragraph) == "function" then
+            tab:Paragraph({ Title = "Detected", Desc = tostring(txt) })
+        elseif type(tab.Label) == "function" then
+            tab:Label("Detected: " .. tostring(txt))
+        end
+    end)
+end
+
+task.spawn(function()
+    local last
+    while true do
+        local now = findBiomeName()
+        if now ~= last then
+            last = now
+            setMainText(now)
+        end
+        task.wait(1.0)
+    end
+end)
+
+-------------------------------------------------------
 -- Force GameplayPaused to always stay false
 -- (exactly your original script behavior)
 -------------------------------------------------------
