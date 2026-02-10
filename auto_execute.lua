@@ -1,4 +1,4 @@
--- Split Lobby/Game loader (PlaceId-aware)
+-- Split Lobby/Game loader (PlaceId-aware) — simple fixed delay
 
 local LOBBY_PLACE_ID = 79546208627805
 local GAME_PLACE_ID  = 126509999114328
@@ -8,6 +8,9 @@ local GAME_URL  = "https://raw.githubusercontent.com/wtfx0rzz-mark/aZ8rY2dLq4NfX
 
 local LOBBY_TAB_NAME = ""
 local GAME_TAB_NAME  = ""
+
+-- Simple: always wait this long before executing fetched script
+local START_DELAY_SECONDS = 5.0
 
 local function env()
     return (getgenv and getgenv()) or _G
@@ -69,38 +72,33 @@ local function waitForGlobalTab(tabName, timeout)
     return false
 end
 
-local function waitCommonReady(timeout)
-    timeout = timeout or 25
-    if not game:IsLoaded() then game.Loaded:Wait() end
-    local Players = game:GetService("Players")
-    local RS = game:GetService("ReplicatedStorage")
-    local lp = Players.LocalPlayer
-    local t0 = os.clock()
-    while not lp and (os.clock() - t0) < timeout do
-        task.wait(0.1)
-        lp = Players.LocalPlayer
-    end
-    if lp then
-        pcall(function()
-            lp:WaitForChild("PlayerGui", timeout)
-        end)
-    end
-    pcall(function()
-        RS:WaitForChild("RemoteEvents", timeout)
-    end)
-    return lp
-end
-
 local function runUrl(tag, url, tabName)
-    waitCommonReady(25)
+    if not game:IsLoaded() then game.Loaded:Wait() end
+
     if tabName and tabName ~= "" then
-        local ok = waitForGlobalTab(tabName, 25)
-        log(tag .. " waitForTab(" .. tabName .. ")=" .. tostring(ok))
+        local okTab = waitForGlobalTab(tabName, 25)
+        log(tag .. " waitForTab(" .. tabName .. ")=" .. tostring(okTab))
     end
+
+    if START_DELAY_SECONDS and START_DELAY_SECONDS > 0 then
+        log(tag .. " startDelay=" .. tostring(START_DELAY_SECONDS) .. "s")
+        task.wait(START_DELAY_SECONDS)
+    end
+
     log(tag .. " fetching: " .. url)
     local src = httpGet(url)
-    local fn = loadstring(src)
-    return fn()
+
+    local fn, lerr = loadstring(src)
+    if not fn then
+        error(tag .. " loadstring failed: " .. tostring(lerr))
+    end
+
+    local ok, err = pcall(fn)
+    if not ok then
+        log(tag .. " script error: " .. tostring(err))
+        return nil
+    end
+    return err
 end
 
 local function ranKey(mode)
@@ -127,6 +125,7 @@ local function queueGameAfterTeleport()
 
     local gameTab = GAME_TAB_NAME or ""
     local url = GAME_URL
+    local startDelay = tonumber(START_DELAY_SECONDS) or 0
 
     local payload =
         "local function env() return (getgenv and getgenv()) or _G end\n" ..
@@ -152,21 +151,18 @@ local function queueGameAfterTeleport()
         "  return false\n" ..
         "end\n" ..
         "if not game:IsLoaded() then game.Loaded:Wait() end\n" ..
-        "local Players=game:GetService('Players')\n" ..
-        "local RS=game:GetService('ReplicatedStorage')\n" ..
-        "pcall(function() RS:WaitForChild('RemoteEvents', 25) end)\n" ..
-        "local lp=Players.LocalPlayer\n" ..
-        "local t0=os.clock()\n" ..
-        "while not lp and (os.clock()-t0)<25 do task.wait(0.1) lp=Players.LocalPlayer end\n" ..
-        "if lp then pcall(function() lp:WaitForChild('PlayerGui', 25) end) end\n" ..
         "log('POST-TELEPORT placeId='..tostring(game.PlaceId)..' jobId='..tostring(game.JobId)..' privateId='..tostring(game.PrivateServerId))\n" ..
         ("local tabName=%q\n"):format(gameTab) ..
         "if tabName~='' then log('GAME waitForTab('..tabName..')='..tostring(waitForGlobalTab(tabName,25))) end\n" ..
+        "local startDelay=" .. tostring(startDelay) .. "\n" ..
+        "if startDelay>0 then log('GAME startDelay='..tostring(startDelay)..'s') task.wait(startDelay) end\n" ..
         ("local url=%q\n"):format(url) ..
         "log('GAME fetching: '..url)\n" ..
         "local src=httpGet(url)\n" ..
-        "local fn=loadstring(src)\n" ..
-        "fn()\n"
+        "local fn, lerr=loadstring(src)\n" ..
+        "if not fn then error('GAME loadstring failed: '..tostring(lerr)) end\n" ..
+        "local ok, err=pcall(fn)\n" ..
+        "if not ok then log('GAME script error: '..tostring(err)) end\n"
 
     local ok, err = pcall(function()
         q(payload)
@@ -188,7 +184,6 @@ end
 local E = env()
 local forced = E.__SPLITBOOT_FORCE -- nil / "LOBBY" / "GAME"
 
--- If forced, obey it (used for post-teleport payload)
 if forced == "GAME" then
     runOnce("GAME", function()
         runUrl("GAME", GAME_URL, GAME_TAB_NAME)
@@ -201,7 +196,6 @@ elseif forced == "LOBBY" then
     return
 end
 
--- PlaceId-aware default behavior
 if game.PlaceId == LOBBY_PLACE_ID then
     runOnce("QUEUE", function()
         queueGameAfterTeleport()
@@ -221,7 +215,6 @@ if game.PlaceId == GAME_PLACE_ID then
     return
 end
 
--- Fallback: unknown place, do NOT run both. Prefer GAME_URL.
 log("Unknown placeId=" .. tostring(game.PlaceId) .. " (running GAME_URL fallback)")
 runOnce("GAME_FALLBACK", function()
     runUrl("GAME", GAME_URL, GAME_TAB_NAME)
