@@ -663,9 +663,9 @@ return function(C, R, UI)
 
     tab:Toggle({
         Title = "Auto-take Diamonds (75 studs)",
-        Default = C.State.DiamondsAutoTake and true or false,
+        Value = (C.State.DiamondsAutoTake == true),
         Callback = function(on)
-            C.State.DiamondsAutoTake = on and true or false
+            C.State.DiamondsAutoTake = (on == true)
             if C.State.DiamondsAutoTake then
                 if not takeRemote or not takeRemote.Parent then
                     takeRemote = getRemote()
