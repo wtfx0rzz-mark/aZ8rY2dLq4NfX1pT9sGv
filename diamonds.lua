@@ -17,7 +17,7 @@ return function(C, R, UI)
     local tab = UI.Tabs.Diamonds
 
     C.State = C.State or {}
-    if C.State.DiamondsAutoTake == nil then C.State.DiamondsAutoTake = false end
+    if C.State.DiamondsAutoTake == nil then C.State.DiamondsAutoTake = true end
     if C.State.DiamondsCycle == nil then C.State.DiamondsCycle = false end
     if C.State.DiamondsSetLocations == nil then C.State.DiamondsSetLocations = false end
     if C.State.DiamondsLocations == nil then C.State.DiamondsLocations = {} end
