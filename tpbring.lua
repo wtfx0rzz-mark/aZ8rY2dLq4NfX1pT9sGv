@@ -138,8 +138,8 @@ return function(C, R, UI)
 
     local AIR_TOUCH_DROP_OFFSET_Y = 10
     local AIR_TOUCH_ORB_SIZE      = 6.0
-    local AIR_RELEASE_RATE_HZ     = 160
-    local AIR_MAX_RELEASE_PER_TICK= 30
+    local AIR_DROP_TIMEOUT_S      = 2.25
+    local AIR_RETRY_PUSH_DOWN_VY  = -80
 
     local INFLT_ATTR = "OrbInFlightAt"
     local JOB_ATTR   = "OrbJob"
@@ -207,6 +207,7 @@ return function(C, R, UI)
     local scrapModeSet = {}
     for k,v in pairs(junkSet) do if v then scrapModeSet[k] = true end end
     scrapModeSet["Log"] = true
+    local logOnlySet = { ["Log"] = true }
 
     local allModeSet = {}
     local function addListToSet(list, set)
@@ -234,7 +235,6 @@ return function(C, R, UI)
     appendListIntoGrouped(junkItems)
     appendListIntoGrouped(fuelItems)
     appendListIntoGrouped(foodItems)
-    appendListIntoGrouped(medicalItems)
     appendListIntoGrouped(weaponsArmor)
     appendListIntoGrouped(ammoMisc)
     appendListIntoGrouped(pelts)
@@ -461,6 +461,10 @@ return function(C, R, UI)
         end)
     end
 
+    local function isAirMode()
+        return CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs"
+    end
+
     local function markDoneThisRun(m)
         if not (m and m.Parent) then return end
         pcall(function()
@@ -507,6 +511,7 @@ return function(C, R, UI)
     local function currentSelectedSet()
         if CURRENT_MODE == "fuel" then return fuelModeSet end
         if CURRENT_MODE == "scrap" then return scrapModeSet end
+        if CURRENT_MODE == "scrap_logs" then return logOnlySet end
         if CURRENT_MODE == "all" then return allModeSet end
         return nil
     end
@@ -704,6 +709,26 @@ return function(C, R, UI)
         return pos + Vector3.new(0, ORB_HEIGHT + 1, 0)
     end
 
+    local function finalizeAirDelivery(m, rec)
+        if not (m and m.Parent and rec) then return end
+        rec.dropping = false
+        setAnchored(m, false)
+        setCollideFromSnapshot(rec.snap)
+        for _,p in ipairs(allParts(m)) do
+            pcall(function() p:SetNetworkOwner(nil) end)
+            pcall(function()
+                if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end
+            end)
+        end
+        local now = os.clock()
+        pcall(function()
+            m:SetAttribute(SENT_DELIV_ATTR, now)
+        end)
+        local tries = tonumber(m:GetAttribute(SENT_TRIES_ATTR)) or 1
+        pendingRetry[m] = { mode = CURRENT_MODE, at = now, tries = tries }
+        markDoneThisRun(m)
+    end
+
     local function spawnOrbAt(pos, color, withTouchOrb)
         destroyOrb()
 
@@ -738,7 +763,7 @@ return function(C, R, UI)
             orbTouch = t
 
             touchConn = t.Touched:Connect(function(hit)
-                if not (running and (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap")) then return end
+                if not (running and isAirMode()) then return end
                 if not hit or not hit.Parent then return end
                 local m = rootItemUnderItems(hit)
                 if not m then return end
@@ -746,26 +771,7 @@ return function(C, R, UI)
                 if not rec then return end
                 if rec.dropKind ~= "air" then return end
                 if not rec.dropping then return end
-
-                rec.dropping = false
-
-                setAnchored(m, false)
-                setCollideFromSnapshot(rec.snap)
-                for _,p in ipairs(allParts(m)) do
-                    pcall(function() p:SetNetworkOwner(nil) end)
-                    pcall(function()
-                        if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end
-                    end)
-                end
-
-                local now = os.clock()
-                pcall(function()
-                    m:SetAttribute(SENT_DELIV_ATTR, now)
-                end)
-                local tries = tonumber(m:GetAttribute(SENT_TRIES_ATTR)) or 1
-                pendingRetry[m] = { mode = CURRENT_MODE, at = now, tries = tries }
-
-                markDoneThisRun(m)
+                finalizeAirDelivery(m, rec)
             end)
         end
     end
@@ -840,11 +846,13 @@ return function(C, R, UI)
                 pcall(function()
                     if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end
                 end)
+                p.AssemblyLinearVelocity = Vector3.new(0, AIR_RETRY_PUSH_DOWN_VY, 0)
             end
 
             if info then
                 info.released = true
                 info.dropping = true
+                info.droppingAt = os.clock()
                 info.snap = snap
             end
             return
@@ -914,7 +922,7 @@ return function(C, R, UI)
 
     local function markSentAttempt(m)
         if not (m and m.Parent) then return end
-        if not (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap") then return end
+        if not isAirMode() then return end
         local now = os.clock()
         local tries = tonumber(m:GetAttribute(SENT_TRIES_ATTR)) or 0
         tries = tries + 1
@@ -943,7 +951,7 @@ return function(C, R, UI)
             m:SetAttribute(JOB_ATTR, jobId)
         end)
 
-        if dropKind == "air" and (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap") then
+        if dropKind == "air" and isAirMode() then
             markSentAttempt(m)
         end
 
@@ -959,6 +967,7 @@ return function(C, R, UI)
             staged = false,
             released = false,
             dropping = false,
+            droppingAt = nil,
             dragging = false,
             stopped = false,
             counted = true,
@@ -1121,7 +1130,7 @@ return function(C, R, UI)
         if not CURRENT_MODE then return end
 
         if CURRENT_MODE == "orbs" then
-            local list = getCandidatesForOrbs(jobId)
+            local list = collectCandidatesFromSet(orbUnionSet, jobId, maxDistOrbs)
             for i = 1, #list do
                 if not running then break end
                 if #releaseQueue >= MAX_LINED_ITEMS then break end
@@ -1149,7 +1158,7 @@ return function(C, R, UI)
             if m and m.Parent and not inflight[m] then
                 local dest = orbPosVec
                 if dest then
-                    local kind = (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap") and "air" or "ground"
+                    local kind = isAirMode() and "air" or "ground"
                     startConveyor(m, jobId, dest, "main", kind)
                 end
             end
@@ -1166,7 +1175,7 @@ return function(C, R, UI)
                     if m and m.Parent and not inflight[m] then
                         local dest = orbPosVec
                         if dest then
-                            local kind = (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap") and "air" or "ground"
+                            local kind = isAirMode() and "air" or "ground"
                             startConveyor(m, jobId, dest, "main", kind)
                         end
                     end
@@ -1199,7 +1208,11 @@ return function(C, R, UI)
                                     rec.counted = false
                                     activeCount = math.max(0, activeCount - 1)
                                 end
-                                stageForRelease(m, rec.snap, tgt, rec.destKey, rec.centerXZ, rec.dropKind)
+                                if rec.dropKind == "air" then
+                                    releaseOne({ model = m, snap = rec.snap, dropKind = "air" })
+                                else
+                                    stageForRelease(m, rec.snap, tgt, rec.destKey, rec.centerXZ, rec.dropKind)
+                                end
                             else
                                 if distH >= rec.lastD - 0.02 then
                                     if os.clock() - rec.lastT >= STALL_SEC then
@@ -1225,8 +1238,46 @@ return function(C, R, UI)
         end
     end
 
+    local function checkAirDeliveries()
+        if not (running and isAirMode() and orbTouch and orbTouch.Parent) then return end
+        local now = os.clock()
+        local touchPos = orbTouch.Position
+        local rad = (AIR_TOUCH_ORB_SIZE * 0.5) + 1.25
+        local rad2 = rad * rad
+
+        for m,rec in pairs(inflight) do
+            if rec and rec.dropKind == "air" and rec.dropping and m and m.Parent then
+                local mp = mainPart(m)
+                if mp then
+                    local dp = mp.Position - touchPos
+                    local d2 = dp.X*dp.X + dp.Y*dp.Y + dp.Z*dp.Z
+                    if d2 <= rad2 then
+                        finalizeAirDelivery(m, rec)
+                    else
+                        local t0 = rec.droppingAt or now
+                        if (now - t0) >= AIR_DROP_TIMEOUT_S and orbPosVec then
+                            local pos = orbPosVec + Vector3.new(0, AIR_RELEASE_UP, 0)
+                            setPivot(m, CFrame.new(pos))
+                            setAnchored(m, false)
+                            zeroAssembly(m)
+                            for _,p in ipairs(allParts(m)) do
+                                p.CanCollide = false
+                                p.AssemblyLinearVelocity = Vector3.new(0, AIR_RETRY_PUSH_DOWN_VY, 0)
+                                pcall(function() p:SetNetworkOwner(nil) end)
+                                pcall(function()
+                                    if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end
+                                end)
+                            end
+                            rec.droppingAt = now
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     local function processPendingRetries()
-        if not (running and orbPosVec and (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap")) then
+        if not (running and orbPosVec and isAirMode()) then
             pendingRetry = {}
             return
         end
@@ -1395,20 +1446,20 @@ return function(C, R, UI)
         releaseRateHz = RELEASE_RATE_HZ_DEFAULT
         maxReleasePerTick = MAX_RELEASE_PER_TICK_DEFAULT
 
-        if mode == "fuel" or mode == "scrap" or mode == "all" then
+        if mode == "fuel" or mode == "scrap" or mode == "scrap_logs" or mode == "all" then
             local pos, color, touch
             if mode == "fuel" then
                 pos   = campfireOrbPos()
                 color = Color3.fromRGB(255,200,50)
                 touch = true
-                releaseRateHz = AIR_RELEASE_RATE_HZ
-                maxReleasePerTick = AIR_MAX_RELEASE_PER_TICK
             elseif mode == "scrap" then
                 pos   = scrapperOrbPos()
                 color = Color3.fromRGB(120,255,160)
                 touch = true
-                releaseRateHz = AIR_RELEASE_RATE_HZ
-                maxReleasePerTick = AIR_MAX_RELEASE_PER_TICK
+            elseif mode == "scrap_logs" then
+                pos   = scrapperOrbPos()
+                color = Color3.fromRGB(120,255,160)
+                touch = true
             elseif mode == "all" then
                 pos   = noticeOrbPos()
                 color = Color3.fromRGB(100,200,255)
@@ -1469,6 +1520,8 @@ return function(C, R, UI)
                 updateInflight(step)
             end
 
+            checkAirDeliveries()
+
             releaseAcc = releaseAcc + dt
             local interval = 1 / math.max(1, releaseRateHz)
             local toRelease = math.min(maxReleasePerTick, math.floor(releaseAcc / interval))
@@ -1505,6 +1558,18 @@ return function(C, R, UI)
             if state then
                 startMode("scrap")
             elseif CURRENT_MODE == "scrap" then
+                startMode(nil)
+            end
+        end
+    })
+
+    tab:Toggle({
+        Title = "Send Logs to Scrapper",
+        Value = false,
+        Callback = function(state)
+            if state then
+                startMode("scrap_logs")
+            elseif CURRENT_MODE == "scrap_logs" then
                 startMode(nil)
             end
         end
@@ -1589,16 +1654,17 @@ return function(C, R, UI)
 
     Players.LocalPlayer.CharacterAdded:Connect(function()
         if running and CURRENT_MODE then
-            if CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap" or CURRENT_MODE == "all" then
+            if CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs" or CURRENT_MODE == "all" then
                 local pos
                 if CURRENT_MODE == "fuel" then pos = campfireOrbPos()
                 elseif CURRENT_MODE == "scrap" then pos = scrapperOrbPos()
+                elseif CURRENT_MODE == "scrap_logs" then pos = scrapperOrbPos()
                 elseif CURRENT_MODE == "all" then pos = noticeOrbPos() end
                 if pos then
                     local color = (CURRENT_MODE == "fuel" and Color3.fromRGB(255,200,50))
-                        or (CURRENT_MODE == "scrap" and Color3.fromRGB(120,255,160))
+                        or ((CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs") and Color3.fromRGB(120,255,160))
                         or Color3.fromRGB(100,200,255)
-                    local touch = (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap")
+                    local touch = (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs")
                     spawnOrbAt(pos, color, touch)
                 end
             elseif CURRENT_MODE == "orbs" then
