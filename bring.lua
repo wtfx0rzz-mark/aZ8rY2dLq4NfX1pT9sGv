@@ -61,10 +61,11 @@ return function(C, R, UI)
         "Sword","Ice Axe","Scythe","Thorn Body","Corrupted Thorn Body","Impact Grenade","Dynamite","Corrupted Shotgun","Corrupted Revolver","Corrupted Thrown Axe"
     }
     local ammoMisc = {
-        "Giant Sack","Infernal Sack","Good Sack","Mossy Coin","Cultist","Alien","Alien Elite","Sapling",
-        "Basketball","Blueprint","Diamond","Gem of the Forest Fragment","Flashlight","Old Taming flute","Old Rod","Cultist Gem",
-        "Tusk","Revolver Ammo","Rifle Ammo","Shotgun Ammo","Explosive Revolver Ammo","Explosive Rifle Ammo","Sacrifice Totem","Anvil Back","Anvil Front","Anvil Base"
-    }
+    "Giant Sack","Infernal Sack","Good Sack","Mossy Coin","Cultist","Alien","Alien Elite","Sapling",
+    "Basketball","Blueprint","Diamond","Gem of the Forest Fragment","Flashlight","Old Taming flute","Old Rod","Cultist Gem",
+    "Tusk","Revolver Ammo","Rifle Ammo","Shotgun Ammo","Explosive Revolver Ammo","Explosive Rifle Ammo","Sacrifice Totem","Anvil Back","Anvil Front","Anvil Base",
+    "Red Rose","Blue Orchid","Bouquet","White Lily","Yellow Peony","Purple Carnation","Pink Tulip"
+}
     local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"}
 
     local fuelSet, junkSet, cookSet, scrapAlso, foodSet = {}, {}, {}, {}, {}
