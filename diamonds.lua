@@ -597,6 +597,13 @@ return function(C, R, UI)
         Default = C.State.DiamondsCycle and true or false,
         Callback = function(on)
             C.State.DiamondsCycle = on and true or false
+
+            if C.State.DiamondsCycle then
+                -- Force AFK toggle OFF (mutual exclusion). Cycle still runs its own afkComboAction in the loop.
+                C.State.DiamondsJumpInput = false
+                diamondsJumpStop()
+            end
+
             if C.State.DiamondsCycle then
                 local seconds = cycleIntervalWithJitter()
                 C.State._DiamondsCycleNextAt = now() + seconds
@@ -757,6 +764,13 @@ return function(C, R, UI)
         Title = "AFK",
         Default = C.State.DiamondsJumpInput and true or false,
         Callback = function(on)
+            -- Prevent turning AFK on while Cycle is enabled
+            if on and (C.State and C.State.DiamondsCycle) then
+                C.State.DiamondsJumpInput = false
+                diamondsJumpStop()
+                return
+            end
+
             C.State.DiamondsJumpInput = on and true or false
             if C.State.DiamondsJumpInput then
                 diamondsJumpStart()
@@ -778,6 +792,12 @@ return function(C, R, UI)
             end
         end
     })
+
+    -- Enforce mutual exclusion at load time too
+    if C.State and C.State.DiamondsCycle and C.State.DiamondsJumpInput then
+        C.State.DiamondsJumpInput = false
+        diamondsJumpStop()
+    end
 
     if C.State.DiamondsJumpInput then
         diamondsJumpStart()
