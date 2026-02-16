@@ -793,113 +793,21 @@ return function(C, R, UI)
         for k,_ in pairs(CapturedSet) do CapturedSet[k] = nil end
     end
 
-    local function captureInst(inst)
-        if not (inst and inst.Parent) then return false end
-
-        local itemsRoot = itemsFolder()
-        if not (itemsRoot and isUnderItems(inst, itemsRoot)) then return false end
-
-        if CapturedSet[inst] then return false end
-        if isChestInst(inst) then return false end
-
-        local n = inst.Name
-
-        if isRevolverVariantName(n) then
-            return true
-        end
-
-        if isFlashlightVariantName(n) then
-            if n == "Strong Flashlight" and (not hasSpecialInInventory(n)) then
-                pcall(function() takeItemToInventory(inst) end)
-            end
-            return true
-        end
-
-        if n == "Thorn Body" then
-            if tryEquipThornBody(inst) then
-                return true
-            end
-        end
-
-        if ALWAYS_TAKE_NAMES[n] then
-            if takeItemToInventory(inst) then
-                return true
-            end
-        end
-
-        local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
-        if wantsTake and (not hasSpecialInInventory(n)) then
-            if takeItemToInventory(inst) then
-                return true
-            end
-        end
-
-        refreshDragRemotes()
-        if not dragStart(inst) then return false end
-        task.wait(0.06)
-        setNoCollideAny(inst, true)
-        setAnchoredAny(inst, true)
-        addCaptured(inst)
-        return true
-    end
-
-    local function getCandidatesNear(pos, rad)
-        local items = itemsFolder()
-        if not (items and pos and rad) then return {} end
-        refreshOverlapFilter()
-        local ok, parts = pcall(function()
-            return WS:GetPartBoundsInRadius(pos, rad, overlapParams)
-        end)
-        local out = {}
-        local seen = {}
-        local function push(inst)
-            if not (inst and inst.Parent) then return end
-            if not isUnderItems(inst, items) then return end
-            if isChestInst(inst) then return end
-            if isSnowChestName(inst.Name) or isHalloweenChestName(inst.Name) then return end
-            if seen[inst] then return end
-            seen[inst] = true
-            out[#out+1] = inst
-        end
-        if ok and type(parts) == "table" then
-            for _,p in ipairs(parts) do
-                if p and p.Parent and p:IsDescendantOf(items) then
-                    local m = topModelUnderItems(p, items) or p
-                    if m and m.Parent and (m:IsA("Model") or m:IsA("BasePart")) then
-                        push(m)
-                    end
-                end
-            end
-        end
-        if #out == 0 then
-            for _,ch in ipairs(items:GetChildren()) do
-                if (ch:IsA("Model") or ch:IsA("BasePart")) and ch.Parent then
-                    local mp = mainPart(ch)
-                    if mp then
-                        if (mp.Position - pos).Magnitude <= rad then
-                            push(ch)
-                        end
-                    end
-                end
-            end
-        end
-        return out
-    end
-
-    local function snapshotNearChest(chestPos, rad)
-        local set = {}
-        local list = getCandidatesNear(chestPos, rad)
-        for i=1,#list do
-            set[itemKey(list[i])] = true
-        end
-        return set
-    end
-
     local function chestOpened(chestModel)
         if not chestModel then return false end
         local ok, v = pcall(function() return chestModel:GetAttribute(UID_OPEN_KEY) end)
         return ok and v == true
     end
+
+    local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN
+
+    local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS
+    local CHEST_COLLECT_WINDOW_SECONDS = CHEST_COLLECT_WINDOW_SECONDS
+    local CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT = CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT
+    local CHEST_RETRY_WAIT_SECONDS = CHEST_RETRY_WAIT_SECONDS
+
+    local firePromptLastAt = setmetatable({}, { __mode = "k" })
+    local FIRE_PROMPT_COOLDOWN = 0.25
 
     local function findChestPromptPreferred(chestModel)
         if not (chestModel and chestModel.Parent) then return nil end
@@ -937,9 +845,6 @@ return function(C, R, UI)
         local mp = mainPart(parent)
         return mp and mp.Position or nil
     end
-
-    local firePromptLastAt = setmetatable({}, { __mode = "k" })
-    local FIRE_PROMPT_COOLDOWN = 0.25
 
     local function triggerPrompt(prompt)
         if not (prompt and prompt.Parent and prompt.Enabled) then return false end
@@ -1210,6 +1115,108 @@ return function(C, R, UI)
         local t = attemptedAt[chest]
         if not t then return false end
         return (os.clock() - t) <= windowSec
+    end
+
+    local function captureInst(inst)
+        if not (inst and inst.Parent) then return false end
+
+        local itemsRoot = itemsFolder()
+        if not (itemsRoot and isUnderItems(inst, itemsRoot)) then return false end
+
+        if CapturedSet[inst] then return false end
+        if isChestInst(inst) then return false end
+
+        local n = inst.Name
+
+        if isRevolverVariantName(n) then
+            return true
+        end
+
+        if isFlashlightVariantName(n) then
+            if n == "Strong Flashlight" and (not hasSpecialInInventory(n)) then
+                pcall(function() takeItemToInventory(inst) end)
+            end
+            return true
+        end
+
+        if n == "Thorn Body" then
+            if tryEquipThornBody(inst) then
+                return true
+            end
+        end
+
+        if ALWAYS_TAKE_NAMES[n] then
+            if takeItemToInventory(inst) then
+                return true
+            end
+        end
+
+        local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
+        if wantsTake and (not hasSpecialInInventory(n)) then
+            if takeItemToInventory(inst) then
+                return true
+            end
+        end
+
+        refreshDragRemotes()
+        if not dragStart(inst) then return false end
+        task.wait(0.06)
+        setNoCollideAny(inst, true)
+        setAnchoredAny(inst, true)
+        addCaptured(inst)
+        return true
+    end
+
+    local function getCandidatesNear(pos, rad)
+        local items = itemsFolder()
+        if not (items and pos and rad) then return {} end
+        refreshOverlapFilter()
+        local ok, parts = pcall(function()
+            return WS:GetPartBoundsInRadius(pos, rad, overlapParams)
+        end)
+        local out = {}
+        local seen = {}
+        local function push(inst)
+            if not (inst and inst.Parent) then return end
+            if not isUnderItems(inst, items) then return end
+            if isChestInst(inst) then return end
+            if isSnowChestName(inst.Name) or isHalloweenChestName(inst.Name) then return end
+            if seen[inst] then return end
+            seen[inst] = true
+            out[#out+1] = inst
+        end
+        if ok and type(parts) == "table" then
+            for _,p in ipairs(parts) do
+                if p and p.Parent and p:IsDescendantOf(items) then
+                    local m = topModelUnderItems(p, items) or p
+                    if m and m.Parent and (m:IsA("Model") or m:IsA("BasePart")) then
+                        push(m)
+                    end
+                end
+            end
+        end
+        if #out == 0 then
+            for _,ch in ipairs(items:GetChildren()) do
+                if (ch:IsA("Model") or ch:IsA("BasePart")) and ch.Parent then
+                    local mp = mainPart(ch)
+                    if mp then
+                        if (mp.Position - pos).Magnitude <= rad then
+                            push(ch)
+                        end
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    local function snapshotNearChest(chestPos, rad)
+        local set = {}
+        local list = getCandidatesNear(chestPos, rad)
+        for i=1,#list do
+            set[itemKey(list[i])] = true
+        end
+        return set
     end
 
     local function lootRaycastCandidates(chest)
@@ -1726,11 +1733,96 @@ return function(C, R, UI)
         end
     end
 
+    local skipGui = nil
+    local skipBtn = nil
+    local function ensureSkipGui()
+        if skipGui and skipGui.Parent then return end
+        local pg = lp:FindFirstChild("PlayerGui")
+        if not pg then return end
+
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "__SkipChestGui"
+        sg.ResetOnSpawn = false
+        sg.IgnoreGuiInset = true
+        sg.Parent = pg
+
+        local btn = Instance.new("TextButton")
+        btn.Name = "SkipChestButton"
+        btn.Parent = sg
+        btn.Size = UDim2.new(0, 160, 0, 44)
+        btn.Position = UDim2.new(1, -180, 1, -110)
+        btn.AnchorPoint = Vector2.new(0, 0)
+        btn.Text = "Skip Chest"
+        btn.TextScaled = true
+        btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+        btn.BorderSizePixel = 1
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.AutoButtonColor = true
+        btn.Visible = false
+
+        skipGui = sg
+        skipBtn = btn
+    end
+
+    local function setSkipGuiVisible(on)
+        ensureSkipGui()
+        if skipBtn and skipBtn.Parent then
+            skipBtn.Visible = on and true or false
+        end
+    end
+
+    local SKIP_CHEST_RADIUS = 20.0
+    local function skipClosestChestWithinRadius()
+        if not (alive and runOn and trackOn) then return false end
+        local root = hrp()
+        if not root then return false end
+
+        local items = itemsFolder()
+        if not (items and items.Parent) then return false end
+
+        local best, bestD = nil, SKIP_CHEST_RADIUS
+        local rpos = root.Position
+
+        for _,m in ipairs(items:GetChildren()) do
+            if m and m.Parent and m:IsA("Model") and isChestName(m.Name) then
+                if not (EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name)) then
+                    if not chestOpened(m) then
+                        local p = modelWorldPos(m)
+                        if p then
+                            local d = (p - rpos).Magnitude
+                            if d <= bestD then
+                                bestD = d
+                                best = m
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if not (best and best.Parent) then return false end
+
+        pcall(function() best:SetAttribute(UID_OPEN_KEY, true) end)
+        attemptedAt[best] = os.clock()
+        removeTrackedChest(best)
+        return true
+    end
+
+    local function wireSkipButton()
+        ensureSkipGui()
+        if not (skipBtn and skipBtn.Parent) then return end
+        skipBtn.MouseButton1Click:Connect(function()
+            pcall(skipClosestChestWithinRadius)
+        end)
+    end
+    wireSkipButton()
+
     local function startRun()
         if runOn then return end
         if not trackOn then return end
         runOn = true
         C.State.Toggles.ChestRun = true
+        setSkipGuiVisible(true)
         if runner then return end
 
         runner = task.spawn(function()
@@ -1777,6 +1869,7 @@ return function(C, R, UI)
     local function stopRun()
         runOn = false
         C.State.Toggles.ChestRun = false
+        setSkipGuiVisible(false)
     end
 
     local grabOn = false
@@ -2045,6 +2138,11 @@ return function(C, R, UI)
         else
             ensureHoverOff()
         end
+        if runOn then
+            setSkipGuiVisible(true)
+        else
+            setSkipGuiVisible(false)
+        end
     end))
 
     local api = {}
@@ -2061,6 +2159,9 @@ return function(C, R, UI)
         end
         conns = {}
         ensureHoverOff()
+        if skipGui and skipGui.Parent then pcall(function() skipGui:Destroy() end) end
+        skipGui = nil
+        skipBtn = nil
     end
     _G.__AutoChestExtra = api
 
@@ -2068,7 +2169,11 @@ return function(C, R, UI)
         startTracking()
         if C.State.Toggles.ChestRun then
             startRun()
+        else
+            setSkipGuiVisible(false)
         end
+    else
+        setSkipGuiVisible(false)
     end
 
     if C.State.Toggles.GrabNearby then
