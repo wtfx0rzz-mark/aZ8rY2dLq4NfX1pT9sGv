@@ -315,6 +315,8 @@ return function(C, R, UI)
     local CHEST_MAX_COLLECT_WINDOW_SECONDS = 3.0
     local CHEST_CAPTURE_MAX_PER_POLL = 180
 
+    local AUTO_STOP_IF_EMPTY_SECONDS = 8.0
+
     C.State.ChestWaitAfterTeleportBeforeOpen = CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN
     C.State.ChestOpenConfirmTimeoutSeconds = CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS
     C.State.ChestCollectWindowSeconds = CHEST_COLLECT_WINDOW_SECONDS
@@ -800,7 +802,6 @@ return function(C, R, UI)
     end
 
     local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN
-
     local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS
     local CHEST_COLLECT_WINDOW_SECONDS = CHEST_COLLECT_WINDOW_SECONDS
     local CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT = CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT
@@ -1610,6 +1611,9 @@ return function(C, R, UI)
     local trackLoop = nil
     local runner = nil
 
+    local currentRunChest = nil
+    local emptySince = 0
+
     local function clearTracked()
         table.clear(Tracked)
         for k,_ in pairs(TrackedSet) do TrackedSet[k] = nil end
@@ -1772,8 +1776,25 @@ return function(C, R, UI)
     end
 
     local SKIP_CHEST_RADIUS = 20.0
-    local function skipClosestChestWithinRadius()
+    local function skipActiveOrClosestChest()
         if not (alive and runOn and trackOn) then return false end
+
+        local active = currentRunChest
+        if active and active.Parent then
+            pcall(function() active:SetAttribute(UID_OPEN_KEY, true) end)
+            attemptedAt[active] = os.clock()
+            removeTrackedChest(active)
+            currentRunChest = nil
+            if #Tracked == 0 then
+                if AUTO_STOP_IF_EMPTY_SECONDS and AUTO_STOP_IF_EMPTY_SECONDS > 0 then
+                    runOn = false
+                    C.State.Toggles.ChestRun = false
+                    setSkipGuiVisible(false)
+                end
+            end
+            return true
+        end
+
         local root = hrp()
         if not root then return false end
 
@@ -1805,6 +1826,7 @@ return function(C, R, UI)
         pcall(function() best:SetAttribute(UID_OPEN_KEY, true) end)
         attemptedAt[best] = os.clock()
         removeTrackedChest(best)
+        currentRunChest = nil
         return true
     end
 
@@ -1812,7 +1834,7 @@ return function(C, R, UI)
         ensureSkipGui()
         if not (skipBtn and skipBtn.Parent) then return end
         skipBtn.MouseButton1Click:Connect(function()
-            pcall(skipClosestChestWithinRadius)
+            pcall(skipActiveOrClosestChest)
         end)
     end
     wireSkipButton()
@@ -1823,6 +1845,8 @@ return function(C, R, UI)
         runOn = true
         C.State.Toggles.ChestRun = true
         setSkipGuiVisible(true)
+        currentRunChest = nil
+        emptySince = 0
         if runner then return end
 
         runner = task.spawn(function()
@@ -1831,9 +1855,20 @@ return function(C, R, UI)
                 if not root then task.wait(0.25) continue end
 
                 if #Tracked == 0 then
+                    if AUTO_STOP_IF_EMPTY_SECONDS and AUTO_STOP_IF_EMPTY_SECONDS > 0 then
+                        if emptySince == 0 then emptySince = os.clock() end
+                        if (os.clock() - emptySince) >= AUTO_STOP_IF_EMPTY_SECONDS then
+                            runOn = false
+                            C.State.Toggles.ChestRun = false
+                            setSkipGuiVisible(false)
+                            break
+                        end
+                    end
                     task.wait(0.30)
                     continue
                 end
+
+                emptySince = 0
 
                 local chest = nextChestFromTracked()
                 if not chest then
@@ -1841,6 +1876,7 @@ return function(C, R, UI)
                     continue
                 end
 
+                currentRunChest = chest
                 attemptedAt[chest] = os.clock()
 
                 local okTp = teleportNearChest(chest)
@@ -1855,6 +1891,7 @@ return function(C, R, UI)
                 local okOpen = openChestOnce(chest)
                 if okOpen then
                     removeTrackedChest(chest)
+                    currentRunChest = nil
                     local postDelay = tonumber(C.State.ChestDelayAfterCollectionBeforeNext) or CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT
                     if postDelay > 0 then task.wait(postDelay) end
                 else
@@ -1863,6 +1900,7 @@ return function(C, R, UI)
                 end
             end
             runner = nil
+            currentRunChest = nil
         end)
     end
 
@@ -1870,6 +1908,8 @@ return function(C, R, UI)
         runOn = false
         C.State.Toggles.ChestRun = false
         setSkipGuiVisible(false)
+        currentRunChest = nil
+        emptySince = 0
     end
 
     local grabOn = false
@@ -2162,6 +2202,8 @@ return function(C, R, UI)
         if skipGui and skipGui.Parent then pcall(function() skipGui:Destroy() end) end
         skipGui = nil
         skipBtn = nil
+        currentRunChest = nil
+        emptySince = 0
     end
     _G.__AutoChestExtra = api
 
