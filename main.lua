@@ -26,15 +26,16 @@ C.Services = C.Services or {
 C.LocalPlayer = C.Services.Players.LocalPlayer
 
 C.Config = C.Config or {
-    CHOP_SWING_DELAY = 0.55,                 -- Delay between tree hits
-    TREE_NAME        = "Small Tree",         -- Model name to detect
-    UID_SUFFIX       = "0000000000",         -- Unique ID suffix for hit tracking
-    ChopPrefer       = { "Chainsaw", "Strong Axe", "Good Axe", "Old Axe" }, -- Tool priority
+    CHOP_SWING_DELAY = 0.55,
+    TREE_NAME        = "Small Tree",
+    UID_SUFFIX       = "0000000000",
+    ChopPrefer       = { "Chainsaw", "Strong Axe", "Good Axe", "Old Axe" },
 }
 
 C.State = C.State or { AuraRadius = 150, Toggles = {} }
+C.State._MainBiomeRendered = C.State._MainBiomeRendered or false
+C.State._MainEventRendered = C.State._MainEventRendered or false
 
--- expose to global env for other modules
 _G.C  = C
 _G.R  = _G.R or {}
 _G.UI = UI
@@ -79,7 +80,7 @@ local function findEventName()
     return nil
 end
 
-local function setMainText(biomeTxt, eventTxt)
+local function setMainText(biomeTxt, eventTxt, renderBiome, renderEvent)
     local Tabs = (UI and UI.Tabs) or {}
     local tab = Tabs.Main
     if not tab then return end
@@ -88,8 +89,10 @@ local function setMainText(biomeTxt, eventTxt)
 
     ok = pcall(function()
         if type(tab.Paragraph) == "function" then
-            tab:Paragraph({ Title = "Biome", Desc = tostring(biomeTxt) })
-            if eventTxt and eventTxt ~= "" then
+            if renderBiome then
+                tab:Paragraph({ Title = "Biome", Desc = tostring(biomeTxt) })
+            end
+            if renderEvent and eventTxt and eventTxt ~= "" then
                 tab:Paragraph({ Title = "Event", Desc = tostring(eventTxt) })
             end
             return
@@ -100,8 +103,10 @@ local function setMainText(biomeTxt, eventTxt)
 
     ok = pcall(function()
         if type(tab.Label) == "function" then
-            tab:Label("Biome: " .. tostring(biomeTxt))
-            if eventTxt and eventTxt ~= "" then
+            if renderBiome then
+                tab:Label("Biome: " .. tostring(biomeTxt))
+            end
+            if renderEvent and eventTxt and eventTxt ~= "" then
                 tab:Label("Event: " .. tostring(eventTxt))
             end
             return
@@ -112,8 +117,10 @@ local function setMainText(biomeTxt, eventTxt)
 
     ok = pcall(function()
         if type(tab.Text) == "function" then
-            tab:Text("Biome: " .. tostring(biomeTxt))
-            if eventTxt and eventTxt ~= "" then
+            if renderBiome then
+                tab:Text("Biome: " .. tostring(biomeTxt))
+            end
+            if renderEvent and eventTxt and eventTxt ~= "" then
                 tab:Text("Event: " .. tostring(eventTxt))
             end
             return
@@ -129,13 +136,17 @@ local function setMainText(biomeTxt, eventTxt)
     end)
     pcall(function()
         if type(tab.Paragraph) == "function" then
-            tab:Paragraph({ Title = "Biome", Desc = tostring(biomeTxt) })
-            if eventTxt and eventTxt ~= "" then
+            if renderBiome then
+                tab:Paragraph({ Title = "Biome", Desc = tostring(biomeTxt) })
+            end
+            if renderEvent and eventTxt and eventTxt ~= "" then
                 tab:Paragraph({ Title = "Event", Desc = tostring(eventTxt) })
             end
         elseif type(tab.Label) == "function" then
-            tab:Label("Biome: " .. tostring(biomeTxt))
-            if eventTxt and eventTxt ~= "" then
+            if renderBiome then
+                tab:Label("Biome: " .. tostring(biomeTxt))
+            end
+            if renderEvent and eventTxt and eventTxt ~= "" then
                 tab:Label("Event: " .. tostring(eventTxt))
             end
         end
@@ -145,27 +156,67 @@ end
 local currentBiome
 local currentEvent
 
-local function refreshUI()
-    setMainText(currentBiome or "Unknown", currentEvent or "")
+local function refreshUI(reason)
+    local renderBiome = false
+    local renderEvent = false
+
+    if reason == "biome" then
+        if not C.State._MainBiomeRendered then
+            renderBiome = true
+            C.State._MainBiomeRendered = true
+        end
+        if currentEvent and currentEvent ~= "" and not C.State._MainEventRendered then
+            renderEvent = true
+            C.State._MainEventRendered = true
+        end
+    elseif reason == "event" then
+        if currentEvent and currentEvent ~= "" and not C.State._MainEventRendered then
+            renderEvent = true
+            C.State._MainEventRendered = true
+        end
+    else
+        if (not C.State._MainBiomeRendered) and currentBiome then
+            renderBiome = true
+            C.State._MainBiomeRendered = true
+        end
+        if (not C.State._MainEventRendered) and currentEvent and currentEvent ~= "" then
+            renderEvent = true
+            C.State._MainEventRendered = true
+        end
+    end
+
+    if renderBiome or renderEvent then
+        setMainText(currentBiome or "Unknown", currentEvent or "", renderBiome, renderEvent)
+    end
 end
 
--- Biome updates (polling)
+-- Biome: resolve once, then stop
 task.spawn(function()
-    local last
+    local tries = 0
+    local maxTries = 60
     while true do
-        local now = findBiomeName()
-        if now ~= last then
-            last = now
-            currentBiome = now
-            refreshUI()
+        local b = findBiomeName()
+        tries += 1
+
+        if b == "Volcanic" or b == "Snow" then
+            currentBiome = b
+            refreshUI("biome")
+            break
         end
-        task.wait(1.0)
+
+        if tries >= maxTries then
+            currentBiome = b
+            refreshUI("biome")
+            break
+        end
+
+        task.wait(0.5)
     end
 end)
 
 -- Event checks: now, +10m, +20m total (only retries while none found)
 task.spawn(function()
-    local waits = { 0, 600, 600 } -- now, +10m, +20m total
+    local waits = { 0, 600, 600 }
     for i = 1, #waits do
         if currentEvent then break end
         local d = waits[i]
@@ -175,7 +226,7 @@ task.spawn(function()
             local ev = findEventName()
             if ev then
                 currentEvent = ev
-                refreshUI()
+                refreshUI("event")
                 break
             end
         end
@@ -197,19 +248,16 @@ local function forceUnpaused()
     end)
 end
 
--- Clear it once on start
 forceUnpaused()
 
--- React whenever Roblox / the game toggles it
 pcall(function()
     lp:GetPropertyChangedSignal("GameplayPaused"):Connect(forceUnpaused)
 end)
 
--- Extra safety: periodic watchdog
 task.spawn(function()
     while true do
         forceUnpaused()
-        task.wait(0.25) -- same cadence as your original
+        task.wait(0.25)
     end
 end)
 
