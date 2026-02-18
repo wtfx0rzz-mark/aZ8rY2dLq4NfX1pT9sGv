@@ -1761,10 +1761,17 @@ return function(C, R, UI)
         end
     })
 
-    task.spawn(function()
+    __COMBAT._watchdogRunning = false
+    __COMBAT._watchdogConn = nil
+    __COMBAT._watchdogThread = nil
+
+    __COMBAT._watchdogRunning = true
+    __COMBAT._watchdogThread = task.spawn(function()
         local inv = lp:WaitForChild("Inventory", 10)
         if not inv then return end
+
         local function check()
+            if not (__COMBAT._watchdogRunning and _G[__COMBAT_KEY] == __COMBAT) then return end
             if C.State.Toggles.BigTreeAura and not BigTreeAura.HasTool() then
                 C.State.Toggles.BigTreeAura = false
                 BigTreeAura.Stop()
@@ -1772,14 +1779,26 @@ return function(C, R, UI)
                 pcall(function() if bigToggle and bigToggle.SetValue then bigToggle:SetValue(false) end end)
             end
         end
-        inv.ChildRemoved:Connect(check)
-        while true do
+
+        if __COMBAT._watchdogConn then pcall(function() __COMBAT._watchdogConn:Disconnect() end) end
+        __COMBAT._watchdogConn = inv.ChildRemoved:Connect(check)
+
+        while __COMBAT._watchdogRunning and _G[__COMBAT_KEY] == __COMBAT do
             task.wait(2.0)
             check()
         end
+
+        if __COMBAT._watchdogConn then pcall(function() __COMBAT._watchdogConn:Disconnect() end) end
+        __COMBAT._watchdogConn = nil
     end)
 
     __COMBAT.Destroy = function()
+        pcall(function() __COMBAT._watchdogRunning = false end)
+        pcall(function()
+            if __COMBAT._watchdogConn then __COMBAT._watchdogConn:Disconnect() end
+        end)
+        __COMBAT._watchdogConn = nil
+
         pcall(function() C.State.Toggles.CharacterAura = false end)
         pcall(function() C.State.Toggles.SmallTreeAura = false end)
         pcall(function() C.State.Toggles.BigTreeAura = false end)
