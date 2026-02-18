@@ -164,6 +164,29 @@ return function(C, R, UI)
       sg.ResetOnSpawn = false
       sg.Parent = playerGui
 
+      local conns = {}
+
+      local function trackConn(c)
+        if c then conns[#conns + 1] = c end
+        return c
+      end
+
+      local function cleanup()
+        for i = #conns, 1, -1 do
+          local c = conns[i]
+          conns[i] = nil
+          pcall(function()
+            if c and c.Disconnect then c:Disconnect() end
+          end)
+        end
+      end
+
+      trackConn(sg.AncestryChanged:Connect(function(_, parent)
+        if parent == nil then
+          cleanup()
+        end
+      end))
+
       local frame = Instance.new("Frame")
       frame.Size = UDim2.new(0, 460, 0, 320)
       frame.Position = UDim2.new(0.5, -230, 0.5, -160)
@@ -199,9 +222,9 @@ return function(C, R, UI)
       close.Font = Enum.Font.SourceSansBold
       close.TextSize = 16
       close.Parent = titleBar
-      close.MouseButton1Click:Connect(function()
+      trackConn(close.MouseButton1Click:Connect(function()
         sg:Destroy()
-      end)
+      end))
 
       local scroll = Instance.new("ScrollingFrame")
       scroll.Size = UDim2.new(1, -16, 1, -46)
@@ -238,7 +261,8 @@ return function(C, R, UI)
           return inputPos.X >= fx and inputPos.X <= fx + fw and inputPos.Y >= fy and inputPos.Y <= fy + fh
         end
 
-        UIS.InputBegan:Connect(function(input)
+        trackConn(UIS.InputBegan:Connect(function(input)
+          if not sg.Parent then return end
           if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             if inTitle(input.Position) then
               dragging = true
@@ -246,21 +270,23 @@ return function(C, R, UI)
               startFrame = frame.Position
             end
           end
-        end)
+        end))
 
-        UIS.InputEnded:Connect(function(input)
+        trackConn(UIS.InputEnded:Connect(function(input)
+          if not sg.Parent then return end
           if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
           end
-        end)
+        end))
 
-        UIS.InputChanged:Connect(function(input)
+        trackConn(UIS.InputChanged:Connect(function(input)
+          if not sg.Parent then return end
           if not dragging then return end
           if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
           local dx = input.Position.X - startPos.X
           local dy = input.Position.Y - startPos.Y
           frame.Position = UDim2.new(startFrame.X.Scale, startFrame.X.Offset + dx, startFrame.Y.Scale, startFrame.Y.Offset + dy)
-        end)
+        end))
       end
     end
 
