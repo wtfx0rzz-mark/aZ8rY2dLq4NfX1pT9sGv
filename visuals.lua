@@ -3,22 +3,37 @@ return function(C, R, UI)
     UI = UI or _G.UI
     assert(C and UI and UI.Tabs and UI.Tabs.Visuals, "visuals.lua: Visuals tab missing")
 
-    local Players = C.Services.Players
-    local WS      = C.Services.WS
-    local lp      = C.LocalPlayer
+    local Services = C.Services or {}
+    local Players  = Services.Players or game:GetService("Players")
+    local WS       = Services.WS      or game:GetService("Workspace")
+    local RS       = Services.RS      or game:GetService("ReplicatedStorage")
+    local lp       = C.LocalPlayer    or Players.LocalPlayer
     local VisualsTab = UI.Tabs.Visuals
 
     local Lighting   = game:GetService("Lighting")
     local RunService = game:GetService("RunService")
 
+    --------------------------------------------------------------------
+    -- MODULE LIFECYCLE GUARD (PREVENT STACKING ON RELOAD)
+    --------------------------------------------------------------------
+    local __VISUALS_KEY = "__VisualsLua_VisualsModule_v1"
+    if _G[__VISUALS_KEY] and type(_G[__VISUALS_KEY].Destroy) == "function" then
+        pcall(function() _G[__VISUALS_KEY].Destroy() end)
+    end
+    local __VISUALS = { _alive = true }
+    _G[__VISUALS_KEY] = __VISUALS
+
+    local function alive()
+        return (__VISUALS._alive == true) and (_G[__VISUALS_KEY] == __VISUALS)
+    end
+
+    --------------------------------------------------------------------
+    -- STATE DEFAULTS
+    --------------------------------------------------------------------
     C.State = C.State or { AuraRadius = 150, Toggles = {} }
     C.State.Toggles = C.State.Toggles or {}
-    if C.State.Toggles.PlayerTracker == nil then
-        C.State.Toggles.PlayerTracker = true
-    end
-    if C.State.Toggles.RemoveFog == nil then
-        C.State.Toggles.RemoveFog = true
-    end
+    if C.State.Toggles.PlayerTracker == nil then C.State.Toggles.PlayerTracker = true end
+    if C.State.Toggles.RemoveFog     == nil then C.State.Toggles.RemoveFog     = true end
 
     local function auraRadius()
         return math.clamp(tonumber(C.State.AuraRadius) or 150, 0, 1_000_000)
@@ -55,11 +70,15 @@ return function(C, R, UI)
         if hl and hl:IsA("Highlight") then hl:Destroy() end
     end
 
+    --------------------------------------------------------------------
+    -- REMOVE FOG (CLEAN LIFECYCLE)
+    --------------------------------------------------------------------
     local fogRunning = false
     local fogConns = {}
     local fogOriginal
     local atmoOriginal = setmetatable({}, { __mode = "k" })
     local lastFogApply = 0
+    local fogLoopId = 0
 
     local function captureFogOriginal()
         if fogOriginal then return end
@@ -91,14 +110,19 @@ return function(C, R, UI)
     local function startRemoveFog()
         if fogRunning then return end
         fogRunning = true
+        fogLoopId += 1
+        local myId = fogLoopId
+
         captureFogOriginal()
         applyNoFog()
+
         fogConns[#fogConns+1] = Lighting.DescendantAdded:Connect(function(inst)
-            if not fogRunning then return end
+            if not (alive() and fogRunning and fogLoopId == myId) then return end
             touchAtmosphere(inst)
         end)
+
         fogConns[#fogConns+1] = RunService.Heartbeat:Connect(function()
-            if not fogRunning then return end
+            if not (alive() and fogRunning and fogLoopId == myId) then return end
             local t = os.clock()
             if (t - lastFogApply) < 0.25 then return end
             lastFogApply = t
@@ -107,14 +131,21 @@ return function(C, R, UI)
     end
 
     local function stopRemoveFog()
+        if not fogRunning and #fogConns == 0 then
+            -- Still restore if needed (e.g., unload happened mid-run)
+        end
         fogRunning = false
+        fogLoopId += 1
+
         for _, c in ipairs(fogConns) do pcall(function() c:Disconnect() end) end
         fogConns = {}
+
         if fogOriginal then
             Lighting.FogStart = fogOriginal.FogStart
             Lighting.FogEnd   = fogOriginal.FogEnd
             Lighting.FogColor = fogOriginal.FogColor
         end
+
         for inst, orig in pairs(atmoOriginal) do
             if inst and inst.Parent then
                 pcall(function()
@@ -126,6 +157,9 @@ return function(C, R, UI)
         end
     end
 
+    --------------------------------------------------------------------
+    -- PLAYER TRACKER (FIX: DISCONNECT ALL CONNECTIONS + RELOAD SAFE)
+    --------------------------------------------------------------------
     local runningPlayers = false
     local PLAYER_HL_NAME = "__PlayerTrackerHL__"
     local trackerConns = {}
@@ -165,7 +199,7 @@ return function(C, R, UI)
         if plr.Character then attachPlayer(plr, plr.Character) end
         if not trackerCharConns[plr] then
             trackerCharConns[plr] = plr.CharacterAdded:Connect(function(ch)
-                if not runningPlayers then return end
+                if not (alive() and runningPlayers) then return end
                 attachPlayer(plr, ch)
             end)
         end
@@ -178,19 +212,22 @@ return function(C, R, UI)
         local myId = trackerLoopId
 
         for _, p in ipairs(Players:GetPlayers()) do trackPlayer(p) end
+
         trackConn(trackerConns, Players.PlayerAdded:Connect(function(p)
-            if not runningPlayers then return end
+            if not (alive() and runningPlayers and trackerLoopId == myId) then return end
             trackPlayer(p)
         end))
+
         trackConn(trackerConns, Players.PlayerRemoving:Connect(function(p)
             cleanupPlayer(p)
         end))
 
         task.spawn(function()
-            while runningPlayers and trackerLoopId == myId do
+            while alive() and runningPlayers and trackerLoopId == myId do
                 local lch = lp.Character
                 local lhrp = lch and lch:FindFirstChild("HumanoidRootPart")
                 local R = auraRadius()
+
                 for _, plr2 in ipairs(Players:GetPlayers()) do
                     if plr2 ~= lp then
                         local ch = plr2.Character
@@ -198,6 +235,7 @@ return function(C, R, UI)
                             local h = ensureHighlight(ch, PLAYER_HL_NAME)
                             h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                             h.Enabled = true
+
                             if lhrp then
                                 local phrp = ch:FindFirstChild("HumanoidRootPart")
                                 local bp = bestPart(ch)
@@ -212,8 +250,11 @@ return function(C, R, UI)
                         end
                     end
                 end
+
                 task.wait(0.25)
             end
+
+            -- Cleanup highlights when loop exits
             for _, plr2 in ipairs(Players:GetPlayers()) do
                 if plr2 ~= lp and plr2.Character then
                     clearHighlight(plr2.Character, PLAYER_HL_NAME)
@@ -226,11 +267,14 @@ return function(C, R, UI)
         if not runningPlayers then return end
         runningPlayers = false
         trackerLoopId += 1
+
         untrackAll(trackerConns)
+
         for plr2, cc in pairs(trackerCharConns) do
             trackerCharConns[plr2] = nil
             pcall(function() cc:Disconnect() end)
         end
+
         for _, plr2 in ipairs(Players:GetPlayers()) do
             if plr2 ~= lp and plr2.Character then
                 clearHighlight(plr2.Character, PLAYER_HL_NAME)
@@ -238,6 +282,9 @@ return function(C, R, UI)
         end
     end
 
+    --------------------------------------------------------------------
+    -- LOCAL INVISIBILITY
+    --------------------------------------------------------------------
     local function setLocalInvisible(state)
         local ch = lp and lp.Character
         if not ch then return end
@@ -250,16 +297,21 @@ return function(C, R, UI)
         end
     end
 
+    --------------------------------------------------------------------
+    -- TREE HIGHLIGHT (RELOAD SAFE)
+    --------------------------------------------------------------------
     local runningTrees = false
     local TREE_HL_NAME = "__TreeAuraHL__"
+    local treeLoopId = 0
 
     local function collectTreesInRadius(origin, radius, maxCount)
         local out, n = {}, 0
         local roots = {
             WS,
-            (C.Services.RS and C.Services.RS:FindFirstChild("Assets")) or nil,
-            (C.Services.RS and C.Services.RS:FindFirstChild("CutsceneSets")) or nil,
+            (RS and RS:FindFirstChild("Assets")) or nil,
+            (RS and RS:FindFirstChild("CutsceneSets")) or nil,
         }
+
         local function walk(node)
             if not node or n >= maxCount then return end
             if node:IsA("Model") and TREE_NAMES[node.Name] then
@@ -276,18 +328,27 @@ return function(C, R, UI)
                 walk(ch)
             end
         end
-        for _, r in ipairs(roots) do if r then walk(r) end end
+
+        for _, r in ipairs(roots) do
+            if r then walk(r) end
+        end
         return out
     end
 
     local function startTreeHighlight()
         if runningTrees then return end
         runningTrees = true
+        treeLoopId += 1
+        local myId = treeLoopId
+
         task.spawn(function()
-            while runningTrees do
+            while alive() and runningTrees and treeLoopId == myId do
                 local ch = lp.Character or lp.CharacterAdded:Wait()
                 local hrp = ch:FindFirstChild("HumanoidRootPart")
-                if not hrp then task.wait(0.2) break end
+                if not hrp then
+                    task.wait(0.2)
+                    break
+                end
 
                 local r = auraRadius()
                 local trees = collectTreesInRadius(hrp.Position, r, 256)
@@ -318,10 +379,18 @@ return function(C, R, UI)
             end
         end)
     end
-    local function stopTreeHighlight() runningTrees = false end
 
+    local function stopTreeHighlight()
+        runningTrees = false
+        treeLoopId += 1
+    end
+
+    --------------------------------------------------------------------
+    -- CHARACTER HIGHLIGHT (RELOAD SAFE)
+    --------------------------------------------------------------------
     local runningChars = false
     local CHAR_HL_NAME = "__CharAuraHL__"
+    local charLoopId = 0
 
     local function collectCharactersInRadius(origin, radius, maxCount)
         local out, n = {}, 0
@@ -346,11 +415,17 @@ return function(C, R, UI)
     local function startCharHighlight()
         if runningChars then return end
         runningChars = true
+        charLoopId += 1
+        local myId = charLoopId
+
         task.spawn(function()
-            while runningChars do
+            while alive() and runningChars and charLoopId == myId do
                 local ch = lp.Character or lp.CharacterAdded:Wait()
                 local hrp = ch:FindFirstChild("HumanoidRootPart")
-                if not hrp then task.wait(0.2) break end
+                if not hrp then
+                    task.wait(0.2)
+                    break
+                end
 
                 local r = auraRadius()
                 local targets = collectCharactersInRadius(hrp.Position, r, 256)
@@ -383,12 +458,20 @@ return function(C, R, UI)
             end
         end)
     end
-    local function stopCharHighlight() runningChars = false end
 
+    local function stopCharHighlight()
+        runningChars = false
+        charLoopId += 1
+    end
+
+    --------------------------------------------------------------------
+    -- UI WIRING
+    --------------------------------------------------------------------
     VisualsTab:Toggle({
         Title = "Player Tracker",
         Value = C.State.Toggles.PlayerTracker or false,
         Callback = function(on)
+            if not alive() then return end
             C.State.Toggles.PlayerTracker = on
             if on then startPlayerTracker() else stopPlayerTracker() end
         end
@@ -398,6 +481,7 @@ return function(C, R, UI)
         Title = "Invisible",
         Value = C.State.Toggles.Invisible or false,
         Callback = function(on)
+            if not alive() then return end
             C.State.Toggles.Invisible = on
             setLocalInvisible(on)
         end
@@ -407,6 +491,7 @@ return function(C, R, UI)
         Title = "Remove Fog",
         Value = C.State.Toggles.RemoveFog or false,
         Callback = function(on)
+            if not alive() then return end
             C.State.Toggles.RemoveFog = on
             if on then startRemoveFog() else stopRemoveFog() end
         end
@@ -416,6 +501,7 @@ return function(C, R, UI)
         Title = "Highlight Trees In Aura",
         Value = C.State.Toggles.HighlightTrees or false,
         Callback = function(on)
+            if not alive() then return end
             C.State.Toggles.HighlightTrees = on
             if on then startTreeHighlight() else stopTreeHighlight() end
         end
@@ -425,11 +511,35 @@ return function(C, R, UI)
         Title = "Highlight Characters In Aura",
         Value = C.State.Toggles.HighlightChars or false,
         Callback = function(on)
+            if not alive() then return end
             C.State.Toggles.HighlightChars = on
             if on then startCharHighlight() else stopCharHighlight() end
         end
     })
 
+    --------------------------------------------------------------------
+    -- DESTROY (TEARDOWN FOR RELOADS)
+    --------------------------------------------------------------------
+    __VISUALS.Destroy = function()
+        __VISUALS._alive = false
+
+        pcall(function() stopPlayerTracker() end)
+        pcall(function() stopRemoveFog() end)
+        pcall(function() stopTreeHighlight() end)
+        pcall(function() stopCharHighlight() end)
+
+        pcall(function()
+            C.State.Toggles.Invisible = false
+            setLocalInvisible(false)
+        end)
+    end
+
+    --------------------------------------------------------------------
+    -- AUTO-START (FROM TOGGLES)
+    --------------------------------------------------------------------
     if C.State.Toggles.PlayerTracker then startPlayerTracker() end
     if C.State.Toggles.RemoveFog then startRemoveFog() end
+    if C.State.Toggles.HighlightTrees then startTreeHighlight() end
+    if C.State.Toggles.HighlightChars then startCharHighlight() end
+    if C.State.Toggles.Invisible then setLocalInvisible(true) end
 end
