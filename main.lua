@@ -1,5 +1,32 @@
 repeat task.wait() until game:IsLoaded()
 
+if _G.__MAIN and type(_G.__MAIN.Destroy) == "function" then
+    pcall(_G.__MAIN.Destroy)
+end
+
+local __MAIN = { Running = true, Conns = {} }
+_G.__MAIN = __MAIN
+
+local function trackConn(c)
+    if c then table.insert(__MAIN.Conns, c) end
+    return c
+end
+
+function __MAIN.Destroy()
+    __MAIN.Running = false
+    for i = #__MAIN.Conns, 1, -1 do
+        local c = __MAIN.Conns[i]
+        __MAIN.Conns[i] = nil
+        pcall(function()
+            if c and c.Disconnect then c:Disconnect() end
+        end)
+    end
+end
+
+local function enabledNow()
+    return __MAIN and __MAIN.Running == true
+end
+
 -------------------------------------------------------
 -- Load UI (WindUI wrapper)
 -------------------------------------------------------
@@ -48,7 +75,6 @@ local function findBiomeName()
     local map = WS:FindFirstChild("Map")
     local biomes = map and map:FindFirstChild("Biomes")
     if not biomes then return "Unknown (Biomes folder missing)" end
-
     if biomes:FindFirstChild("Volcanic") then
         return "Volcanic"
     end
@@ -63,7 +89,6 @@ local function findEventName()
     local map = WS:FindFirstChild("Map")
     local landmarks = map and map:FindFirstChild("Landmarks")
     if not landmarks then return nil end
-
     if landmarks:FindFirstChild("HalloweenMaze") then
         return "Halloween Event"
     end
@@ -76,7 +101,6 @@ local function findEventName()
     if landmarks:FindFirstChild("ToolWorkshopMeteorShower") then
         return "Meteor Event"
     end
-
     return nil
 end
 
@@ -84,9 +108,7 @@ local function setMainText(biomeTxt, eventTxt, renderBiome, renderEvent)
     local Tabs = (UI and UI.Tabs) or {}
     local tab = Tabs.Main
     if not tab then return end
-
     local ok
-
     ok = pcall(function()
         if type(tab.Paragraph) == "function" then
             if renderBiome then
@@ -100,7 +122,6 @@ local function setMainText(biomeTxt, eventTxt, renderBiome, renderEvent)
         error("no Paragraph")
     end)
     if ok then return end
-
     ok = pcall(function()
         if type(tab.Label) == "function" then
             if renderBiome then
@@ -114,7 +135,6 @@ local function setMainText(biomeTxt, eventTxt, renderBiome, renderEvent)
         error("no Label")
     end)
     if ok then return end
-
     ok = pcall(function()
         if type(tab.Text) == "function" then
             if renderBiome then
@@ -128,7 +148,6 @@ local function setMainText(biomeTxt, eventTxt, renderBiome, renderEvent)
         error("no Text")
     end)
     if ok then return end
-
     pcall(function()
         if type(tab.Section) == "function" then
             tab:Section({ Title = "World Status" })
@@ -159,7 +178,6 @@ local currentEvent
 local function refreshUI(reason)
     local renderBiome = false
     local renderEvent = false
-
     if reason == "biome" then
         if not C.State._MainBiomeRendered then
             renderBiome = true
@@ -184,44 +202,46 @@ local function refreshUI(reason)
             C.State._MainEventRendered = true
         end
     end
-
     if renderBiome or renderEvent then
         setMainText(currentBiome or "Unknown", currentEvent or "", renderBiome, renderEvent)
     end
 end
 
--- Biome: resolve once, then stop
 task.spawn(function()
     local tries = 0
     local maxTries = 60
-    while true do
+    while enabledNow() do
         local b = findBiomeName()
         tries += 1
-
         if b == "Volcanic" or b == "Snow" then
             currentBiome = b
             refreshUI("biome")
             break
         end
-
         if tries >= maxTries then
             currentBiome = b
             refreshUI("biome")
             break
         end
-
         task.wait(0.5)
     end
 end)
 
--- Event checks: now, +10m, +20m total (only retries while none found)
 task.spawn(function()
     local waits = { 0, 600, 600 }
     for i = 1, #waits do
+        if not enabledNow() then break end
         if currentEvent then break end
         local d = waits[i]
-        if d > 0 then task.wait(d) end
-
+        if d > 0 then
+            local t = 0
+            while enabledNow() and t < d do
+                local step = math.min(1, d - t)
+                task.wait(step)
+                t += step
+            end
+        end
+        if not enabledNow() then break end
         if not currentEvent then
             local ev = findEventName()
             if ev then
@@ -241,6 +261,7 @@ local Players = game:GetService("Players")
 local lp = Players.LocalPlayer
 
 local function forceUnpaused()
+    if not enabledNow() then return end
     pcall(function()
         if lp.GameplayPaused then
             lp.GameplayPaused = false
@@ -251,11 +272,14 @@ end
 forceUnpaused()
 
 pcall(function()
-    lp:GetPropertyChangedSignal("GameplayPaused"):Connect(forceUnpaused)
+    trackConn(lp:GetPropertyChangedSignal("GameplayPaused"):Connect(function()
+        if not enabledNow() then return end
+        forceUnpaused()
+    end))
 end)
 
 task.spawn(function()
-    while true do
+    while enabledNow() do
         forceUnpaused()
         task.wait(0.25)
     end
@@ -285,6 +309,7 @@ local paths = {
 }
 
 for name, url in pairs(paths) do
+    if not enabledNow() then break end
     local ok, mod = pcall(function()
         return loadstring(game:HttpGet(url))()
     end)
