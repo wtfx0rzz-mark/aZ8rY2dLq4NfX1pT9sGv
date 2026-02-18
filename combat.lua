@@ -564,7 +564,16 @@ return function(C, R, UI)
                         break
                     end
 
-                    local ch = lp.Character or lp.CharacterAdded:Wait()
+                    local ch = lp.Character
+                    if not ch then
+                        ch = lp.CharacterAdded:Wait()
+                        if not CharacterAura.running then break end
+                        if not __enabled("CharacterAura") then
+                            CharacterAura.running = false
+                            break
+                        end
+                    end
+
                     local hrp = ch:FindFirstChild("HumanoidRootPart")
                     if not hrp then
                         task.wait(0.2)
@@ -898,7 +907,16 @@ return function(C, R, UI)
                         break
                     end
 
-                    local ch = lp.Character or lp.CharacterAdded:Wait()
+                    local ch = lp.Character
+                    if not ch then
+                        ch = lp.CharacterAdded:Wait()
+                        if not SmallTreeAura.running then break end
+                        if not __enabled("SmallTreeAura") then
+                            SmallTreeAura.running = false
+                            break
+                        end
+                    end
+
                     local hrp = ch:FindFirstChild("HumanoidRootPart")
                     if not hrp then
                         task.wait(0.2)
@@ -1243,7 +1261,16 @@ return function(C, R, UI)
                         break
                     end
 
-                    local ch = lp.Character or lp.CharacterAdded:Wait()
+                    local ch = lp.Character
+                    if not ch then
+                        ch = lp.CharacterAdded:Wait()
+                        if not BigTreeAura.running then break end
+                        if not __enabled("BigTreeAura") then
+                            BigTreeAura.running = false
+                            break
+                        end
+                    end
+
                     local hrp = ch:FindFirstChild("HumanoidRootPart")
                     if not hrp then
                         task.wait(0.2)
@@ -1623,7 +1650,16 @@ return function(C, R, UI)
                         break
                     end
 
-                    local ch = lp.Character or lp.CharacterAdded:Wait()
+                    local ch = lp.Character
+                    if not ch then
+                        ch = lp.CharacterAdded:Wait()
+                        if not TrapAura.running then break end
+                        if not __enabled("TrapAura") then
+                            TrapAura.running = false
+                            break
+                        end
+                    end
+
                     local hrp = ch:FindFirstChild("HumanoidRootPart")
                     if not hrp then
                         task.wait(0.25)
