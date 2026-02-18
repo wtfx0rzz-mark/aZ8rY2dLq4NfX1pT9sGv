@@ -8,6 +8,11 @@ return function(C, R, UI)
     local tab = UI and UI.Tabs and (UI.Tabs.TPBring or UI.Tabs.Bring or UI.Tabs.Auto or UI.Tabs.Main)
     if not tab then return end
 
+    -- cleanup previous instance if reloaded
+    if _G.__TPBring__cleanup then
+        pcall(_G.__TPBring__cleanup)
+    end
+
     local function hrp()
         local ch = lp.Character or lp.CharacterAdded:Wait()
         return ch and ch:FindFirstChild("HumanoidRootPart")
@@ -171,8 +176,9 @@ return function(C, R, UI)
     local finalized    = {}
     local fruitNudged  = {}
     local dropStacks   = {}
-
     local pendingRetry = {}
+
+    local charAddedConn = nil
 
     local junkItems = {
         "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
@@ -653,10 +659,6 @@ return function(C, R, UI)
 
     local function getCandidatesForCurrent(jobId)
         return collectCandidatesFromSet(currentSelectedSet(), jobId, MAX_DIST_DEFAULT)
-    end
-
-    local function getCandidatesForOrbs(jobId)
-        return collectCandidatesFromSet(orbUnionSet, jobId, maxDistOrbs)
     end
 
     local function destroyOrb()
@@ -1652,7 +1654,12 @@ return function(C, R, UI)
         end
     })
 
-    Players.LocalPlayer.CharacterAdded:Connect(function()
+    -- FIX: store + cleanup CharacterAdded connection
+    if charAddedConn then
+        pcall(function() charAddedConn:Disconnect() end)
+        charAddedConn = nil
+    end
+    charAddedConn = Players.LocalPlayer.CharacterAdded:Connect(function()
         if running and CURRENT_MODE then
             if CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs" or CURRENT_MODE == "all" then
                 local pos
@@ -1674,4 +1681,16 @@ return function(C, R, UI)
             end
         end
     end)
+
+    local function cleanupModule()
+        pcall(function() setPreclaimEnabled(false) end)
+        pcall(function() stopAll() end)
+        if charAddedConn then pcall(function() charAddedConn:Disconnect() end) end
+        charAddedConn = nil
+        if _G.__TPBring__cleanup == cleanupModule then
+            _G.__TPBring__cleanup = nil
+        end
+    end
+
+    _G.__TPBring__cleanup = cleanupModule
 end
