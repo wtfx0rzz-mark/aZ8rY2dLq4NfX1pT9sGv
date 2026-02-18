@@ -12,7 +12,10 @@ return function(C, R, UI)
     local RunService = game:GetService("RunService")
 
     C.State = C.State or { AuraRadius = 150, Toggles = {} }
-    C.State.Toggles.PlayerTracker = true
+    C.State.Toggles = C.State.Toggles or {}
+    if C.State.Toggles.PlayerTracker == nil then
+        C.State.Toggles.PlayerTracker = true
+    end
     if C.State.Toggles.RemoveFog == nil then
         C.State.Toggles.RemoveFog = true
     end
@@ -125,43 +128,84 @@ return function(C, R, UI)
 
     local runningPlayers = false
     local PLAYER_HL_NAME = "__PlayerTrackerHL__"
+    local trackerConns = {}
+    local trackerCharConns = setmetatable({}, { __mode = "k" })
+    local trackerLoopId = 0
+
+    local function trackConn(list, c)
+        if c then list[#list+1] = c end
+        return c
+    end
+
+    local function untrackAll(list)
+        for _, c in ipairs(list) do pcall(function() c:Disconnect() end) end
+        for i = #list, 1, -1 do list[i] = nil end
+    end
+
+    local function cleanupPlayer(plr)
+        local cc = trackerCharConns[plr]
+        if cc then
+            trackerCharConns[plr] = nil
+            pcall(function() cc:Disconnect() end)
+        end
+        if plr and plr.Character then
+            clearHighlight(plr.Character, PLAYER_HL_NAME)
+        end
+    end
+
+    local function attachPlayer(plr, ch)
+        if not ch then return end
+        local h = ensureHighlight(ch, PLAYER_HL_NAME)
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Enabled = true
+    end
 
     local function trackPlayer(plr)
         if plr == lp then return end
-        local function attach(ch)
-            if not ch then return end
-            local h = ensureHighlight(ch, PLAYER_HL_NAME)
-            h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            h.Enabled = true
+        if plr.Character then attachPlayer(plr, plr.Character) end
+        if not trackerCharConns[plr] then
+            trackerCharConns[plr] = plr.CharacterAdded:Connect(function(ch)
+                if not runningPlayers then return end
+                attachPlayer(plr, ch)
+            end)
         end
-        if plr.Character then attach(plr.Character) end
-        plr.CharacterAdded:Connect(attach)
     end
 
     local function startPlayerTracker()
         if runningPlayers then return end
         runningPlayers = true
+        trackerLoopId += 1
+        local myId = trackerLoopId
+
         for _, p in ipairs(Players:GetPlayers()) do trackPlayer(p) end
-        Players.PlayerAdded:Connect(trackPlayer)
+        trackConn(trackerConns, Players.PlayerAdded:Connect(function(p)
+            if not runningPlayers then return end
+            trackPlayer(p)
+        end))
+        trackConn(trackerConns, Players.PlayerRemoving:Connect(function(p)
+            cleanupPlayer(p)
+        end))
+
         task.spawn(function()
-            while runningPlayers do
+            while runningPlayers and trackerLoopId == myId do
                 local lch = lp.Character
                 local lhrp = lch and lch:FindFirstChild("HumanoidRootPart")
                 local R = auraRadius()
-                for _, plr in ipairs(Players:GetPlayers()) do
-                    if plr ~= lp then
-                        local ch = plr.Character
+                for _, plr2 in ipairs(Players:GetPlayers()) do
+                    if plr2 ~= lp then
+                        local ch = plr2.Character
                         if ch then
                             local h = ensureHighlight(ch, PLAYER_HL_NAME)
                             h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                             h.Enabled = true
                             if lhrp then
                                 local phrp = ch:FindFirstChild("HumanoidRootPart")
-                                local p0 = phrp and phrp.Position or (bestPart(ch) and bestPart(ch).Position)
+                                local bp = bestPart(ch)
+                                local p0 = (phrp and phrp.Position) or (bp and bp.Position)
                                 if p0 then
                                     local d = (p0 - lhrp.Position).Magnitude
                                     local t = math.clamp(d / math.max(R, 1), 0, 1)
-                                    h.FillTransparency   = 1 - (0.85 * t)
+                                    h.FillTransparency = 1 - (0.85 * t)
                                     h.OutlineTransparency = 0.2 * (1 - t)
                                 end
                             end
@@ -170,14 +214,29 @@ return function(C, R, UI)
                 end
                 task.wait(0.25)
             end
-            for _, plr in ipairs(Players:GetPlayers()) do
-                if plr ~= lp and plr.Character then
-                    clearHighlight(plr.Character, PLAYER_HL_NAME)
+            for _, plr2 in ipairs(Players:GetPlayers()) do
+                if plr2 ~= lp and plr2.Character then
+                    clearHighlight(plr2.Character, PLAYER_HL_NAME)
                 end
             end
         end)
     end
-    local function stopPlayerTracker() runningPlayers = false end
+
+    local function stopPlayerTracker()
+        if not runningPlayers then return end
+        runningPlayers = false
+        trackerLoopId += 1
+        untrackAll(trackerConns)
+        for plr2, cc in pairs(trackerCharConns) do
+            trackerCharConns[plr2] = nil
+            pcall(function() cc:Disconnect() end)
+        end
+        for _, plr2 in ipairs(Players:GetPlayers()) do
+            if plr2 ~= lp and plr2.Character then
+                clearHighlight(plr2.Character, PLAYER_HL_NAME)
+            end
+        end
+    end
 
     local function setLocalInvisible(state)
         local ch = lp and lp.Character
