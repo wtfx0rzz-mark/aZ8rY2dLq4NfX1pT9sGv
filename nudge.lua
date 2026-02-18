@@ -8,11 +8,43 @@ return function(C, R, UI)
         local RS       = (C and C.Services and C.Services.RS)       or game:GetService("ReplicatedStorage")
         local WS       = (C and C.Services and C.Services.WS)       or game:GetService("Workspace")
         local Run      = (C and C.Services and C.Services.Run)      or game:GetService("RunService")
-        local lp       = Players.LocalPlayer
+        local lp       = (C and C.LocalPlayer) or Players.LocalPlayer
 
         local Tabs = (UI and UI.Tabs) or {}
         local tab  = Tabs.Nudge or Tabs.Main or Tabs.Auto
         if not tab then return end
+
+        -- ------------------------------------------------------------
+        -- Lifecycle / cleanup (fix: CharacterAdded + Heartbeat + button conn)
+        -- ------------------------------------------------------------
+        local MOD_KEY = "__NudgeModule__"
+        if _G[MOD_KEY] and type(_G[MOD_KEY]) == "table" and type(_G[MOD_KEY].Destroy) == "function" then
+            pcall(function() _G[MOD_KEY].Destroy() end)
+        end
+
+        local M = { conns = {}, alive = true }
+        _G[MOD_KEY] = M
+
+        local function trackConn(c)
+            if c then M.conns[#M.conns + 1] = c end
+            return c
+        end
+
+        local function disconnectAll()
+            for i = #M.conns, 1, -1 do
+                local c = M.conns[i]
+                M.conns[i] = nil
+                pcall(function()
+                    if c and c.Disconnect then c:Disconnect() end
+                end)
+            end
+        end
+
+        function M.Destroy()
+            if not M.alive then return end
+            M.alive = false
+            disconnectAll()
+        end
 
         local function hrp(p)
             p = p or lp
@@ -48,11 +80,9 @@ return function(C, R, UI)
         -- Modified: never changes CanCollide at all; only snapshots if needed
         local function setCollide(model, on, snap)
             local parts = getParts(model)
-            -- We no longer restore or modify CanCollide; this is a no-op on "on"
             if on and snap then
                 return
             end
-            -- On "off" we only take a snapshot of current state but do not change it
             local s = {}
             for _, p in ipairs(parts) do
                 s[p] = p.CanCollide
@@ -197,7 +227,6 @@ return function(C, R, UI)
 
             if dist < Nudge.SelfSafe then
                 local out = fromPos + away.Unit * (Nudge.SelfSafe + 0.5)
-                -- previously setCollide(model,false) and later true; now no collide changes
                 local snap0 = setCollide(model, false)
                 zeroAssembly(model)
                 if model:IsA("Model") then
@@ -221,8 +250,8 @@ return function(C, R, UI)
             local upSpeed    = math.clamp(Nudge.Up,   5,  80) * 7.0
 
             task.spawn(function()
+                if not M.alive then return end
                 local started = preDrag(model)
-                -- previously disabled collide; now we just snapshot but never change it
                 local snap    = setCollide(model, false)
 
                 for _, p in ipairs(getParts(model)) do
@@ -254,19 +283,21 @@ return function(C, R, UI)
                     dir * horizSpeed + Vector3.new(0, upSpeed, 0)
 
                 task.delay(0.14, function()
+                    if not M.alive then return end
                     if started then
                         pcall(safeStopDrag, model)
                     end
                 end)
 
-                -- previously restored collide after 0.45s; now no collide toggling
                 task.delay(0.45, function()
+                    if not M.alive then return end
                     if snap then
                         setCollide(model, true, snap)
                     end
                 end)
 
                 task.delay(0.9, function()
+                    if not M.alive then return end
                     for _, p in ipairs(getParts(model)) do
                         pcall(function()
                             p:SetNetworkOwner(nil)
@@ -389,12 +420,13 @@ return function(C, R, UI)
             shockBtn.Visible = false
         end
 
-        shockBtn.MouseButton1Click:Connect(function()
+        trackConn(shockBtn.MouseButton1Click:Connect(function()
+            if not M.alive then return end
             local r = hrp()
             if r then
                 nudgeShockwave(r.Position, Nudge.Radius)
             end
-        end)
+        end))
 
         C.State = C.State or { Toggles = {} }
         C.State.Toggles = C.State.Toggles or {}
@@ -455,15 +487,9 @@ return function(C, R, UI)
             end
         })
 
-        local autoConn
         local acc = 0
-
-        if autoConn then
-            autoConn:Disconnect()
-            autoConn = nil
-        end
-
-        autoConn = Run.Heartbeat:Connect(function(dt)
+        trackConn(Run.Heartbeat:Connect(function(dt)
+            if not M.alive then return end
             if not AutoNudge.Enabled then return end
             acc += dt
             if acc < 0.2 then return end
@@ -472,9 +498,11 @@ return function(C, R, UI)
             local r = hrp()
             if not r then return end
             nudgeShockwave(r.Position, Nudge.Radius)
-        end)
+        end))
 
-        Players.LocalPlayer.CharacterAdded:Connect(function()
+        -- Fix: store + disconnect CharacterAdded connection on unload
+        trackConn(lp.CharacterAdded:Connect(function()
+            if not M.alive then return end
             local pg = lp:WaitForChild("PlayerGui")
             local eg = pg:FindFirstChild("EdgeButtons")
             if eg and eg.Parent ~= pg then
@@ -484,7 +512,7 @@ return function(C, R, UI)
             if shockBtn then
                 shockBtn.Visible = on
             end
-        end)
+        end))
 
         if shockBtn then
             shockBtn.Visible = initialEdge
