@@ -157,7 +157,9 @@ return function(C, R, UI)
 
     local function openInfoWindow(text)
       local old = playerGui:FindFirstChild("PlayerInspectorWindow")
-      if old then old:Destroy() end
+      if old then
+        pcall(function() old:Destroy() end)
+      end
 
       local sg = Instance.new("ScreenGui")
       sg.Name = "PlayerInspectorWindow"
@@ -165,6 +167,7 @@ return function(C, R, UI)
       sg.Parent = playerGui
 
       local conns = {}
+      local cleaned = false
 
       local function trackConn(c)
         if c then conns[#conns + 1] = c end
@@ -172,6 +175,8 @@ return function(C, R, UI)
       end
 
       local function cleanup()
+        if cleaned then return end
+        cleaned = true
         for i = #conns, 1, -1 do
           local c = conns[i]
           conns[i] = nil
@@ -179,6 +184,13 @@ return function(C, R, UI)
             if c and c.Disconnect then c:Disconnect() end
           end)
         end
+      end
+
+      -- Ensure teardown always runs (explicit close, external destroy, or parent nil).
+      if sg.Destroying then
+        trackConn(sg.Destroying:Connect(function()
+          cleanup()
+        end))
       end
 
       trackConn(sg.AncestryChanged:Connect(function(_, parent)
@@ -223,6 +235,7 @@ return function(C, R, UI)
       close.TextSize = 16
       close.Parent = titleBar
       trackConn(close.MouseButton1Click:Connect(function()
+        cleanup() -- critical: disconnect UIS handlers immediately
         sg:Destroy()
       end))
 
@@ -262,7 +275,7 @@ return function(C, R, UI)
         end
 
         trackConn(UIS.InputBegan:Connect(function(input)
-          if not sg.Parent then return end
+          if cleaned or not sg.Parent then return end
           if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             if inTitle(input.Position) then
               dragging = true
@@ -273,16 +286,17 @@ return function(C, R, UI)
         end))
 
         trackConn(UIS.InputEnded:Connect(function(input)
-          if not sg.Parent then return end
+          if cleaned or not sg.Parent then return end
           if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
           end
         end))
 
         trackConn(UIS.InputChanged:Connect(function(input)
-          if not sg.Parent then return end
+          if cleaned or not sg.Parent then return end
           if not dragging then return end
           if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
+          if not startPos or not startFrame then return end
           local dx = input.Position.X - startPos.X
           local dy = input.Position.Y - startPos.Y
           frame.Position = UDim2.new(startFrame.X.Scale, startFrame.X.Offset + dx, startFrame.Y.Scale, startFrame.Y.Offset + dy)
