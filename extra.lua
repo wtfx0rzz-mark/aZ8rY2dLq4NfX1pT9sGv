@@ -1612,6 +1612,27 @@ return function(C, R, UI)
     local currentRunChest = nil
     local emptySince = 0
 
+    -- PATCH: keep a handle to the Chest Run toggle so we can flip it OFF when auto-stopping.
+    local chestRunToggleObj = nil
+    local _settingChestRunToggle = false
+    local function setChestRunToggleUI(v)
+        if not chestRunToggleObj then return false end
+        _settingChestRunToggle = true
+        local ok = pcall(function()
+            if chestRunToggleObj.SetValue then
+                chestRunToggleObj:SetValue(v)
+            elseif chestRunToggleObj.Set then
+                chestRunToggleObj:Set(v)
+            elseif chestRunToggleObj.SetState then
+                chestRunToggleObj:SetState(v)
+            elseif chestRunToggleObj.Update then
+                chestRunToggleObj:Update(v)
+            end
+        end)
+        _settingChestRunToggle = false
+        return ok
+    end
+
     local function clearTracked()
         table.clear(Tracked)
         for k,_ in pairs(TrackedSet) do TrackedSet[k] = nil end
@@ -1785,9 +1806,11 @@ return function(C, R, UI)
             currentRunChest = nil
             if #Tracked == 0 then
                 if AUTO_STOP_IF_EMPTY_SECONDS and AUTO_STOP_IF_EMPTY_SECONDS > 0 then
+                    -- PATCH: stop + flip the UI toggle OFF
                     runOn = false
                     C.State.Toggles.ChestRun = false
                     setSkipGuiVisible(false)
+                    setChestRunToggleUI(false)
                 end
             end
             return true
@@ -1856,9 +1879,11 @@ return function(C, R, UI)
                     if AUTO_STOP_IF_EMPTY_SECONDS and AUTO_STOP_IF_EMPTY_SECONDS > 0 then
                         if emptySince == 0 then emptySince = os.clock() end
                         if (os.clock() - emptySince) >= AUTO_STOP_IF_EMPTY_SECONDS then
+                            -- PATCH: stop + flip the UI toggle OFF
                             runOn = false
                             C.State.Toggles.ChestRun = false
                             setSkipGuiVisible(false)
+                            setChestRunToggleUI(false)
                             break
                         end
                     end
@@ -2088,10 +2113,15 @@ return function(C, R, UI)
         end
     })
 
-    ExtraTab:Toggle({
+    -- PATCH: store toggle object + prevent recursion when we set it programmatically
+    chestRunToggleObj = ExtraTab:Toggle({
         Title = "Chest Run",
         Value = C.State.Toggles.ChestRun,
         Callback = function(on)
+            if _settingChestRunToggle then
+                C.State.Toggles.ChestRun = on
+                return
+            end
             C.State.Toggles.ChestRun = on
             if on then
                 startRun()
