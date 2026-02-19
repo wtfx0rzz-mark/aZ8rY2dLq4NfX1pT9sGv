@@ -1329,6 +1329,7 @@ return function(C, R, UI)
             end
 
             local chests = {}
+            local chestModelConns = setmetatable({}, { __mode = "k" })
             local diamondModel = nil
             local DIAMOND_PAIR_DIST   = 9.8
             local DIAMOND_PAIR_TOL    = 2.0
@@ -1357,6 +1358,23 @@ return function(C, R, UI)
                 return ok and cf.Position or nil
             end
 
+            local function clearChestConns(m)
+                local conns = chestModelConns[m]
+                if conns then
+                    for i = 1, #conns do
+                        local c = conns[i]
+                        if c and c.Disconnect then pcall(function() c:Disconnect() end) end
+                    end
+                end
+                chestModelConns[m] = nil
+            end
+
+            local function clearAllChestConns()
+                for m,_ in pairs(chestModelConns) do
+                    clearChestConns(m)
+                end
+            end
+
             local function markChest(m)
                 if not (m and m:IsA("Model")) then return end
                 if not isChestName2(m.Name) then return end
@@ -1369,17 +1387,22 @@ return function(C, R, UI)
                 local rec = chests[m]
                 if not rec then
                     chests[m] = { pos = pos, opened = chestOpened2(m), excluded = excluded }
-                    m:GetAttributeChangedSignal(UID_OPEN_KEY):Connect(function()
+                    local conns = {}
+                    conns[#conns+1] = m:GetAttributeChangedSignal(UID_OPEN_KEY):Connect(function()
                         local r = chests[m]
                         if r then r.opened = chestOpened2(m) end
                     end)
-                    m:GetPropertyChangedSignal("PrimaryPart"):Connect(function()
+                    conns[#conns+1] = m:GetPropertyChangedSignal("PrimaryPart"):Connect(function()
                         local r = chests[m]
                         if r then r.pos = chestPos(m) or r.pos end
                     end)
-                    m.AncestryChanged:Connect(function(_, parent)
-                        if not parent then chests[m] = nil end
+                    conns[#conns+1] = m.AncestryChanged:Connect(function(_, parent)
+                        if not parent then
+                            chests[m] = nil
+                            clearChestConns(m)
+                        end
                     end)
+                    chestModelConns[m] = conns
                 else
                     rec.pos      = pos
                     rec.opened   = chestOpened2(m)
@@ -1393,6 +1416,7 @@ return function(C, R, UI)
             local function initialScan()
                 chests       = {}
                 diamondModel = nil
+                clearAllChestConns()
                 local items = itemsFolder2()
                 if not items then return end
                 for _,m in ipairs(items:GetChildren()) do
@@ -1578,6 +1602,7 @@ return function(C, R, UI)
                     end)
                     childRem = items.ChildRemoved:Connect(function(c)
                         chests[c] = nil
+                        clearChestConns(c)
                     end)
                 end
                 cfHB = Run.Heartbeat:Connect(function()
@@ -1594,6 +1619,7 @@ return function(C, R, UI)
                 if cfHB then cfHB:Disconnect();  cfHB  = nil end
                 if childAdd then childAdd:Disconnect(); childAdd = nil end
                 if childRem then childRem:Disconnect(); childRem = nil end
+                clearAllChestConns()
                 nextChestBtn.Visible = false
             end
         end
