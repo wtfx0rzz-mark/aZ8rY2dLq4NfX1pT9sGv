@@ -13,6 +13,10 @@ return function(C, R, UI)
     local lp       = Players.LocalPlayer
     local tab      = UI.Tabs.Esp
 
+    C.State = C.State or {}
+    C.State._EspLoopToken = (C.State._EspLoopToken or 0) + 1
+    local espLoopToken = C.State._EspLoopToken
+
     local function hrp()
         local ch = lp.Character or lp.CharacterAdded:Wait()
         return ch:FindFirstChild("HumanoidRootPart")
@@ -559,7 +563,7 @@ return function(C, R, UI)
     recomputeActiveSelection()
 
     task.spawn(function()
-        while true do
+        while C.State and C.State._EspLoopToken == espLoopToken do
             if S.Enabled and next(activeSelection) ~= nil then
                 local ok, err = pcall(function()
                     local root = hrp()
