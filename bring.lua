@@ -835,7 +835,7 @@ return function(C, R, UI)
         if selectedSet["Polar Bear Pelt"] and nm == "Polar Bear Pelt" then return true end
         if selectedSet["Arctic Fox Pelt"] and nm == "Arctic Fox Pelt" then return true end
         if selectedSet["Spear"] and l:find("spear",1,true) and not hasHumanoid(m) then return true end
-        if selectedSet["Sword"] and l:find("sword",1,true) and not hasHumanoid(m) then return true end
+        if selectedSet["Sword"] and nm == "Sword" and not hasHumanoid(m) and m:GetAttribute("WeaponDamage") ~= nil then return true end
         if selectedSet["Crossbow"] and l:find("crossbow",1,true) and not l:find("cultist",1,true) and not hasHumanoid(m) then return true end
         if selectedSet["Blueprint"] and l:find("blueprint",1,true) then return true end
         if selectedSet["Flashlight"] and l:find("flashlight",1,true) and not hasHumanoid(m) then return true end
@@ -843,7 +843,6 @@ return function(C, R, UI)
         if selectedSet["Forest Gem"] and (l:find("forest gem",1,true) or (l:find("forest",1,true) and l:find("fragment",1,true))) then return true end
         if selectedSet["Tusk"] and l:find("tusk",1,true) then return true end
         return false
-    end
 
     local function topModelUnderItems(part, itemsFolder)
         local cur = part
