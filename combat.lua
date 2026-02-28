@@ -44,7 +44,7 @@ return function(C, R, UI)
     end
 
     --------------------------------------------------------------------
-    -- AURA VISUAL (CIRCLE) (NO RAYCASTS)
+    -- AURA VISUAL (CIRCLE)
     --------------------------------------------------------------------
 
     local auraVis = {
@@ -970,7 +970,12 @@ return function(C, R, UI)
         local function bt_isBigTreeName(n)
             if BIG_TREE_NAMES[n] then return true end
             if type(n) ~= "string" then return false end
-            if n:match("^TreeBig%d+$") ~= nil then return true end
+
+            -- Match any name containing "TreeBig<digits>" anywhere in the string
+            -- Examples matched: "TreeBig1", "JungleTreeBig7", "CorruptedJungleTreeBig12"
+            if n:find("TreeBig%d+") then return true end
+
+            -- Keep explicit variants (can match edge cases like "WebbedTreeBig" w/ no digits)
             return (n:match("^WebbedTreeBig%d*$") ~= nil)
                 or (n:match("^FairyTreeBig%d+$") ~= nil)
                 or (n:match("^Corrupted%s+TreeBig%d+$") ~= nil)
@@ -1580,7 +1585,8 @@ return function(C, R, UI)
         end
 
         local function ta_createTrapPanel()
-            ta_destroyTrapPanel()
+            if trapPanelGui then trapPanelGui:Destroy() end
+            trapPanelGui, trapLabel, selectedTrap = nil, nil, nil
 
             local player = lp or Players.LocalPlayer
             if not player then return end
@@ -1702,7 +1708,12 @@ return function(C, R, UI)
         end
 
         function TrapAura.DestroyPanel()
-            ta_destroyTrapPanel()
+            if trapPanelGui then
+                trapPanelGui:Destroy()
+                trapPanelGui = nil
+                trapLabel = nil
+                selectedTrap = nil
+            end
         end
     end
 
