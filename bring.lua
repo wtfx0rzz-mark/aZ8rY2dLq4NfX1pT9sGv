@@ -57,13 +57,13 @@ return function(C, R, UI)
     local medicalItems = {"Bandage","MedKit"}
     local weaponsArmor = {
         "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
-        "Chainsaw","Crossbow","Katana","Kunai","Laser Cannon","Ray Gun","Infernal Sword","Laser Sword","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
+        "Chainsaw","Crossbow","Katana","Kunai","Laser Cannon","Ray Gun","Infernal Sword","Laser Sword","Ice Sword","Poison Claws","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
         "Sword","Ice Axe","Scythe","Thorn Body","Alien Armor","Corrupted Thorn Body","Impact Grenade","Dynamite","Corrupted Shotgun","Corrupted Revolver","Corrupted Thrown Axe"
     }
     local ammoMisc = {
         "Giant Sack","Infernal Sack","Good Sack","Mossy Coin","Cultist","Alien","Alien Elite","Sapling",
         "Basketball","Blueprint","Diamond","Gem of the Forest Fragment","Gem of the Forest","Flashlight","Old Taming flute","Old Rod","Cultist Gem",
-        "Tusk","Revolver Ammo","Rifle Ammo","Shotgun Ammo","Explosive Revolver Ammo","Explosive Rifle Ammo","Sacrifice Totem","Anvil Back","Anvil Front","Anvil Base","Armor Trim"
+        "Tusk","Revolver Ammo","Rifle Ammo","Shotgun Ammo","Explosive Revolver Ammo","Explosive Rifle Ammo","Sacrifice Totem","Anvil Back","Anvil Front","Anvil Base","Armor Trim","Crystal Skull Key"
     }
     local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"}
 
