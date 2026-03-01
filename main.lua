@@ -73,6 +73,15 @@ _G.UI = UI
 local function findBiomeName()
     local WS = C.Services.WS or game:GetService("Workspace")
     local map = WS:FindFirstChild("Map")
+
+    -- NEW: If Jungle Temple landmark exists, treat biome as Jungle
+    local landmarks = map and map:FindFirstChild("Landmarks")
+    if landmarks then
+        if landmarks:FindFirstChild("Jungle Temple") or landmarks:FindFirstChild("JungleTemple") then
+            return "Jungle"
+        end
+    end
+
     local biomes = map and map:FindFirstChild("Biomes")
     if not biomes then return "Unknown (Biomes folder missing)" end
     if biomes:FindFirstChild("Volcanic") then
@@ -213,7 +222,7 @@ task.spawn(function()
     while enabledNow() do
         local b = findBiomeName()
         tries += 1
-        if b == "Volcanic" or b == "Snow" then
+        if b == "Volcanic" or b == "Snow" or b == "Jungle" then
             currentBiome = b
             refreshUI("biome")
             break
