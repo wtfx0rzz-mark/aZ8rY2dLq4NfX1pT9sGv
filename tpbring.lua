@@ -91,8 +91,175 @@ return function(C, R, UI)
         return s
     end
 
+    local startDrag, stopDrag = nil, nil
+    do
+        local re = RS:FindFirstChild("RemoteEvents")
+        if re then
+            startDrag = re:FindFirstChild("RequestStartDraggingItem")
+            stopDrag  = re:FindFirstChild("StopDraggingItem")
+        end
+    end
+
+    local DRAG_SPEED              = 420
+    local ORB_HEIGHT              = 10
+    local GROUND_ORB_DROP_HEIGHT  = 6
+    local MAX_CONCURRENT          = 100
+    local SCAN_INTERVAL           = 0.20
+    local MOVE_HZ                 = 30
+
+    local LAND_MIN                = 0.35
+    local LAND_MAX                = 0.85
+    local ARRIVE_EPS_H            = 1.1
+    local STALL_SEC               = 0.6
+
+    local HOVER_ABOVE_ORB         = 1.2
+
+    local RELEASE_RATE_HZ_DEFAULT      = 18
+    local MAX_RELEASE_PER_TICK_DEFAULT = 2
+    local releaseRateHz               = RELEASE_RATE_HZ_DEFAULT
+    local maxReleasePerTick           = MAX_RELEASE_PER_TICK_DEFAULT
+
+    local STAGE_TIMEOUT_S         = 1.5
+    local ORB_UNSTICK_RAD         = 2.0
+    local ORB_UNSTICK_HZ          = 10
+    local STUCK_TTL               = 1.0
+
+    local MAX_LINED_ITEMS         = 14
+
+    local MAX_DIST_DEFAULT        = 500
+    local MAX_DIST_ORBS_DEFAULT   = 50
+    local maxDistOrbs             = MAX_DIST_ORBS_DEFAULT
+
+    local SKY_RAY_START_Y         = 320
+    local SKY_RAY_LEN             = 900
+    local PLACE_UP                = 1.6
+
+    local AIR_RELEASE_UP          = 0.0
+
+    local OUTSIDE_LOGS_ENABLED    = true
+    local OUTSIDE_LOG_SCAN_INT    = 0.85
+    local OUTSIDE_LOG_MAX_DIST    = 260
+
+    local AIR_TOUCH_DROP_OFFSET_Y = 10
+    local AIR_TOUCH_ORB_SIZE      = 6.0
+    local AIR_DROP_TIMEOUT_S      = 2.25
+    local AIR_RETRY_PUSH_DOWN_VY  = -80
+
+    local INFLT_ATTR = "OrbInFlightAt"
+    local JOB_ATTR   = "OrbJob"
+    local DONE_ATTR  = "OrbDelivered"
+
+    local SENT_MODE_ATTR    = "TPBringSentMode"
+    local SENT_TRIES_ATTR   = "TPBringSentTries"
+    local SENT_LAST_ATTR    = "TPBringSentAt"
+    local SENT_DELIV_ATTR   = "TPBringDeliveredAt"
+    local RETRY_AFTER_S     = 3.0
+    local RETRY_PUSH_BACK   = 10.0
+    local RETRY_MAX_TRIES   = 6
+
+    local CONFIRM_WINDOW_S  = 1.25
+    local pendingConfirm    = {}
+
+    local CURRENT_RUN_ID   = nil
+    local CURRENT_MODE     = nil
+
+    local running      = false
+    local hb           = nil
+    local orb          = nil
+    local orbTouch     = nil
+    local touchConn    = nil
+    local orbPosVec    = nil
+    local inflight     = {}
+    local releaseQueue = {}
+    local releaseAcc   = 0.0
+    local activeCount  = 0
+    local unstickConn  = nil
+    local preclaimConn = nil
+    local finalized    = {}
+    local fruitNudged  = {}
+    local dropStacks   = {}
+    local pendingRetry = {}
+
+    local charAddedConn = nil
+
+    local junkItems = {
+        "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
+        "UFO Junk","UFO Component"
+    }
+    local fuelItems = {"Log","Coal","Fuel Canister","Oil Barrel"}
+    local foodItems = {
+        "Morsel","Cooked Morsel","Steak","Cooked Steak","Ribs","Cooked Ribs","Cake","Berry","Carrot",
+        "Chilli","Stew","Pumpkin","Hearty Stew","Corn","BBQ ribs","Apple","Mackerel"
+    }
+    local medicalItems = {"Bandage","MedKit"}
+    local weaponsArmor = {
+        "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
+        "Chainsaw","Crossbow","Katana","Kunai","Laser cannon","Laser sword","Morningstar","Riot shield","Spear","Tactical Shotgun","Wildfire",
+        "Sword","Ice Axe","Thorn Body"
+    }
+    local ammoMisc = {
+        "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Sapling",
+        "Basketball","Blueprint","Diamond","Forest Gem","Key","Flashlight","Taming flute","Cultist Gem","Tusk","Infernal Sack"
+    }
+    local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"}
+
+    local fuelSet, junkSet, preDragImportantSet = {}, {}, {}
+    for _,n in ipairs(fuelItems) do fuelSet[n] = true end
+    for _,n in ipairs(junkItems) do junkSet[n] = true end
+    for _,n in ipairs(weaponsArmor) do preDragImportantSet[n] = true end
+    for _,n in ipairs({
+        "Giant Sack","Good Sack","Blueprint","Forest Gem","Key","Flashlight","Strong Flashlight","Taming flute","Cultist Gem","Tusk","Infernal Sack"
+    }) do preDragImportantSet[n] = true end
+
+    local fuelModeSet = { ["Coal"] = true, ["Fuel Canister"] = true, ["Oil Barrel"] = true, ["Log"] = true }
+    local scrapModeSet = {}
+    for k,v in pairs(junkSet) do if v then scrapModeSet[k] = true end end
+    scrapModeSet["Log"] = true
+    local logOnlySet = { ["Log"] = true }
+
+    local allModeSet = {}
+    local function addListToSet(list, set)
+        for _,n in ipairs(list) do set[n] = true end
+    end
+    local function addSetToSet(src, dst)
+        for k,v in pairs(src) do if v then dst[k] = true end end
+    end
+    addSetToSet(junkSet, allModeSet)
+    addSetToSet(fuelSet, allModeSet)
+    addListToSet(foodItems, allModeSet)
+    addListToSet(medicalItems, allModeSet)
+    addListToSet(weaponsArmor, allModeSet)
+    addListToSet(ammoMisc, allModeSet)
+    addListToSet(pelts, allModeSet)
+
+    local groupedItemValues = {}
+    local function appendListIntoGrouped(list)
+        for _,name in ipairs(list) do
+            if allModeSet[name] then
+                groupedItemValues[#groupedItemValues+1] = name
+            end
+        end
+    end
+    appendListIntoGrouped(junkItems)
+    appendListIntoGrouped(fuelItems)
+    appendListIntoGrouped(foodItems)
+    appendListIntoGrouped(weaponsArmor)
+    appendListIntoGrouped(ammoMisc)
+    appendListIntoGrouped(pelts)
+
+    local function cloneArray(src)
+        local t = {}
+        for i,v in ipairs(src) do t[i] = v end
+        return t
+    end
+
     local function itemsRootOrNil()
         return WS:FindFirstChild("Items")
+    end
+
+    local function hasHumanoid(model)
+        if not (model and model:IsA("Model")) then return false end
+        return model:FindFirstChildOfClass("Humanoid") ~= nil
     end
 
     local function isWallVariant(m)
@@ -135,24 +302,92 @@ return function(C, R, UI)
         return false
     end
 
+    local function isExcludedModel(m)
+        if not (m and m:IsA("Model")) then return false end
+        local n = (m.Name or ""):lower()
+        if n == "pelt trader" then return true end
+        if n:find("trader",1,true) or n:find("shopkeeper",1,true) then return true end
+        if isWallVariant(m) then return true end
+        if isUnderLogWall(m) then return true end
+        return false
+    end
+
     local function isExcludedInst(inst)
         if not inst then return true end
         if inst:IsA("Model") then
-            local n = (inst.Name or ""):lower()
-            if n == "pelt trader" then return true end
-            if n:find("trader",1,true) or n:find("shopkeeper",1,true) then return true end
-            if isWallVariant(inst) then return true end
+            if isExcludedModel(inst) then return true end
         end
         if isUnderLogWall(inst) then return true end
         if hasIceBlockTag(inst) then return true end
         return false
     end
 
+    local function isInsideTree(inst)
+        local cur = inst and inst.Parent
+        while cur and cur ~= WS do
+            local nm = (cur.Name or ""):lower()
+            if nm:find("tree",1,true) or nm:find("bush",1,true) then return true end
+            if cur == itemsRootOrNil() then break end
+            cur = cur.Parent
+        end
+        return false
+    end
+
+    local ALLOW_OUTSIDE_ITEMS = { ["Log"] = true }
+
     local function isDirectItemChild(m)
         local itemsFolder = itemsRootOrNil()
         if not itemsFolder then return true end
         if not (m and m.Parent) then return false end
         return m.Parent == itemsFolder
+    end
+
+    local function nameMatches(selectedSet, m)
+        if not (selectedSet and m) then return false end
+        local itemsFolder = itemsRootOrNil()
+        if itemsFolder and not m:IsDescendantOf(itemsFolder) then
+            local nm0 = m and m.Name or ""
+            if not (ALLOW_OUTSIDE_ITEMS[nm0] and selectedSet and selectedSet[nm0]) then
+                return false
+            end
+        end
+
+        local nm = m and m.Name or ""
+        local l  = nm:lower()
+
+        if nm == "Apple" and selectedSet["Apple"] then
+            if itemsFolder and m.Parent ~= itemsFolder then return false end
+            if isInsideTree(m) then return false end
+            return true
+        end
+        if nm == "Berry" and selectedSet["Berry"] then
+            if itemsFolder and m.Parent ~= itemsFolder then return false end
+            if isInsideTree(m) then return false end
+            return true
+        end
+        if selectedSet[nm] then return true end
+        if selectedSet["Mossy Coin"] and (nm == "Mossy Coin" or nm:match("^Mossy Coin%d+$")) then return true end
+        if selectedSet["Cultist"] and m:IsA("Model") and l:find("cultist",1,true) and hasHumanoid(m) then return true end
+        if selectedSet["Alpha Wolf Pelt"] and l:find("alpha",1,true) and l:find("wolf",1,true) then return true end
+        if selectedSet["Bear Pelt"] and l:find("bear",1,true) and not l:find("polar",1,true) then return true end
+        if selectedSet["Spear"] and l:find("spear",1,true) and not hasHumanoid(m) then return true end
+        if selectedSet["Sword"] and l:find("sword",1,true) and not hasHumanoid(m) then return true end
+        if selectedSet["Crossbow"] and l:find("crossbow",1,true) and not l:find("cultist",1,true) and not hasHumanoid(m) then return true end
+        if selectedSet["Blueprint"] and l:find("blueprint",1,true) then return true end
+        if (selectedSet["Flashlight"] or selectedSet["Strong Flashlight"]) and l:find("flashlight",1,true) and not hasHumanoid(m) then return true end
+        if selectedSet["Cultist Gem"] and l:find("cultist",1,true) and l:find("gem",1,true) then return true end
+        if selectedSet["Forest Gem"] and (l:find("forest gem",1,true) or (l:find("forest",1,true) and l:find("fragment",1,true))) then return true end
+        if selectedSet["Tusk"] and l:find("tusk",1,true) then return true end
+        return false
+    end
+
+    local function isPreDragImportantModel(m)
+        return nameMatches(preDragImportantSet, m)
+    end
+
+    local function isFruitModel(m)
+        local nm = m and m.Name or ""
+        return nm == "Apple" or nm == "Berry"
     end
 
     local function rootItemUnderItems(inst)
@@ -168,40 +403,16 @@ return function(C, R, UI)
         return nil
     end
 
-    local function nameMatches_LogOnly(m)
-        if not m then return false end
-        return (m.Name or "") == "Log"
-    end
-
-    local overlapParams = OverlapParams.new()
-    overlapParams.MaxParts = 2000
-
-    local function refreshOverlapFilter()
+    local function nearestSelectedModelFromPart(part, selectedSet)
+        if not (part and part:IsA("BasePart")) then return nil end
         local itemsFolder = itemsRootOrNil()
         if itemsFolder then
-            overlapParams.FilterType = Enum.RaycastFilterType.Include
-            overlapParams.FilterDescendantsInstances = { itemsFolder }
-        else
-            overlapParams.FilterType = Enum.RaycastFilterType.Exclude
-            overlapParams.FilterDescendantsInstances = { lp.Character }
+            local root = rootItemUnderItems(part)
+            if root and isDirectItemChild(root) and nameMatches(selectedSet, root) then return root end
+            return nil
         end
-    end
-
-    local function scrapperOrbPos()
-        local scr = WS:FindFirstChild("Map") and WS.Map:FindFirstChild("Campground") and WS.Map.Campground:FindFirstChild("Scrapper")
-        if not scr then return nil end
-        local mp = mainPart(scr)
-        local cf = (mp and mp.CFrame) or scr:GetPivot()
-        return cf.Position + Vector3.new(0, 10 + 3, 0)
-    end
-
-    local startDrag, stopDrag = nil, nil
-    do
-        local re = RS:FindFirstChild("RemoteEvents")
-        if re then
-            startDrag = re:FindFirstChild("RequestStartDraggingItem")
-            stopDrag  = re:FindFirstChild("StopDraggingItem")
-        end
+        if nameMatches(selectedSet, part) then return part end
+        return nil
     end
 
     local function tryStartDrag(m, rec)
@@ -219,338 +430,419 @@ return function(C, R, UI)
         if rec then rec.stopped = true end
     end
 
-    local INFLT_ATTR = "OrbInFlightAt"
-    local JOB_ATTR   = "OrbJob"
-    local DONE_ATTR  = "OrbDelivered"
-
-    local DRAG_SPEED        = 420
-    local ARRIVE_EPS_H      = 1.1
-    local STALL_SEC         = 0.6
-    local SCAN_INTERVAL     = 0.20
-    local MOVE_HZ           = 30
-    local MAX_DIST_DEFAULT  = 500
-
-    local MAX_CONCURRENT    = 10
-    local MAX_LINED_ITEMS   = 10
-
-    local SKY_RAY_START_Y   = 320
-    local SKY_RAY_LEN       = 900
-    local PLACE_UP          = 1.6
-
-    local CONFIRM_WINDOW_S  = 1.25
-
-    local running      = false
-    local hb           = nil
-    local orbPosVec    = nil
-    local inflight     = {}
-    local releaseQueue = {}
-    local releaseAcc   = 0.0
-    local activeCount  = 0
-    local dropStacks   = {}
-
-    local pendingConfirm = {} -- [model] = { t=timestamp, runId=..., name=... }
-
-    local charAddedConn = nil
-
-    -- ===== Logger (GUI console with Copy + Close) =====
-    local logGui, logFrame, logText, logArea = nil, nil, nil, nil
-    local logLines = {}
-    local LOG_MAX_LINES = 800
-    local function setClipboard(s)
-        if setclipboard then
-            pcall(function() setclipboard(s) end)
-        end
-    end
-
-    local function ensureLogger()
-        if logGui and logGui.Parent then return end
-        local pg = lp:FindFirstChild("PlayerGui")
-        if not pg then return end
-
-        logGui = Instance.new("ScreenGui")
-        logGui.Name = "__TPBringLogGui__"
-        logGui.ResetOnSpawn = false
-        logGui.Parent = pg
-
-        logFrame = Instance.new("Frame")
-        logFrame.Name = "Window"
-        logFrame.Parent = logGui
-        logFrame.Size = UDim2.new(0, 520, 0, 260)
-        logFrame.Position = UDim2.new(1, -540, 1, -290)
-        logFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
-        logFrame.BorderSizePixel = 0
-        logFrame.Active = true
-        logFrame.Draggable = true
-
-        local title = Instance.new("TextLabel")
-        title.Parent = logFrame
-        title.Size = UDim2.new(1, 0, 0, 24)
-        title.Position = UDim2.new(0, 0, 0, 0)
-        title.BackgroundColor3 = Color3.fromRGB(12,12,12)
-        title.BorderSizePixel = 0
-        title.TextXAlignment = Enum.TextXAlignment.Left
-        title.Font = Enum.Font.SourceSansBold
-        title.TextSize = 14
-        title.TextColor3 = Color3.fromRGB(235,235,235)
-        title.Text = "TPBring Log Scrapper Debug"
-
-        local closeBtn = Instance.new("TextButton")
-        closeBtn.Parent = logFrame
-        closeBtn.Size = UDim2.new(0, 54, 0, 24)
-        closeBtn.Position = UDim2.new(1, -54, 0, 0)
-        closeBtn.BackgroundColor3 = Color3.fromRGB(160,50,50)
-        closeBtn.BorderSizePixel = 0
-        closeBtn.Font = Enum.Font.SourceSansBold
-        closeBtn.TextSize = 14
-        closeBtn.TextColor3 = Color3.fromRGB(255,255,255)
-        closeBtn.Text = "Close"
-        closeBtn.MouseButton1Click:Connect(function()
-            if logGui then pcall(function() logGui:Destroy() end) end
-            logGui, logFrame, logText, logArea = nil, nil, nil, nil
-        end)
-
-        local copyBtn = Instance.new("TextButton")
-        copyBtn.Parent = logFrame
-        copyBtn.Size = UDim2.new(0, 54, 0, 24)
-        copyBtn.Position = UDim2.new(1, -108, 0, 0)
-        copyBtn.BackgroundColor3 = Color3.fromRGB(50,140,60)
-        copyBtn.BorderSizePixel = 0
-        copyBtn.Font = Enum.Font.SourceSansBold
-        copyBtn.TextSize = 14
-        copyBtn.TextColor3 = Color3.fromRGB(255,255,255)
-        copyBtn.Text = "Copy"
-        copyBtn.MouseButton1Click:Connect(function()
-            setClipboard(table.concat(logLines, "\n"))
-        end)
-
-        logArea = Instance.new("ScrollingFrame")
-        logArea.Parent = logFrame
-        logArea.Position = UDim2.new(0, 8, 0, 32)
-        logArea.Size = UDim2.new(1, -16, 1, -40)
-        logArea.BackgroundColor3 = Color3.fromRGB(30,30,30)
-        logArea.BorderSizePixel = 0
-        logArea.ScrollBarThickness = 6
-        logArea.CanvasSize = UDim2.new(0, 0, 0, 0)
-
-        logText = Instance.new("TextLabel")
-        logText.Parent = logArea
-        logText.BackgroundTransparency = 1
-        logText.Size = UDim2.new(1, -10, 0, 0)
-        logText.Position = UDim2.new(0, 0, 0, 0)
-        logText.Font = Enum.Font.Code
-        logText.TextSize = 12
-        logText.TextColor3 = Color3.fromRGB(210,210,210)
-        logText.TextXAlignment = Enum.TextXAlignment.Left
-        logText.TextYAlignment = Enum.TextYAlignment.Top
-        logText.TextWrapped = true
-        logText.Text = ""
-
-        local function refreshText()
-            if not (logText and logText.Parent) then return end
-            logText.Text = table.concat(logLines, "\n")
-            task.defer(function()
-                if logText and logArea then
-                    local h = logText.TextBounds.Y + 8
-                    logText.Size = UDim2.new(1, -10, 0, h)
-                    logArea.CanvasSize = UDim2.new(0, 0, 0, h)
-                    logArea.CanvasPosition = Vector2.new(0, math.max(0, h - logArea.AbsoluteWindowSize.Y))
+    local function fruitPreNudge(m)
+        if not isFruitModel(m) then return end
+        if not (m and m.Parent) then return end
+        if fruitNudged[m] then return end
+        if inflight[m] and inflight[m].dragging then return end
+        local mp = mainPart(m)
+        if not mp then return end
+        fruitNudged[m] = true
+        task.spawn(function()
+            local tmp = { dragging = false, stopped = false }
+            tryStartDrag(m, tmp)
+            for _,p in ipairs(allParts(m)) do
+                pcall(function() p:SetNetworkOwner(lp) end)
+                p.AssemblyLinearVelocity  = Vector3.new()
+                p.AssemblyAngularVelocity = Vector3.new()
+            end
+            local mass = math.max(mp:GetMass(), 1)
+            local dir = Vector3.new((math.random() - 0.5) * 2, 0, (math.random() - 0.5) * 2)
+            if dir.Magnitude < 0.2 then dir = Vector3.new(1, 0, 0) else dir = dir.Unit end
+            pcall(function() mp:ApplyImpulse(dir * (120 * mass) + Vector3.new(0, 80 * mass, 0)) end)
+            pcall(function()
+                mp:ApplyAngularImpulse(Vector3.new(
+                    (math.random() - 0.5) * 300,
+                    (math.random() - 0.5) * 300,
+                    (math.random() - 0.5) * 300
+                ) * mass)
+            end)
+            task.delay(0.18, function() tryStopDrag(m, tmp) end)
+            task.delay(0.9, function()
+                for _,p in ipairs(allParts(m)) do
+                    pcall(function() p:SetNetworkOwner(nil) end)
+                    pcall(function()
+                        if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end
+                    end)
                 end
             end)
-        end
-
-        logGui:SetAttribute("__refresh__", 0)
-        logGui:GetAttributeChangedSignal("__refresh__"):Connect(refreshText)
-        refreshText()
+        end)
     end
 
-    local function logLine(s)
-        ensureLogger()
-        local ts = string.format("%.3f", os.clock())
-        logLines[#logLines+1] = ("[%s] %s"):format(ts, tostring(s))
-        if #logLines > LOG_MAX_LINES then
-            table.remove(logLines, 1)
-        end
-        if logGui and logGui.Parent then
-            logGui:SetAttribute("__refresh__", (logGui:GetAttribute("__refresh__") or 0) + 1)
-        end
+    local function isAirMode()
+        return CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs"
     end
 
-    -- ===== Debug counters per scan tick =====
-    local function newCounters()
-        return {
-            parts = 0,
-            rootsResolved = 0,
-            uniqRootsResolved = 0,
-            acceptedRoots = 0,
-            started = 0,
-            skip = {},
-            samples = {}
-        }
+    local function markDoneThisRun(m)
+        if not (m and m.Parent) then return end
+        pcall(function()
+            m:SetAttribute(INFLT_ATTR, nil)
+            m:SetAttribute(JOB_ATTR, nil)
+            if CURRENT_RUN_ID then m:SetAttribute(DONE_ATTR, CURRENT_RUN_ID) end
+        end)
+        finalized[m] = true
+        inflight[m] = nil
     end
 
-    local function bumpSkip(cnt, key, sample)
-        cnt.skip[key] = (cnt.skip[key] or 0) + 1
-        if sample then
-            local a = cnt.samples[key]
-            if not a then a = {} cnt.samples[key] = a end
-            if #a < 4 then a[#a+1] = sample end
-        end
-    end
-
-    local function dumpCounters(cnt, label)
-        logLine(("%s parts=%d rootsResolved=%d uniqResolved=%d accepted=%d started=%d active=%d queued=%d pendingConfirm=%d")
-            :format(label, cnt.parts or 0, cnt.rootsResolved or 0, cnt.uniqRootsResolved or 0, cnt.acceptedRoots or 0, cnt.started or 0, activeCount, #releaseQueue, (function()
-                local n = 0
-                for _ in pairs(pendingConfirm) do n = n + 1 end
-                return n
-            end)()))
-        for k,v in pairs(cnt.skip or {}) do
-            local samp = cnt.samples and cnt.samples[k]
-            local extra = ""
-            if samp and #samp > 0 then
-                extra = " samples=" .. table.concat(samp, ", ")
-            end
-            logLine(("  skip[%s]=%d%s"):format(k, v, extra))
-        end
-    end
-
-    -- ===== Selection rules =====
-    local function canPick_LogOnly(m, jobId)
-        if not (m and m.Parent) then return false, "no_parent" end
-        if not (m:IsA("Model") or m:IsA("BasePart")) then return false, "not_model_or_part" end
-        if isExcludedInst(m) then return false, "excluded" end
+    local function canPick(m, selectedSet, jobId)
+        if not (m and m.Parent) then return false end
+        if not (m:IsA("Model") or m:IsA("BasePart")) then return false end
+        if finalized[m] then return false end
+        if pendingConfirm[m] then return false end
 
         local itemsFolder = itemsRootOrNil()
-        if not itemsFolder then return false, "no_items_folder" end
-        if not m:IsDescendantOf(itemsFolder) then return false, "not_in_items" end
-        if not isDirectItemChild(m) then return false, "not_direct_child" end
+        if itemsFolder and m:IsDescendantOf(itemsFolder) and not isDirectItemChild(m) then
+            return false
+        end
 
-        if not nameMatches_LogOnly(m) then return false, "not_log" end
+        if itemsFolder and not m:IsDescendantOf(itemsFolder) then
+            local nm0 = m.Name or ""
+            if not (ALLOW_OUTSIDE_ITEMS[nm0] and selectedSet and selectedSet[nm0]) then
+                return false
+            end
+        end
+
+        if isExcludedInst(m) then return false end
+
+        local done = m:GetAttribute(DONE_ATTR)
+        if done and CURRENT_RUN_ID and tostring(done) == tostring(CURRENT_RUN_ID) then return false end
 
         local tIn = m:GetAttribute(INFLT_ATTR)
         local jIn = m:GetAttribute(JOB_ATTR)
-        if tIn and jIn and tostring(jIn) ~= tostring(jobId) then
-            return false, "inflight_other_job"
+        local age = tIn and (os.clock() - tIn) or nil
+        if tIn and jIn and tostring(jIn) ~= tostring(jobId) and age and age < STUCK_TTL then
+            return false
         end
-
-        if pendingConfirm[m] then
-            return false, "pending_confirm"
-        end
-
-        local done = m:GetAttribute(DONE_ATTR)
-        if done and tostring(done) == tostring(jobId) then
-            return false, "done_this_jobid"
-        end
-
-        return true, "ok"
+        if not nameMatches(selectedSet, m) then return false end
+        return true
     end
 
-    local function nearestRootFromPart(part, jobId)
-        if not (part and part:IsA("BasePart")) then return nil, "not_basepart" end
-        local itemsFolder = itemsRootOrNil()
-        if not itemsFolder then return nil, "no_items_folder" end
-        if not part:IsDescendantOf(itemsFolder) then return nil, "part_not_in_items" end
-
-        local root = rootItemUnderItems(part)
-        if not root then return nil, "no_root_under_items" end
-
-        local ok, why = canPick_LogOnly(root, jobId)
-        if not ok then
-            return root, why
-        end
-        return root, "ok"
+    local function currentSelectedSet()
+        if CURRENT_MODE == "fuel" then return fuelModeSet end
+        if CURRENT_MODE == "scrap" then return scrapModeSet end
+        if CURRENT_MODE == "scrap_logs" then return logOnlySet end
+        if CURRENT_MODE == "all" then return allModeSet end
+        return nil
     end
 
-    local function collectLogs(jobId, maxDist)
-        local cnt = newCounters()
+    local CUSTOM_ORB_BASES = {
+        Vector3.new(-27.85, 4.05 + GROUND_ORB_DROP_HEIGHT, 50.82),
+        Vector3.new( -6.68, 4.05 + GROUND_ORB_DROP_HEIGHT, 47.66),
+        Vector3.new( 14.50, 4.05 + GROUND_ORB_DROP_HEIGHT, 44.50),
+        Vector3.new( 35.67, 4.05 + GROUND_ORB_DROP_HEIGHT, 41.33),
+    }
+    local orbGroundBases = { nil, nil, nil, nil }
+
+    local function computeOrbGroundBase(index)
+        local base = CUSTOM_ORB_BASES[index]
+        if not base then return nil end
+        local origin = base + Vector3.new(0, 80, 0)
+        local dir    = Vector3.new(0, -300, 0)
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        local ignore = {}
         local itemsFolder = itemsRootOrNil()
-        if not itemsFolder then
-            bumpSkip(cnt, "no_items_folder")
-            return {}, cnt
+        if itemsFolder then ignore[#ignore+1] = itemsFolder end
+        local ch = lp.Character
+        if ch then ignore[#ignore+1] = ch end
+        rp.FilterDescendantsInstances = ignore
+        rp.IgnoreWater = true
+        local result = WS:Raycast(origin, dir, rp)
+        if result and result.Position then return result.Position end
+        return base
+    end
+
+    local function getOrbBasePosition(index)
+        if not orbGroundBases[index] then
+            orbGroundBases[index] = computeOrbGroundBase(index)
         end
+        return orbGroundBases[index]
+    end
+
+    local orbItemSets = { {}, {}, {}, {} }
+    local orbEnabled = { false, false, false, false }
+    local orbUnionSet = {}
+
+    local function recomputeOrbUnionSet()
+        orbUnionSet = {}
+        for i = 1, 4 do
+            if orbEnabled[i] then
+                for name,_ in pairs(orbItemSets[i]) do orbUnionSet[name] = true end
+            end
+        end
+    end
+
+    local function orbIndexForModel(m)
+        for i = 1, 4 do
+            local set = orbItemSets[i]
+            if orbEnabled[i] and next(set) ~= nil and nameMatches(set, m) then
+                return i
+            end
+        end
+        return nil
+    end
+
+    local orbDropdownValues = {
+        cloneArray(groupedItemValues),
+        cloneArray(groupedItemValues),
+        cloneArray(groupedItemValues),
+        cloneArray(groupedItemValues),
+    }
+
+    local overlapParams = OverlapParams.new()
+    overlapParams.MaxParts = 1200
+
+    local function refreshOverlapFilter()
+        local itemsFolder = itemsRootOrNil()
+        if itemsFolder then
+            overlapParams.FilterType = Enum.RaycastFilterType.Include
+            overlapParams.FilterDescendantsInstances = { itemsFolder }
+        else
+            overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+            overlapParams.FilterDescendantsInstances = { lp.Character }
+        end
+    end
+
+    local function collectCandidatesFromSet_FullScan(selectedSet, jobId, maxDist)
+        if not selectedSet then return {} end
+        local itemsFolder = itemsRootOrNil()
+        local root = hrp()
+        if not root then return {} end
+        local rootPos = root.Position
+        local uniq, out = {}, {}
+        if itemsFolder then
+            for _,d in ipairs(itemsFolder:GetChildren()) do
+                if (d:IsA("Model") or d:IsA("BasePart")) and canPick(d, selectedSet, jobId) then
+                    local mp = mainPart(d)
+                    if mp then
+                        local dist = (mp.Position - rootPos).Magnitude
+                        if (not maxDist) or dist <= maxDist then
+                            uniq[d] = true
+                            out[#out+1] = d
+                        end
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    local function collectCandidatesFromSet(selectedSet, jobId, maxDist)
+        if not selectedSet then return {} end
+        local itemsFolder = itemsRootOrNil()
+        if not itemsFolder then return {} end
 
         local root = hrp()
-        if not root then
-            bumpSkip(cnt, "no_hrp")
-            return {}, cnt
-        end
-
+        if not root then return {} end
         local origin = root.Position
         local rad = maxDist or MAX_DIST_DEFAULT
 
         refreshOverlapFilter()
+
         local ok, parts = pcall(function()
             return WS:GetPartBoundsInRadius(origin, rad, overlapParams)
         end)
-
         if not ok or type(parts) ~= "table" then
-            bumpSkip(cnt, "overlap_failed")
-            local out = {}
-            local uniq = {}
-            for _,d in ipairs(itemsFolder:GetChildren()) do
-                if (d:IsA("Model") or d:IsA("BasePart")) then
-                    local mp = mainPart(d)
-                    if mp then
-                        local dist = (mp.Position - origin).Magnitude
-                        if dist <= rad then
-                            local ok2, why = canPick_LogOnly(d, jobId)
-                            if ok2 then
-                                if not uniq[d] then
-                                    uniq[d] = true
-                                    out[#out+1] = d
-                                end
-                            else
-                                bumpSkip(cnt, why, (d.Name or "?"))
-                            end
-                        end
-                    end
-                end
-            end
-            cnt.uniqRootsResolved = #out
-            cnt.acceptedRoots = #out
-            return out, cnt
+            return collectCandidatesFromSet_FullScan(selectedSet, jobId, maxDist)
         end
 
-        cnt.parts = #parts
-
-        local resolvedUniq = {}
-        local acceptedUniq = {}
-        local out = {}
-
+        local uniq, out = {}, {}
         for _,p in ipairs(parts) do
             if p and p.Parent and p:IsA("BasePart") then
-                local r, why = nearestRootFromPart(p, jobId)
-                if r then
-                    if not resolvedUniq[r] then
-                        resolvedUniq[r] = true
-                    end
-                    cnt.rootsResolved = cnt.rootsResolved + 1
-
-                    if why == "ok" then
-                        if not acceptedUniq[r] then
-                            acceptedUniq[r] = true
-                            out[#out+1] = r
-                        end
-                    else
-                        bumpSkip(cnt, why, (p.Name or "?") .. "->" .. (r.Name or "?"))
-                    end
-                else
-                    bumpSkip(cnt, why, (p.Name or "?"))
+                local m = nearestSelectedModelFromPart(p, selectedSet)
+                if m and not uniq[m] and canPick(m, selectedSet, jobId) then
+                    uniq[m] = true
+                    out[#out+1] = m
                 end
             end
         end
 
-        local nResolved = 0
-        for _ in pairs(resolvedUniq) do nResolved = nResolved + 1 end
-        local nAccepted = 0
-        for _ in pairs(acceptedUniq) do nAccepted = nAccepted + 1 end
-        cnt.uniqRootsResolved = nResolved
-        cnt.acceptedRoots = nAccepted
-
-        return out, cnt
+        return out
     end
 
-    -- ===== Drop placement near scrapper =====
+    local function getCandidatesForCurrent(jobId)
+        return collectCandidatesFromSet(currentSelectedSet(), jobId, MAX_DIST_DEFAULT)
+    end
+
+    local function destroyOrb()
+        if touchConn then pcall(function() touchConn:Disconnect() end) end
+        touchConn = nil
+        if orb then pcall(function() orb:Destroy() end) end
+        if orbTouch then pcall(function() orbTouch:Destroy() end) end
+        orb = nil
+        orbTouch = nil
+        orbPosVec = nil
+    end
+
+    local function campfireOrbPos()
+        local fire = WS:FindFirstChild("Map") and WS.Map:FindFirstChild("Campground") and WS.Map.Campground:FindFirstChild("MainFire")
+        if not fire then return nil end
+        local mp = mainPart(fire)
+        local cf = (mp and mp.CFrame) or fire:GetPivot()
+        return cf.Position + Vector3.new(0, ORB_HEIGHT + 3, 0)
+    end
+
+    local function scrapperOrbPos()
+        local scr = WS:FindFirstChild("Map") and WS.Map:FindFirstChild("Campground") and WS.Map.Campground:FindFirstChild("Scrapper")
+        if not scr then return nil end
+        local mp = mainPart(scr)
+        local cf = (mp and mp.CFrame) or scr:GetPivot()
+        return cf.Position + Vector3.new(0, ORB_HEIGHT, 0)
+    end
+
+    local function noticeOrbPos()
+        local map = WS:FindFirstChild("Map")
+        if not map then return nil end
+        local camp = map:FindFirstChild("Campground")
+        if not camp then return nil end
+        local board = camp:FindFirstChild("NoticeBoard")
+        if not board then
+            for _,d in ipairs(camp:GetDescendants()) do
+                if d:IsA("Model") and d.Name == "NoticeBoard" then board = d break end
+            end
+        end
+        if not board then return nil end
+        local mp = mainPart(board)
+        if not mp then
+            local cf = board:GetPivot()
+            return cf.Position + Vector3.new(0, ORB_HEIGHT + 4, 0)
+        end
+        local cf = mp.CFrame
+        local forward = cf.LookVector
+        local edgeOffset = (mp.Size.Z * 0.5) + 1.0
+        local pos = cf.Position + forward * edgeOffset
+        return pos + Vector3.new(0, ORB_HEIGHT + 1, 0)
+    end
+
+    local function markForConfirm(m)
+        if not (m and m.Parent) then return end
+        pendingConfirm[m] = { at = os.clock(), runId = CURRENT_RUN_ID }
+        pcall(function()
+            m:SetAttribute(INFLT_ATTR, nil)
+            m:SetAttribute(JOB_ATTR, nil)
+        end)
+        inflight[m] = nil
+        finalized[m] = nil
+    end
+
+    local function processPendingConfirm()
+        if not CURRENT_RUN_ID then
+            pendingConfirm = {}
+            return
+        end
+
+        local itemsFolder = itemsRootOrNil()
+        local now = os.clock()
+
+        for m,info in pairs(pendingConfirm) do
+            if not m then
+                pendingConfirm[m] = nil
+            else
+                local alive = (m.Parent ~= nil)
+                local inItems = alive and itemsFolder and m:IsDescendantOf(itemsFolder)
+
+                if (not alive) or (itemsFolder and (not inItems)) then
+                    pcall(function()
+                        m:SetAttribute(DONE_ATTR, CURRENT_RUN_ID)
+                    end)
+                    pendingConfirm[m] = nil
+                else
+                    local t0 = (info and info.at) or now
+                    if (now - t0) >= CONFIRM_WINDOW_S then
+                        pendingConfirm[m] = nil
+                        pcall(function()
+                            m:SetAttribute(DONE_ATTR, nil)
+                            m:SetAttribute(INFLT_ATTR, nil)
+                            m:SetAttribute(JOB_ATTR, nil)
+                        end)
+                    end
+                end
+            end
+        end
+    end
+
+    local function finalizeAirDelivery(m, rec)
+        if not (m and m.Parent and rec) then return end
+        rec.dropping = false
+        setAnchored(m, false)
+        setCollideFromSnapshot(rec.snap)
+        for _,p in ipairs(allParts(m)) do
+            pcall(function() p:SetNetworkOwner(nil) end)
+            pcall(function()
+                if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end
+            end)
+        end
+        local now = os.clock()
+        pcall(function()
+            m:SetAttribute(SENT_DELIV_ATTR, now)
+        end)
+        local tries = tonumber(m:GetAttribute(SENT_TRIES_ATTR)) or 1
+        pendingRetry[m] = { mode = CURRENT_MODE, at = now, tries = tries }
+        markForConfirm(m)
+    end
+
+    local function spawnOrbAt(pos, color, withTouchOrb)
+        destroyOrb()
+
+        local o = Instance.new("Part")
+        o.Name = "tp_orb_fixed"
+        o.Shape = Enum.PartType.Ball
+        o.Size = Vector3.new(1.5,1.5,1.5)
+        o.Material = Enum.Material.Neon
+        o.Color = color or Color3.fromRGB(80,180,255)
+        o.Transparency = 1
+        o.Anchored, o.CanCollide, o.CanTouch, o.CanQuery = true,false,false,false
+        o.CFrame = CFrame.new(pos)
+        o.Parent = WS
+
+        orb = o
+        orbPosVec = orb.Position
+
+        if withTouchOrb then
+            local t = Instance.new("Part")
+            t.Name = "tp_orb_touch"
+            t.Shape = Enum.PartType.Ball
+            t.Size = Vector3.new(AIR_TOUCH_ORB_SIZE, AIR_TOUCH_ORB_SIZE, AIR_TOUCH_ORB_SIZE)
+            t.Material = Enum.Material.Neon
+            t.Color = Color3.fromRGB(255, 90, 90)
+            t.Transparency = 1
+            t.Anchored = true
+            t.CanCollide = false
+            t.CanQuery = false
+            t.CanTouch = true
+            t.CFrame = CFrame.new(pos - Vector3.new(0, AIR_TOUCH_DROP_OFFSET_Y, 0))
+            t.Parent = WS
+            orbTouch = t
+
+            touchConn = t.Touched:Connect(function(hit)
+                if not (running and isAirMode()) then return end
+                if not hit or not hit.Parent then return end
+                local m = rootItemUnderItems(hit)
+                if not m then return end
+                local rec = inflight[m]
+                if not rec then return end
+                if rec.dropKind ~= "air" then return end
+                if not rec.dropping then return end
+                finalizeAirDelivery(m, rec)
+            end)
+        end
+    end
+
+    local function hash01(s)
+        local h = 131071
+        for i = 1, #s do h = (h * 131 + string.byte(s, i)) % 1000003 end
+        return (h % 100000) / 100000
+    end
+
+    local function landingOffset(m, jobId)
+        local key = (typeof(m.GetDebugId)=="function" and m:GetDebugId() or (m.Name or "")) .. tostring(jobId)
+        local r1 = hash01(key .. "a")
+        local r2 = hash01(key .. "b")
+        local ang = r1 * math.pi * 2
+        local rad = LAND_MIN + (LAND_MAX - LAND_MIN) * r2
+        return Vector3.new(math.cos(ang)*rad, 0, math.sin(ang)*rad)
+    end
+
     local function raycastDownAtXZ(xz, ignoreModel)
         local itemsFolder = itemsRootOrNil()
         local ch = lp.Character
@@ -569,39 +861,21 @@ return function(C, R, UI)
         return Vector3.new(xz.X, 0, xz.Z)
     end
 
-    local function hash01(s)
-        local h = 131071
-        for i = 1, #s do h = (h * 131 + string.byte(s, i)) % 1000003 end
-        return (h % 100000) / 100000
-    end
-
-    local LAND_MIN = 0.35
-    local LAND_MAX = 0.85
-    local HOVER_ABOVE_ORB = 1.2
-
-    local function landingOffset(m, jobId)
-        local key = (typeof(m.GetDebugId)=="function" and m:GetDebugId() or (m.Name or "")) .. tostring(jobId)
-        local r1 = hash01(key .. "a")
-        local r2 = hash01(key .. "b")
-        local ang = r1 * math.pi * 2
-        local rad = LAND_MIN + (LAND_MAX - LAND_MIN) * r2
-        return Vector3.new(math.cos(ang)*rad, 0, math.sin(ang)*rad)
-    end
-
-    local function stageForRelease(m, snap, destKey, centerXZ)
+    local function stageForRelease(m, snap, tgt, destKey, centerXZ, dropKind)
         setAnchored(m, true)
         for _,p in ipairs(allParts(m)) do
             p.CanCollide = false
             p.AssemblyLinearVelocity  = Vector3.new()
             p.AssemblyAngularVelocity = Vector3.new()
         end
+        if tgt then setPivot(m, CFrame.new(tgt)) end
         local info = inflight[m]
         if info then
             info.staged = true
             info.stagedAt = os.clock()
             info.snap = snap
         end
-        releaseQueue[#releaseQueue+1] = { model = m, snap = snap, destKey = destKey or "scrap", centerXZ = centerXZ }
+        releaseQueue[#releaseQueue+1] = { model = m, snap = snap, destKey = destKey or "default", centerXZ = centerXZ, dropKind = dropKind or "ground" }
     end
 
     local function releaseOne(rec)
@@ -612,6 +886,30 @@ return function(C, R, UI)
         local snap = (rec and rec.snap) or (info and info.snap) or snapshotCollide(m)
         if info then tryStopDrag(m, info) end
 
+        if rec and rec.dropKind == "air" and orbPosVec then
+            local pos = orbPosVec + Vector3.new(0, AIR_RELEASE_UP, 0)
+            setPivot(m, CFrame.new(pos))
+            setAnchored(m, false)
+            zeroAssembly(m)
+
+            for _,p in ipairs(allParts(m)) do
+                p.CanCollide = false
+                pcall(function() p:SetNetworkOwner(nil) end)
+                pcall(function()
+                    if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end
+                end)
+                p.AssemblyLinearVelocity = Vector3.new(0, AIR_RETRY_PUSH_DOWN_VY, 0)
+            end
+
+            if info then
+                info.released = true
+                info.dropping = true
+                info.droppingAt = os.clock()
+                info.snap = snap
+            end
+            return
+        end
+
         local center = rec and rec.centerXZ
         if not center then
             local mp = mainPart(m)
@@ -619,8 +917,8 @@ return function(C, R, UI)
             center = Vector3.new(p.X, 0, p.Z)
         end
 
-        dropStacks[rec.destKey or "scrap"] = (dropStacks[rec.destKey or "scrap"] or 0) + 1
-        local idx = dropStacks[rec.destKey or "scrap"]
+        dropStacks[rec.destKey or "default"] = (dropStacks[rec.destKey or "default"] or 0) + 1
+        local idx = dropStacks[rec.destKey or "default"]
         local ang = idx * 2.399963229728653
         local rad = math.min(8.0, 0.8 * math.sqrt(math.max(idx, 1)))
         local off2d = Vector3.new(math.cos(ang) * rad, 0, math.sin(ang) * rad)
@@ -643,12 +941,7 @@ return function(C, R, UI)
             end)
         end
 
-        inflight[m] = nil
-        pendingConfirm[m] = { t = os.clock(), runId = tostring(CURRENT_RUN_ID), name = (m.Name or "?") }
-        pcall(function()
-            m:SetAttribute(INFLT_ATTR, nil)
-            m:SetAttribute(JOB_ATTR, nil)
-        end)
+        markDoneThisRun(m)
     end
 
     local function abortRestore(m, rec)
@@ -679,15 +972,26 @@ return function(C, R, UI)
         inflight[m] = nil
     end
 
-    local function startConveyor_Log(m, jobId, destBaseVec)
-        if not (running and m and m.Parent) then return false, "not_running_or_no_parent" end
-        local mp = mainPart(m)
-        if not mp then return false, "no_mainpart" end
-        if not destBaseVec then return false, "no_dest" end
+    local function markSentAttempt(m)
+        if not (m and m.Parent) then return end
+        if not isAirMode() then return end
+        local now = os.clock()
+        local tries = tonumber(m:GetAttribute(SENT_TRIES_ATTR)) or 0
+        tries = tries + 1
+        pcall(function()
+            m:SetAttribute(SENT_MODE_ATTR, CURRENT_MODE)
+            m:SetAttribute(SENT_TRIES_ATTR, tries)
+            m:SetAttribute(SENT_LAST_ATTR, now)
+        end)
+    end
 
-        local ok, why = canPick_LogOnly(m, jobId)
-        if not ok then return false, "canpick_" .. tostring(why) end
-        if inflight[m] then return false, "already_inflight" end
+    local function startConveyor(m, jobId, destBaseVec, destKey, dropKind)
+        if not (running and m and m.Parent) then return end
+        local mp = mainPart(m)
+        if not mp then return end
+        if not destBaseVec then return end
+
+        if isFruitModel(m) then fruitPreNudge(m) end
 
         local off = landingOffset(m, jobId)
         local function target()
@@ -699,6 +1003,10 @@ return function(C, R, UI)
             m:SetAttribute(JOB_ATTR, jobId)
         end)
 
+        if dropKind == "air" and isAirMode() then
+            markSentAttempt(m)
+        end
+
         local snap = setNoCollide(m)
         setAnchored(m, true)
         zeroAssembly(m)
@@ -709,16 +1017,223 @@ return function(C, R, UI)
             lastD = math.huge,
             lastT = os.clock(),
             staged = false,
+            released = false,
+            dropping = false,
+            droppingAt = nil,
             dragging = false,
             stopped = false,
             counted = true,
+            destKey = destKey or "default",
+            off = off,
             centerXZ = centerXZ,
+            dropKind = dropKind or "ground",
             targetFn = target
         }
         inflight[m] = rec
         activeCount = activeCount + 1
         tryStartDrag(m, rec)
-        return true, "ok"
+    end
+
+    local function flushStaleStaged()
+        local now = os.clock()
+        for m,info in pairs(inflight) do
+            if info and info.staged and not info.released and (now - (info.stagedAt or now)) >= STAGE_TIMEOUT_S then
+                local queued = false
+                for _,rec in ipairs(releaseQueue) do
+                    if rec.model == m then queued = true break end
+                end
+                if not queued then
+                    releaseQueue[#releaseQueue+1] = {
+                        model = m,
+                        snap = info.snap or snapshotCollide(m),
+                        destKey = info.destKey or "default",
+                        centerXZ = info.centerXZ,
+                        dropKind = info.dropKind or "ground"
+                    }
+                end
+            end
+        end
+    end
+
+    local function teleportModelToGround(m)
+        local mp = mainPart(m)
+        if not (mp and mp.Parent) then return end
+        local xz = Vector3.new(mp.Position.X, 0, mp.Position.Z)
+        local hit = raycastDownAtXZ(xz, m)
+        setPivot(m, CFrame.new(hit + Vector3.new(0, PLACE_UP, 0)))
+    end
+
+    local function setUnstickEnabled(on)
+        if on then
+            if unstickConn then return end
+            local acc = 0
+            unstickConn = Run.Heartbeat:Connect(function(dt)
+                if not (running and orbPosVec) then return end
+                acc = acc + dt
+                if acc < (1 / ORB_UNSTICK_HZ) then return end
+                acc = 0
+
+                local itemsFolder = itemsRootOrNil()
+                if not itemsFolder then return end
+                local ch = lp.Character
+                local root = ch and ch:FindFirstChild("HumanoidRootPart")
+                if not root then return end
+
+                local originBase = root.Position + Vector3.new(0, 5, 0)
+                local rp = RaycastParams.new()
+                rp.FilterType = Enum.RaycastFilterType.Include
+                rp.FilterDescendantsInstances = {itemsFolder}
+                rp.IgnoreWater = true
+
+                local directions = {
+                    Vector3.new(1,0,0),Vector3.new(-1,0,0),Vector3.new(0,0,1),Vector3.new(0,0,-1),
+                    Vector3.new(1,0,1).Unit,Vector3.new(-1,0,1).Unit,Vector3.new(1,0,-1).Unit,Vector3.new(-1,0,-1).Unit,
+                }
+                local RAY_DISTANCE = 200
+                local seen = {}
+                local now = os.clock()
+
+                local function handleHit(result)
+                    if not result or not result.Instance then return end
+                    local m = rootItemUnderItems(result.Instance)
+                    if not m or seen[m] then return end
+                    seen[m] = true
+
+                    local mp = mainPart(m)
+                    if not mp then return end
+                    if (mp.Position - orbPosVec).Magnitude > ORB_UNSTICK_RAD then return end
+
+                    local tIn  = m:GetAttribute(INFLT_ATTR)
+                    local jIn  = m:GetAttribute(JOB_ATTR)
+                    local info = inflight[m]
+                    local age  = tIn and (now - tIn) or nil
+
+                    local stuck = false
+                    if not tIn or not jIn then stuck = true end
+                    if not info then stuck = true end
+                    if age and age >= STUCK_TTL then stuck = true end
+                    if not stuck then return end
+
+                    finalized[m] = true
+                    inflight[m] = nil
+                    teleportModelToGround(m)
+
+                    for _,p in ipairs(allParts(m)) do
+                        p.Anchored = false
+                        p.AssemblyAngularVelocity = Vector3.new()
+                        p.AssemblyLinearVelocity  = Vector3.new()
+                        p.CanCollide = true
+                        pcall(function() p:SetNetworkOwner(nil) end)
+                        pcall(function()
+                            if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end
+                        end)
+                    end
+                end
+
+                for _,dir in ipairs(directions) do
+                    handleHit(WS:Raycast(originBase, dir * RAY_DISTANCE, rp))
+                end
+            end)
+        else
+            if unstickConn then unstickConn:Disconnect() end
+            unstickConn = nil
+        end
+    end
+
+    local outsideLogAcc = 0
+    local outsideLogCache = {}
+
+    local function collectOutsideLogs(jobId)
+        if not OUTSIDE_LOGS_ENABLED then return {} end
+        local root = hrp()
+        if not root then return {} end
+        local origin = root.Position
+        local itemsFolder = itemsRootOrNil()
+        local uniq, out = {}, {}
+        for _,d in ipairs(WS:GetDescendants()) do
+            if d:IsA("BasePart") and d.Name == "Log" then
+                if itemsFolder and d:IsDescendantOf(itemsFolder) then
+                else
+                    if not isUnderLogWall(d) then
+                        local dist = (d.Position - origin).Magnitude
+                        if dist <= OUTSIDE_LOG_MAX_DIST then
+                            local m = d:FindFirstAncestorOfClass("Model") or d
+                            if m and not uniq[m] then
+                                uniq[m] = true
+                                out[#out+1] = m
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        local filtered = {}
+        local selectedSet = currentSelectedSet()
+        for i = 1, #out do
+            local m = out[i]
+            if canPick(m, selectedSet, jobId) then
+                filtered[#filtered+1] = m
+            end
+        end
+        return filtered
+    end
+
+    local function wave(jobId)
+        if not CURRENT_MODE then return end
+
+        if CURRENT_MODE == "orbs" then
+            local list = collectCandidatesFromSet(orbUnionSet, jobId, maxDistOrbs)
+            for i = 1, #list do
+                if not running then break end
+                if #releaseQueue >= MAX_LINED_ITEMS then break end
+                if activeCount >= MAX_CONCURRENT then break end
+                local m = list[i]
+                if m and m.Parent and not inflight[m] then
+                    local idx = orbIndexForModel(m)
+                    if idx then
+                        local base = getOrbBasePosition(idx)
+                        if base then
+                            startConveyor(m, jobId, base, "orb"..tostring(idx), "ground")
+                        end
+                    end
+                end
+            end
+            return
+        end
+
+        local list = getCandidatesForCurrent(jobId)
+        for i = 1, #list do
+            if not running then break end
+            if #releaseQueue >= MAX_LINED_ITEMS then break end
+            if activeCount >= MAX_CONCURRENT then break end
+            local m = list[i]
+            if m and m.Parent and not inflight[m] then
+                local dest = orbPosVec
+                if dest then
+                    local kind = isAirMode() and "air" or "ground"
+                    startConveyor(m, jobId, dest, "main", kind)
+                end
+            end
+        end
+
+        local sel = currentSelectedSet()
+        if sel and sel["Log"] then
+            if activeCount < MAX_CONCURRENT and #releaseQueue < MAX_LINED_ITEMS then
+                for i = 1, #outsideLogCache do
+                    if not running then break end
+                    if #releaseQueue >= MAX_LINED_ITEMS then break end
+                    if activeCount >= MAX_CONCURRENT then break end
+                    local m = outsideLogCache[i]
+                    if m and m.Parent and not inflight[m] then
+                        local dest = orbPosVec
+                        if dest then
+                            local kind = isAirMode() and "air" or "ground"
+                            startConveyor(m, jobId, dest, "main", kind)
+                        end
+                    end
+                end
+            end
+        end
     end
 
     local function updateInflight(dt)
@@ -738,16 +1253,22 @@ return function(C, R, UI)
                         else
                             local flatDelta = Vector3.new(tgt.X - pos.X, 0, tgt.Z - pos.Z)
                             local distH = flatDelta.Magnitude
+
                             if distH <= ARRIVE_EPS_H and math.abs(tgt.Y - pos.Y) <= 1.2 then
                                 tryStopDrag(m, rec)
                                 if rec.counted then
                                     rec.counted = false
                                     activeCount = math.max(0, activeCount - 1)
                                 end
-                                stageForRelease(m, rec.snap, "scrap", rec.centerXZ)
+                                if rec.dropKind == "air" then
+                                    releaseOne({ model = m, snap = rec.snap, dropKind = "air" })
+                                else
+                                    stageForRelease(m, rec.snap, tgt, rec.destKey, rec.centerXZ, rec.dropKind)
+                                end
                             else
                                 if distH >= rec.lastD - 0.02 then
                                     if os.clock() - rec.lastT >= STALL_SEC then
+                                        rec.off = landingOffset(m, tostring(rec.destKey) .. tostring(os.clock()))
                                         rec.lastT = os.clock()
                                     end
                                 else
@@ -769,35 +1290,86 @@ return function(C, R, UI)
         end
     end
 
-    local function processPendingConfirm()
-        if not CURRENT_RUN_ID then
-            pendingConfirm = {}
+    local function checkAirDeliveries()
+        if not (running and isAirMode() and orbTouch and orbTouch.Parent) then return end
+        local now = os.clock()
+        local touchPos = orbTouch.Position
+        local rad = (AIR_TOUCH_ORB_SIZE * 0.5) + 1.25
+        local rad2 = rad * rad
+
+        for m,rec in pairs(inflight) do
+            if rec and rec.dropKind == "air" and rec.dropping and m and m.Parent then
+                local mp = mainPart(m)
+                if mp then
+                    local dp = mp.Position - touchPos
+                    local d2 = dp.X*dp.X + dp.Y*dp.Y + dp.Z*dp.Z
+                    if d2 <= rad2 then
+                        finalizeAirDelivery(m, rec)
+                    else
+                        local t0 = rec.droppingAt or now
+                        if (now - t0) >= AIR_DROP_TIMEOUT_S and orbPosVec then
+                            local pos = orbPosVec + Vector3.new(0, AIR_RELEASE_UP, 0)
+                            setPivot(m, CFrame.new(pos))
+                            setAnchored(m, false)
+                            zeroAssembly(m)
+                            for _,p in ipairs(allParts(m)) do
+                                p.CanCollide = false
+                                p.AssemblyLinearVelocity = Vector3.new(0, AIR_RETRY_PUSH_DOWN_VY, 0)
+                                pcall(function() p:SetNetworkOwner(nil) end)
+                                pcall(function()
+                                    if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end
+                                end)
+                            end
+                            rec.droppingAt = now
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local function processPendingRetries()
+        if not (running and orbPosVec and isAirMode()) then
+            pendingRetry = {}
             return
         end
-        local itemsFolder = itemsRootOrNil()
+
         local now = os.clock()
-        for m,info in pairs(pendingConfirm) do
-            if not m then
-                pendingConfirm[m] = nil
+        for m,info in pairs(pendingRetry) do
+            if not (m and m.Parent) then
+                pendingRetry[m] = nil
             else
-                local alive = (m.Parent ~= nil)
-                local inItems = alive and itemsFolder and m:IsDescendantOf(itemsFolder)
-                if (not alive) or (itemsFolder and (not inItems)) then
-                    pcall(function()
-                        m:SetAttribute(DONE_ATTR, tostring(CURRENT_RUN_ID))
-                    end)
-                    logLine(("CONFIRM OK: %s removed/left Items"):format(info and info.name or (m.Name or "?")))
-                    pendingConfirm[m] = nil
+                if not info or info.mode ~= CURRENT_MODE then
+                    pendingRetry[m] = nil
                 else
-                    local t0 = info and info.t or now
-                    if (now - t0) >= CONFIRM_WINDOW_S then
-                        logLine(("CONFIRM FAIL: still in Items -> will retry: %s"):format(info and info.name or (m.Name or "?")))
-                        pendingConfirm[m] = nil
-                        pcall(function()
-                            m:SetAttribute(INFLT_ATTR, nil)
-                            m:SetAttribute(JOB_ATTR, nil)
-                            m:SetAttribute(DONE_ATTR, nil)
-                        end)
+                    local at = info.at or now
+                    if (now - at) >= RETRY_AFTER_S then
+                        local tries = tonumber(m:GetAttribute(SENT_TRIES_ATTR)) or (info.tries or 1)
+                        if tries >= RETRY_MAX_TRIES then
+                            pendingRetry[m] = nil
+                        else
+                            local mp = mainPart(m)
+                            if not mp then
+                                pendingRetry[m] = nil
+                            else
+                                local base = orbPosVec
+                                local v = Vector3.new(mp.Position.X - base.X, 0, mp.Position.Z - base.Z)
+                                if v.Magnitude < 0.2 then v = Vector3.new(1,0,0) else v = v.Unit end
+                                local away = base + v * RETRY_PUSH_BACK + Vector3.new(0, AIR_RELEASE_UP, 0)
+
+                                pcall(function()
+                                    setAnchored(m, true)
+                                    setPivot(m, CFrame.new(away))
+                                    zeroAssembly(m)
+                                    setAnchored(m, false)
+                                end)
+
+                                local jobId = tostring(os.clock())
+                                startConveyor(m, jobId, base, "main", "air")
+
+                                pendingRetry[m] = { mode = CURRENT_MODE, at = now, tries = (tries + 1) }
+                            end
+                        end
                     end
                 end
             end
@@ -807,6 +1379,9 @@ return function(C, R, UI)
     local function stopAll()
         running = false
         if hb then hb:Disconnect() hb = nil end
+        setUnstickEnabled(false)
+        pendingRetry = {}
+        pendingConfirm = {}
 
         for i = 1, #releaseQueue do
             local rec = releaseQueue[i]
@@ -819,47 +1394,157 @@ return function(C, R, UI)
         for m,rec in pairs(inflight) do
             abortRestore(m, rec)
         end
+
         inflight = {}
         activeCount = 0
-
-        orbPosVec = nil
-        pendingConfirm = {}
+        destroyOrb()
     end
 
-    local CURRENT_RUN_ID = nil
+    local PRECLAIM_DISTANCE    = 100
+    local PRECLAIM_INTERVAL_S  = 2.5
+    local PRECLAIM_TTL_S       = 18.0
+    local preclaimAcc          = 0
+    local preclaimEnabled      = false
+    local preclaimedAt         = {}
 
-    local function startScrapLogs(state)
-        if not state then
-            logLine("STOP requested")
+    local function setPreclaimEnabled(state)
+        preclaimEnabled = state and true or false
+        if preclaimEnabled then
+            if preclaimConn then return end
+            preclaimAcc = 0
+            preclaimConn = Run.Heartbeat:Connect(function(dt)
+                preclaimAcc = preclaimAcc + dt
+                if preclaimAcc < PRECLAIM_INTERVAL_S then return end
+                preclaimAcc = 0
+                if not preclaimEnabled then return end
+                if not (startDrag and stopDrag) then return end
+
+                local itemsFolder = itemsRootOrNil()
+                if not itemsFolder then return end
+                local campPos = campfireOrbPos()
+                if not campPos then return end
+
+                local ch = lp.Character
+                local root = ch and ch:FindFirstChild("HumanoidRootPart")
+                if not root then return end
+
+                local originBase = root.Position + Vector3.new(0, 5, 0)
+                local rp = RaycastParams.new()
+                rp.FilterType = Enum.RaycastFilterType.Include
+                rp.FilterDescendantsInstances = {itemsFolder}
+                rp.IgnoreWater = true
+
+                local directions = {
+                    Vector3.new(1,0,0),Vector3.new(-1,0,0),Vector3.new(0,0,1),Vector3.new(0,0,-1),
+                    Vector3.new(1,0,1).Unit,Vector3.new(-1,0,1).Unit,Vector3.new(1,0,-1).Unit,Vector3.new(-1,0,-1).Unit,
+                }
+                local RAY_DISTANCE = 200
+                local seen = {}
+                local now = os.clock()
+
+                local function handleHit(result)
+                    if not result or not result.Instance then return end
+                    local m = rootItemUnderItems(result.Instance)
+                    if not m or seen[m] then return end
+                    seen[m] = true
+                    if not m.Parent then return end
+                    if inflight[m] then return end
+                    if isExcludedInst(m) then return end
+                    if not isPreDragImportantModel(m) then return end
+
+                    local mp = mainPart(m)
+                    if not mp then return end
+                    if (mp.Position - campPos).Magnitude <= PRECLAIM_DISTANCE then return end
+
+                    local last = preclaimedAt[m]
+                    if last and (now - last) < PRECLAIM_TTL_S then return end
+                    preclaimedAt[m] = now
+
+                    pcall(function() startDrag:FireServer(m) end)
+                    task.delay(0.14, function()
+                        pcall(function() stopDrag:FireServer(m) end)
+                    end)
+                end
+
+                for _,dir in ipairs(directions) do
+                    handleHit(WS:Raycast(originBase, dir * RAY_DISTANCE, rp))
+                end
+            end)
+        else
+            if preclaimConn then preclaimConn:Disconnect() end
+            preclaimConn = nil
+        end
+    end
+
+    local function startMode(mode)
+        if mode == nil then
+            CURRENT_MODE = nil
+            setPreclaimEnabled(false)
             stopAll()
-            CURRENT_RUN_ID = nil
             return
         end
-
-        local root = hrp()
-        if not root then
-            logLine("START failed: no HRP")
-            return
-        end
-
-        local pos = scrapperOrbPos()
-        if not pos then
-            logLine("START failed: scrapper not found")
-            return
-        end
+        if not hrp() then return end
+        if CURRENT_MODE == mode and running then return end
 
         stopAll()
+        CURRENT_MODE   = mode
         CURRENT_RUN_ID = tostring(os.clock())
-        orbPosVec = pos
-        running = true
-        releaseQueue = {}
-        releaseAcc = 0
-        activeCount = 0
-        dropStacks = {}
+        finalized      = {}
+        fruitNudged    = {}
+        dropStacks     = {}
+        outsideLogCache = {}
+        outsideLogAcc = 0
+        pendingRetry = {}
         pendingConfirm = {}
 
-        logLine(("START runId=%s orbPos=(%.2f,%.2f,%.2f) maxConcurrent=%d maxQueue=%d confirmWindow=%.2fs")
-            :format(CURRENT_RUN_ID, pos.X, pos.Y, pos.Z, MAX_CONCURRENT, MAX_LINED_ITEMS, CONFIRM_WINDOW_S))
+        releaseRateHz = RELEASE_RATE_HZ_DEFAULT
+        maxReleasePerTick = MAX_RELEASE_PER_TICK_DEFAULT
+
+        if mode == "fuel" or mode == "scrap" or mode == "scrap_logs" or mode == "all" then
+            local pos, color, touch
+            if mode == "fuel" then
+                pos   = campfireOrbPos()
+                color = Color3.fromRGB(255,200,50)
+                touch = true
+            elseif mode == "scrap" then
+                pos   = scrapperOrbPos()
+                color = Color3.fromRGB(120,255,160)
+                touch = true
+            elseif mode == "scrap_logs" then
+                pos   = scrapperOrbPos()
+                color = Color3.fromRGB(120,255,160)
+                touch = true
+            elseif mode == "all" then
+                pos   = noticeOrbPos()
+                color = Color3.fromRGB(100,200,255)
+                touch = false
+            end
+            if not pos then CURRENT_MODE = nil return end
+            spawnOrbAt(pos, color, touch)
+            if mode == "all" then
+                setUnstickEnabled(true)
+            else
+                setUnstickEnabled(false)
+            end
+        elseif mode == "orbs" then
+            local any = false
+            for i = 1, 4 do
+                if orbEnabled[i] and next(orbItemSets[i]) ~= nil then any = true break end
+            end
+            if not any then CURRENT_MODE = nil return end
+            destroyOrb()
+            orbPosVec = nil
+            orbGroundBases = { nil, nil, nil, nil }
+            setUnstickEnabled(false)
+        else
+            CURRENT_MODE = nil
+            return
+        end
+
+        running = true
+        releaseQueue = {}
+        releaseAcc   = 0
+        activeCount  = 0
 
         local scanAcc = 0
         local moveAcc = 0
@@ -869,31 +1554,21 @@ return function(C, R, UI)
         hb = Run.Heartbeat:Connect(function(dt)
             if not running then return end
 
-            processPendingConfirm()
+            if isAirMode() then
+                processPendingConfirm()
+            end
 
             scanAcc = scanAcc + dt
             if scanAcc >= SCAN_INTERVAL then
                 scanAcc = scanAcc - SCAN_INTERVAL
-                local jobId = tostring(CURRENT_RUN_ID)
-
-                local list, cnt = collectLogs(jobId, MAX_DIST_DEFAULT)
-
-                for i = 1, #list do
-                    if not running then break end
-                    if #releaseQueue >= MAX_LINED_ITEMS then break end
-                    if activeCount >= MAX_CONCURRENT then break end
-                    local m = list[i]
-                    if m and m.Parent and not inflight[m] and not pendingConfirm[m] then
-                        local ok, why = startConveyor_Log(m, jobId, orbPosVec)
-                        if ok then
-                            cnt.started = (cnt.started or 0) + 1
-                        else
-                            bumpSkip(cnt, "start_" .. tostring(why), (m.Name or "?"))
-                        end
-                    end
+                local jobId = tostring(os.clock())
+                outsideLogAcc = outsideLogAcc + SCAN_INTERVAL
+                local sel = currentSelectedSet()
+                if sel and sel["Log"] and OUTSIDE_LOGS_ENABLED and outsideLogAcc >= OUTSIDE_LOG_SCAN_INT then
+                    outsideLogAcc = 0
+                    outsideLogCache = collectOutsideLogs(jobId)
                 end
-
-                dumpCounters(cnt, "SCAN")
+                wave(jobId)
             end
 
             moveAcc = moveAcc + dt
@@ -903,9 +1578,9 @@ return function(C, R, UI)
                 updateInflight(step)
             end
 
+            checkAirDeliveries()
+
             releaseAcc = releaseAcc + dt
-            local releaseRateHz = 18
-            local maxReleasePerTick = 2
             local interval = 1 / math.max(1, releaseRateHz)
             local toRelease = math.min(maxReleasePerTick, math.floor(releaseAcc / interval))
             if toRelease > 0 then
@@ -916,24 +1591,122 @@ return function(C, R, UI)
                     releaseOne(rec)
                 end
             end
+
+            flushStaleStaged()
+            processPendingRetries()
         end)
     end
 
-    tab:Section({ Title = "TPBring Debug (Logs -> Scrapper only)" })
-
     tab:Toggle({
-        Title = "Send Logs to Scrapper (Debug)",
+        Title = "Send Fuel to Campfire",
         Value = false,
         Callback = function(state)
-            startScrapLogs(state)
+            if state then
+                startMode("fuel")
+            elseif CURRENT_MODE == "fuel" then
+                startMode(nil)
+            end
         end
     })
 
-    tab:Button({
-        Title = "Open Debug Logger",
-        Callback = function()
-            ensureLogger()
-            logLine("Logger opened")
+    tab:Toggle({
+        Title = "Send Scrap to Scrapper",
+        Value = false,
+        Callback = function(state)
+            if state then
+                startMode("scrap")
+            elseif CURRENT_MODE == "scrap" then
+                startMode(nil)
+            end
+        end
+    })
+
+    tab:Toggle({
+        Title = "Send Logs to Scrapper",
+        Value = false,
+        Callback = function(state)
+            if state then
+                startMode("scrap_logs")
+            elseif CURRENT_MODE == "scrap_logs" then
+                startMode(nil)
+            end
+        end
+    })
+
+    tab:Toggle({
+        Title = "Send All Items to NoticeBoard",
+        Value = false,
+        Callback = function(state)
+            if state then
+                startMode("all")
+            elseif CURRENT_MODE == "all" then
+                startMode(nil)
+            end
+        end
+    })
+
+    tab:Section({ Title = "Bring to Orbs (Level 4 Fire Edge)" })
+
+    local function makeOrbDropdown(index)
+        return tab:Dropdown({
+            Title = ("Orb %d Items"):format(index),
+            Values = { unpack(orbDropdownValues[index]) },
+            Multi = true,
+            AllowNone = true,
+            Callback = function(selection)
+                local set = {}
+                if type(selection) == "table" and not selection[1] and selection.Value then selection = selection.Value end
+                if type(selection) == "table" then
+                    for _,name in ipairs(selection) do if name then set[tostring(name)] = true end end
+                elseif selection then
+                    set[tostring(selection)] = true
+                end
+                orbItemSets[index] = set
+                recomputeOrbUnionSet()
+            end
+        })
+    end
+
+    makeOrbDropdown(1)
+    makeOrbDropdown(2)
+    makeOrbDropdown(3)
+    makeOrbDropdown(4)
+
+    tab:Toggle({ Title = "Orb 1 Enabled", Value = false, Callback = function(state) orbEnabled[1] = state and true or false recomputeOrbUnionSet() end })
+    tab:Toggle({ Title = "Orb 2 Enabled", Value = false, Callback = function(state) orbEnabled[2] = state and true or false recomputeOrbUnionSet() end })
+    tab:Toggle({ Title = "Orb 3 Enabled", Value = false, Callback = function(state) orbEnabled[3] = state and true or false recomputeOrbUnionSet() end })
+    tab:Toggle({ Title = "Orb 4 Enabled", Value = false, Callback = function(state) orbEnabled[4] = state and true or false recomputeOrbUnionSet() end })
+
+    tab:Slider({
+        Title = "Ground Orb Search Radius",
+        Value = { Min = 10, Max = 250, Default = MAX_DIST_ORBS_DEFAULT },
+        Callback = function(v)
+            local nv = v
+            if type(v) == "table" then nv = v.Value or v.Current or v.CurrentValue or v.Default or v[1] end
+            nv = tonumber(nv)
+            if nv then maxDistOrbs = math.clamp(nv, 10, 250) else maxDistOrbs = MAX_DIST_ORBS_DEFAULT end
+        end
+    })
+
+    tab:Toggle({
+        Title = "Bring Selected Items to Orbs",
+        Value = false,
+        Callback = function(state)
+            if state then
+                startMode("orbs")
+            elseif CURRENT_MODE == "orbs" then
+                startMode(nil)
+            end
+        end
+    })
+
+    tab:Section({ Title = "Background Utilities" })
+
+    tab:Toggle({
+        Title = "Background Grab Important Items",
+        Value = false,
+        Callback = function(state)
+            setPreclaimEnabled(state)
         end
     })
 
@@ -941,25 +1714,34 @@ return function(C, R, UI)
         pcall(function() charAddedConn:Disconnect() end)
         charAddedConn = nil
     end
-
     charAddedConn = Players.LocalPlayer.CharacterAdded:Connect(function()
-        if running and CURRENT_RUN_ID then
-            local pos = scrapperOrbPos()
-            if pos then
-                orbPosVec = pos
-                logLine(("CharacterAdded: refreshed orbPos=(%.2f,%.2f,%.2f)"):format(pos.X, pos.Y, pos.Z))
-            else
-                logLine("CharacterAdded: scrapper not found (orbPos unchanged)")
+        if running and CURRENT_MODE then
+            if CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs" or CURRENT_MODE == "all" then
+                local pos
+                if CURRENT_MODE == "fuel" then pos = campfireOrbPos()
+                elseif CURRENT_MODE == "scrap" then pos = scrapperOrbPos()
+                elseif CURRENT_MODE == "scrap_logs" then pos = scrapperOrbPos()
+                elseif CURRENT_MODE == "all" then pos = noticeOrbPos() end
+                if pos then
+                    local color = (CURRENT_MODE == "fuel" and Color3.fromRGB(255,200,50))
+                        or ((CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs") and Color3.fromRGB(120,255,160))
+                        or Color3.fromRGB(100,200,255)
+                    local touch = (CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs")
+                    spawnOrbAt(pos, color, touch)
+                end
+            elseif CURRENT_MODE == "orbs" then
+                destroyOrb()
+                orbPosVec = nil
+                orbGroundBases = { nil, nil, nil, nil }
             end
         end
     end)
 
     local function cleanupModule()
+        pcall(function() setPreclaimEnabled(false) end)
         pcall(function() stopAll() end)
         if charAddedConn then pcall(function() charAddedConn:Disconnect() end) end
         charAddedConn = nil
-        if logGui and logGui.Parent then pcall(function() logGui:Destroy() end) end
-        logGui, logFrame, logText, logArea = nil, nil, nil, nil
         if _G.__TPBring__cleanup == cleanupModule then
             _G.__TPBring__cleanup = nil
         end
