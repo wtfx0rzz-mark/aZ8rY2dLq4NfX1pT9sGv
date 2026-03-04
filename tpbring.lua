@@ -170,10 +170,6 @@ return function(C, R, UI)
 
     local function nameMatches_LogOnly(m)
         if not m then return false end
-        local itemsFolder = itemsRootOrNil()
-        if itemsFolder and not m:IsDescendantOf(itemsFolder) then
-            return false
-        end
         return (m.Name or "") == "Log"
     end
 
@@ -227,28 +223,32 @@ return function(C, R, UI)
     local JOB_ATTR   = "OrbJob"
     local DONE_ATTR  = "OrbDelivered"
 
-    local DRAG_SPEED         = 420
-    local ARRIVE_EPS_H       = 1.1
-    local STALL_SEC          = 0.6
-    local SCAN_INTERVAL      = 0.20
-    local MOVE_HZ            = 30
-    local MAX_DIST_DEFAULT   = 500
+    local DRAG_SPEED        = 420
+    local ARRIVE_EPS_H      = 1.1
+    local STALL_SEC         = 0.6
+    local SCAN_INTERVAL     = 0.20
+    local MOVE_HZ           = 30
+    local MAX_DIST_DEFAULT  = 500
 
-    local MAX_CONCURRENT     = 10
-    local MAX_LINED_ITEMS    = 10
+    local MAX_CONCURRENT    = 10
+    local MAX_LINED_ITEMS   = 10
 
-    local SKY_RAY_START_Y    = 320
-    local SKY_RAY_LEN        = 900
-    local PLACE_UP           = 1.6
+    local SKY_RAY_START_Y   = 320
+    local SKY_RAY_LEN       = 900
+    local PLACE_UP          = 1.6
 
-    local running     = false
-    local hb          = nil
-    local orbPosVec   = nil
-    local inflight    = {}
+    local CONFIRM_WINDOW_S  = 1.25
+
+    local running      = false
+    local hb           = nil
+    local orbPosVec    = nil
+    local inflight     = {}
     local releaseQueue = {}
-    local releaseAcc  = 0.0
-    local activeCount = 0
-    local dropStacks  = {}
+    local releaseAcc   = 0.0
+    local activeCount  = 0
+    local dropStacks   = {}
+
+    local pendingConfirm = {} -- [model] = { t=timestamp, runId=..., name=... }
 
     local charAddedConn = nil
 
@@ -375,14 +375,14 @@ return function(C, R, UI)
         end
     end
 
-    -- ===== Debug counters per scan tick (aggregated to avoid spam) =====
+    -- ===== Debug counters per scan tick =====
     local function newCounters()
         return {
             parts = 0,
-            roots = 0,
-            uniqRoots = 0,
-            cand = 0,
-            start = 0,
+            rootsResolved = 0,
+            uniqRootsResolved = 0,
+            acceptedRoots = 0,
+            started = 0,
             skip = {},
             samples = {}
         }
@@ -398,13 +398,12 @@ return function(C, R, UI)
     end
 
     local function dumpCounters(cnt, label)
-        local parts = cnt.parts or 0
-        local roots = cnt.roots or 0
-        local uniq = cnt.uniqRoots or 0
-        local cand = cnt.cand or 0
-        local started = cnt.start or 0
-        logLine(("%s parts=%d roots=%d uniq=%d candidates=%d started=%d active=%d queued=%d")
-            :format(label, parts, roots, uniq, cand, started, activeCount, #releaseQueue))
+        logLine(("%s parts=%d rootsResolved=%d uniqResolved=%d accepted=%d started=%d active=%d queued=%d pendingConfirm=%d")
+            :format(label, cnt.parts or 0, cnt.rootsResolved or 0, cnt.uniqRootsResolved or 0, cnt.acceptedRoots or 0, cnt.started or 0, activeCount, #releaseQueue, (function()
+                local n = 0
+                for _ in pairs(pendingConfirm) do n = n + 1 end
+                return n
+            end)()))
         for k,v in pairs(cnt.skip or {}) do
             local samp = cnt.samples and cnt.samples[k]
             local extra = ""
@@ -415,7 +414,7 @@ return function(C, R, UI)
         end
     end
 
-    -- ===== Candidate selection with reasons =====
+    -- ===== Selection rules =====
     local function canPick_LogOnly(m, jobId)
         if not (m and m.Parent) then return false, "no_parent" end
         if not (m:IsA("Model") or m:IsA("BasePart")) then return false, "not_model_or_part" end
@@ -428,26 +427,37 @@ return function(C, R, UI)
 
         if not nameMatches_LogOnly(m) then return false, "not_log" end
 
-        local done = m:GetAttribute(DONE_ATTR)
-        if done and tostring(done) == tostring(jobId) then return false, "done_this_jobid" end
-
         local tIn = m:GetAttribute(INFLT_ATTR)
         local jIn = m:GetAttribute(JOB_ATTR)
         if tIn and jIn and tostring(jIn) ~= tostring(jobId) then
             return false, "inflight_other_job"
         end
+
+        if pendingConfirm[m] then
+            return false, "pending_confirm"
+        end
+
+        local done = m:GetAttribute(DONE_ATTR)
+        if done and tostring(done) == tostring(jobId) then
+            return false, "done_this_jobid"
+        end
+
         return true, "ok"
     end
 
-    local function nearestSelectedModelFromPart_LogOnly(part, jobId)
+    local function nearestRootFromPart(part, jobId)
         if not (part and part:IsA("BasePart")) then return nil, "not_basepart" end
         local itemsFolder = itemsRootOrNil()
         if not itemsFolder then return nil, "no_items_folder" end
         if not part:IsDescendantOf(itemsFolder) then return nil, "part_not_in_items" end
+
         local root = rootItemUnderItems(part)
         if not root then return nil, "no_root_under_items" end
+
         local ok, why = canPick_LogOnly(root, jobId)
-        if not ok then return nil, why end
+        if not ok then
+            return root, why
+        end
         return root, "ok"
     end
 
@@ -490,42 +500,57 @@ return function(C, R, UI)
                                     out[#out+1] = d
                                 end
                             else
-                                bumpSkip(cnt, why, d.Name)
+                                bumpSkip(cnt, why, (d.Name or "?"))
                             end
                         end
                     end
                 end
             end
-            cnt.uniqRoots = #out
-            cnt.cand = #out
+            cnt.uniqRootsResolved = #out
+            cnt.acceptedRoots = #out
             return out, cnt
         end
 
         cnt.parts = #parts
 
-        local uniq = {}
+        local resolvedUniq = {}
+        local acceptedUniq = {}
         local out = {}
+
         for _,p in ipairs(parts) do
-            if p and p.Parent then
-                local m, why = nearestSelectedModelFromPart_LogOnly(p, jobId)
-                if m then
-                    cnt.roots = cnt.roots + 1
-                    if not uniq[m] then
-                        uniq[m] = true
-                        out[#out+1] = m
+            if p and p.Parent and p:IsA("BasePart") then
+                local r, why = nearestRootFromPart(p, jobId)
+                if r then
+                    if not resolvedUniq[r] then
+                        resolvedUniq[r] = true
+                    end
+                    cnt.rootsResolved = cnt.rootsResolved + 1
+
+                    if why == "ok" then
+                        if not acceptedUniq[r] then
+                            acceptedUniq[r] = true
+                            out[#out+1] = r
+                        end
+                    else
+                        bumpSkip(cnt, why, (p.Name or "?") .. "->" .. (r.Name or "?"))
                     end
                 else
-                    bumpSkip(cnt, why, p.Name)
+                    bumpSkip(cnt, why, (p.Name or "?"))
                 end
             end
         end
 
-        cnt.uniqRoots = #out
-        cnt.cand = #out
+        local nResolved = 0
+        for _ in pairs(resolvedUniq) do nResolved = nResolved + 1 end
+        local nAccepted = 0
+        for _ in pairs(acceptedUniq) do nAccepted = nAccepted + 1 end
+        cnt.uniqRootsResolved = nResolved
+        cnt.acceptedRoots = nAccepted
+
         return out, cnt
     end
 
-    -- ===== Delivery (scrapper orb) =====
+    -- ===== Drop placement near scrapper =====
     local function raycastDownAtXZ(xz, ignoreModel)
         local itemsFolder = itemsRootOrNil()
         local ch = lp.Character
@@ -544,14 +569,23 @@ return function(C, R, UI)
         return Vector3.new(xz.X, 0, xz.Z)
     end
 
-    local function markDone(m, runId)
-        if not (m and m.Parent) then return end
-        pcall(function()
-            m:SetAttribute(INFLT_ATTR, nil)
-            m:SetAttribute(JOB_ATTR, nil)
-            if runId then m:SetAttribute(DONE_ATTR, runId) end
-        end)
-        inflight[m] = nil
+    local function hash01(s)
+        local h = 131071
+        for i = 1, #s do h = (h * 131 + string.byte(s, i)) % 1000003 end
+        return (h % 100000) / 100000
+    end
+
+    local LAND_MIN = 0.35
+    local LAND_MAX = 0.85
+    local HOVER_ABOVE_ORB = 1.2
+
+    local function landingOffset(m, jobId)
+        local key = (typeof(m.GetDebugId)=="function" and m:GetDebugId() or (m.Name or "")) .. tostring(jobId)
+        local r1 = hash01(key .. "a")
+        local r2 = hash01(key .. "b")
+        local ang = r1 * math.pi * 2
+        local rad = LAND_MIN + (LAND_MAX - LAND_MIN) * r2
+        return Vector3.new(math.cos(ang)*rad, 0, math.sin(ang)*rad)
     end
 
     local function stageForRelease(m, snap, destKey, centerXZ)
@@ -570,7 +604,7 @@ return function(C, R, UI)
         releaseQueue[#releaseQueue+1] = { model = m, snap = snap, destKey = destKey or "scrap", centerXZ = centerXZ }
     end
 
-    local function releaseOne(rec, runId)
+    local function releaseOne(rec)
         local m = rec and rec.model
         if not (m and m.Parent) then return end
 
@@ -609,7 +643,12 @@ return function(C, R, UI)
             end)
         end
 
-        markDone(m, runId)
+        inflight[m] = nil
+        pendingConfirm[m] = { t = os.clock(), runId = tostring(CURRENT_RUN_ID), name = (m.Name or "?") }
+        pcall(function()
+            m:SetAttribute(INFLT_ATTR, nil)
+            m:SetAttribute(JOB_ATTR, nil)
+        end)
     end
 
     local function abortRestore(m, rec)
@@ -638,25 +677,6 @@ return function(C, R, UI)
             m:SetAttribute(JOB_ATTR, nil)
         end)
         inflight[m] = nil
-    end
-
-    local function hash01(s)
-        local h = 131071
-        for i = 1, #s do h = (h * 131 + string.byte(s, i)) % 1000003 end
-        return (h % 100000) / 100000
-    end
-
-    local LAND_MIN = 0.35
-    local LAND_MAX = 0.85
-    local HOVER_ABOVE_ORB = 1.2
-
-    local function landingOffset(m, jobId)
-        local key = (typeof(m.GetDebugId)=="function" and m:GetDebugId() or (m.Name or "")) .. tostring(jobId)
-        local r1 = hash01(key .. "a")
-        local r2 = hash01(key .. "b")
-        local ang = r1 * math.pi * 2
-        local rad = LAND_MIN + (LAND_MAX - LAND_MIN) * r2
-        return Vector3.new(math.cos(ang)*rad, 0, math.sin(ang)*rad)
     end
 
     local function startConveyor_Log(m, jobId, destBaseVec)
@@ -701,7 +721,7 @@ return function(C, R, UI)
         return true, "ok"
     end
 
-    local function updateInflight(dt, runId)
+    local function updateInflight(dt)
         for m,rec in pairs(inflight) do
             if not (m and m.Parent and running) then
                 abortRestore(m, rec)
@@ -749,14 +769,49 @@ return function(C, R, UI)
         end
     end
 
-    local function stopAll(runId)
+    local function processPendingConfirm()
+        if not CURRENT_RUN_ID then
+            pendingConfirm = {}
+            return
+        end
+        local itemsFolder = itemsRootOrNil()
+        local now = os.clock()
+        for m,info in pairs(pendingConfirm) do
+            if not m then
+                pendingConfirm[m] = nil
+            else
+                local alive = (m.Parent ~= nil)
+                local inItems = alive and itemsFolder and m:IsDescendantOf(itemsFolder)
+                if (not alive) or (itemsFolder and (not inItems)) then
+                    pcall(function()
+                        m:SetAttribute(DONE_ATTR, tostring(CURRENT_RUN_ID))
+                    end)
+                    logLine(("CONFIRM OK: %s removed/left Items"):format(info and info.name or (m.Name or "?")))
+                    pendingConfirm[m] = nil
+                else
+                    local t0 = info and info.t or now
+                    if (now - t0) >= CONFIRM_WINDOW_S then
+                        logLine(("CONFIRM FAIL: still in Items -> will retry: %s"):format(info and info.name or (m.Name or "?")))
+                        pendingConfirm[m] = nil
+                        pcall(function()
+                            m:SetAttribute(INFLT_ATTR, nil)
+                            m:SetAttribute(JOB_ATTR, nil)
+                            m:SetAttribute(DONE_ATTR, nil)
+                        end)
+                    end
+                end
+            end
+        end
+    end
+
+    local function stopAll()
         running = false
         if hb then hb:Disconnect() hb = nil end
 
         for i = 1, #releaseQueue do
             local rec = releaseQueue[i]
             if rec and rec.model and rec.model.Parent then
-                releaseOne(rec, runId)
+                releaseOne(rec)
             end
         end
         releaseQueue = {}
@@ -764,10 +819,11 @@ return function(C, R, UI)
         for m,rec in pairs(inflight) do
             abortRestore(m, rec)
         end
-
         inflight = {}
         activeCount = 0
+
         orbPosVec = nil
+        pendingConfirm = {}
     end
 
     local CURRENT_RUN_ID = nil
@@ -775,7 +831,7 @@ return function(C, R, UI)
     local function startScrapLogs(state)
         if not state then
             logLine("STOP requested")
-            stopAll(CURRENT_RUN_ID)
+            stopAll()
             CURRENT_RUN_ID = nil
             return
         end
@@ -792,7 +848,7 @@ return function(C, R, UI)
             return
         end
 
-        stopAll(CURRENT_RUN_ID)
+        stopAll()
         CURRENT_RUN_ID = tostring(os.clock())
         orbPosVec = pos
         running = true
@@ -800,9 +856,10 @@ return function(C, R, UI)
         releaseAcc = 0
         activeCount = 0
         dropStacks = {}
+        pendingConfirm = {}
 
-        logLine(("START runId=%s orbPos=(%.2f,%.2f,%.2f) maxConcurrent=%d maxQueue=%d")
-            :format(CURRENT_RUN_ID, pos.X, pos.Y, pos.Z, MAX_CONCURRENT, MAX_LINED_ITEMS))
+        logLine(("START runId=%s orbPos=(%.2f,%.2f,%.2f) maxConcurrent=%d maxQueue=%d confirmWindow=%.2fs")
+            :format(CURRENT_RUN_ID, pos.X, pos.Y, pos.Z, MAX_CONCURRENT, MAX_LINED_ITEMS, CONFIRM_WINDOW_S))
 
         local scanAcc = 0
         local moveAcc = 0
@@ -812,41 +869,38 @@ return function(C, R, UI)
         hb = Run.Heartbeat:Connect(function(dt)
             if not running then return end
 
+            processPendingConfirm()
+
             scanAcc = scanAcc + dt
             if scanAcc >= SCAN_INTERVAL then
                 scanAcc = scanAcc - SCAN_INTERVAL
                 local jobId = tostring(CURRENT_RUN_ID)
 
                 local list, cnt = collectLogs(jobId, MAX_DIST_DEFAULT)
-                local startedThisTick = 0
 
                 for i = 1, #list do
                     if not running then break end
                     if #releaseQueue >= MAX_LINED_ITEMS then break end
                     if activeCount >= MAX_CONCURRENT then break end
                     local m = list[i]
-                    if m and m.Parent and not inflight[m] then
+                    if m and m.Parent and not inflight[m] and not pendingConfirm[m] then
                         local ok, why = startConveyor_Log(m, jobId, orbPosVec)
                         if ok then
-                            startedThisTick = startedThisTick + 1
-                            cnt.start = (cnt.start or 0) + 1
+                            cnt.started = (cnt.started or 0) + 1
                         else
-                            bumpSkip(cnt, "start_" .. tostring(why), m.Name)
+                            bumpSkip(cnt, "start_" .. tostring(why), (m.Name or "?"))
                         end
                     end
                 end
 
                 dumpCounters(cnt, "SCAN")
-                if startedThisTick > 0 then
-                    logLine(("  startedThisTick=%d"):format(startedThisTick))
-                end
             end
 
             moveAcc = moveAcc + dt
             if moveAcc >= moveInterval then
                 local step = moveAcc
                 moveAcc = 0
-                updateInflight(step, CURRENT_RUN_ID)
+                updateInflight(step)
             end
 
             releaseAcc = releaseAcc + dt
@@ -859,7 +913,7 @@ return function(C, R, UI)
                 for i = 1, toRelease do
                     local rec = table.remove(releaseQueue, 1)
                     if not rec then break end
-                    releaseOne(rec, CURRENT_RUN_ID)
+                    releaseOne(rec)
                 end
             end
         end)
@@ -901,7 +955,7 @@ return function(C, R, UI)
     end)
 
     local function cleanupModule()
-        pcall(function() stopAll(CURRENT_RUN_ID) end)
+        pcall(function() stopAll() end)
         if charAddedConn then pcall(function() charAddedConn:Disconnect() end) end
         charAddedConn = nil
         if logGui and logGui.Parent then pcall(function() logGui:Destroy() end) end
