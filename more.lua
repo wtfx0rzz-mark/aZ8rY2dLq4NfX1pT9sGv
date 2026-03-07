@@ -22,6 +22,27 @@ return function(C, R, UI)
             pcall(function() _G.__MoreTemporal.Destroy() end)
         end
 
+        local RootRS, RootWS, cam = nil, nil, nil
+
+        local function refreshRoots()
+            local ugc = game:FindFirstChild("Ugc")
+            if ugc then
+                local rs = ugc:FindFirstChild("ReplicatedStorage")
+                local ws = ugc:FindFirstChild("Workspace")
+                if rs and ws then
+                    RootRS = rs
+                    RootWS = ws
+                    cam = WS.CurrentCamera
+                    return RootRS, RootWS
+                end
+            end
+            RootRS = RS
+            RootWS = WS
+            cam = WS.CurrentCamera
+            return RootRS, RootWS
+        end
+        refreshRoots()
+
         local function chr()
             return lp.Character or lp.CharacterAdded:Wait()
         end
@@ -46,19 +67,8 @@ return function(C, R, UI)
             return nil
         end
 
-        local function getRoot()
-            local ugc = game:FindFirstChild("Ugc")
-            if ugc then
-                local rs = ugc:FindFirstChild("ReplicatedStorage")
-                local ws = ugc:FindFirstChild("Workspace")
-                if rs and ws then return rs, ws end
-            end
-            return RS, WS
-        end
-
-        local RootRS, RootWS = getRoot()
-
         local function getRemote(name)
+            refreshRoots()
             local f = RootRS:FindFirstChild("RemoteEvents")
             local r = f and f:FindFirstChild(name)
             if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then return r end
@@ -149,8 +159,16 @@ return function(C, R, UI)
         local ROLLBACK_IDLE_S = 30
         local MIN_MOVE_DIST = 2.0
 
+        local function stopRollbackWatch()
+            rollbackCF = nil
+            if rollbackThread then
+                pcall(function() task.cancel(rollbackThread) end)
+                rollbackThread = nil
+            end
+        end
+
         local function startRollbackWatch(afterCF)
-            if rollbackThread then task.cancel(rollbackThread) end
+            stopRollbackWatch()
             rollbackCF = afterCF
             local startRoot = hrp()
             local startPos = startRoot and startRoot.Position or nil
@@ -161,18 +179,22 @@ return function(C, R, UI)
                     local h = hum()
                     local r = hrp()
                     if r and startPos and (r.Position - startPos).Magnitude >= MIN_MOVE_DIST then
-                        moved = true; break
+                        moved = true
+                        break
                     end
                     if h and h.MoveDirection.Magnitude > 0.05 then
-                        moved = true; break
+                        moved = true
+                        break
                     end
                     if not lp or lp.GameplayPaused then
-                        moved = true; break
+                        moved = true
+                        break
                     end
                     Run.Heartbeat:Wait()
                 end
                 if (not moved) and rollbackCF then
-                    local root = hrp(); if root then
+                    local root = hrp()
+                    if root then
                         local cf = rollbackCF
                         local snap = snapshotCollide()
                         setCollideAll(false)
@@ -193,6 +215,7 @@ return function(C, R, UI)
             local params = RaycastParams.new()
             params.FilterType = Enum.RaycastFilterType.Exclude
             local ex = { lp.Character }
+            refreshRoots()
             local map = (RootWS and RootWS:FindFirstChild("Map")) or WS:FindFirstChild("Map")
             if map then
                 local fol = map:FindFirstChild("Foliage")
@@ -217,7 +240,8 @@ return function(C, R, UI)
         local SAFE_DROP_UP      = 4.0
 
         local function teleportSticky(cf, dropMode)
-            local root = hrp(); if not root then return end
+            local root = hrp()
+            if not root then return end
             local ch   = lp.Character
             local targetCF = cf + Vector3.new(0, TELEPORT_UP_NUDGE, 0)
 
@@ -299,6 +323,7 @@ return function(C, R, UI)
         end
 
         local function structureFolder()
+            refreshRoots()
             return (RootWS and RootWS:FindFirstChild("Structures")) or WS:FindFirstChild("Structures")
         end
 
@@ -329,6 +354,7 @@ return function(C, R, UI)
         end
 
         local function resolveAccelModel()
+            refreshRoots()
             local folder = structureFolder()
             if not folder then return nil end
             local m = folder:FindFirstChild("Temporal Accelerometer") or folder:FindFirstChild("TemporalAccelerometer")
@@ -399,7 +425,6 @@ return function(C, R, UI)
             return nil
         end
 
-        local cam = WS.CurrentCamera
         local camConn = WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
             cam = WS.CurrentCamera
         end)
@@ -460,6 +485,7 @@ return function(C, R, UI)
         end
 
         local function findPickUpRemote()
+            refreshRoots()
             local re = RootRS:FindFirstChild("RemoteEvents")
             if re then
                 local r = re:FindFirstChild("RequestPickUpStructure")
@@ -478,23 +504,37 @@ return function(C, R, UI)
             return nil
         end
 
-        local function doPickupNearest()
-            local nearest = nil
-            local m, _ = nearestStructure()
-            if m then nearest = m end
+        local function doPickupStructure(targetModel)
             local remote = findPickUpRemote()
-            if not (remote and nearest and nearest.Parent) then return false end
+            if not (remote and targetModel and targetModel.Parent) then return false end
             local ok = pcall(function()
                 if remote:IsA("RemoteFunction") then
-                    remote:InvokeServer(nearest)
+                    remote:InvokeServer(targetModel)
                 else
-                    remote:FireServer(nearest)
+                    remote:FireServer(targetModel)
                 end
             end)
             return ok
         end
 
+        local function doPickupNearest()
+            local nearest = nil
+            local m, _ = nearestStructure()
+            if m then nearest = m end
+            return doPickupStructure(nearest)
+        end
+
+        local function waitForModelGone(model, timeout)
+            local t0 = os.clock()
+            while os.clock() - t0 < (timeout or 4) do
+                if not (model and model.Parent) then return true end
+                task.wait(0.10)
+            end
+            return false
+        end
+
         local function findPlaceRemote()
+            refreshRoots()
             local re = RootRS:FindFirstChild("RemoteEvents")
             local r = re and re:FindFirstChild("RequestPlaceStructure")
             if r and r:IsA("RemoteFunction") then return r end
@@ -575,7 +615,9 @@ return function(C, R, UI)
                 b.Visible = false
                 b.LayoutOrder = order or 50
                 b.Parent = stack
-                local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 8); corner.Parent = b
+                local corner = Instance.new("UICorner")
+                corner.CornerRadius = UDim.new(0, 8)
+                corner.Parent = b
             else
                 b.Text = label
                 b.LayoutOrder = order or b.LayoutOrder
@@ -600,7 +642,9 @@ return function(C, R, UI)
                 b.BorderSizePixel = 0
                 b.LayoutOrder = order or 10
                 b.Parent = parent
-                local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 8); corner.Parent = b
+                local corner = Instance.new("UICorner")
+                corner.CornerRadius = UDim.new(0, 8)
+                corner.Parent = b
             else
                 b.Text = label
                 b.LayoutOrder = order or b.LayoutOrder
@@ -636,6 +680,7 @@ return function(C, R, UI)
         local teleportOrb = nil
 
         local function makeOrb(name, pos, color)
+            refreshRoots()
             local p = Instance.new("Part")
             p.Name = name
             p.Shape = Enum.PartType.Ball
@@ -729,10 +774,44 @@ return function(C, R, UI)
         end)
 
         local busy = false
+        local temporalRunNonce = 0
+
+        local function freshTemporalRunState()
+            refreshRoots()
+            stopRollbackWatch()
+            cam = WS.CurrentCamera
+            temporalRunNonce += 1
+            return temporalRunNonce
+        end
+
+        local function doPickupTemporalAccelerometerOnly(targetModel)
+            if not (targetModel and targetModel.Parent) then return false end
+            local preBlueprint = findAccelBlueprintInstance()
+            local okPickup = doPickupStructure(targetModel)
+            if not okPickup then return false end
+
+            local t0 = os.clock()
+            while os.clock() - t0 < 5 do
+                local bp = findAccelBlueprintInstance()
+                if bp and bp.Parent and bp ~= preBlueprint then
+                    return true
+                end
+                if not (targetModel and targetModel.Parent) then
+                    local bp2 = findAccelBlueprintInstance()
+                    if bp2 and bp2.Parent then
+                        return true
+                    end
+                end
+                task.wait(0.10)
+            end
+            return false
+        end
+
         local function runTemporalSequence(fromTimer)
             if busy then return end
             busy = true
 
+            local runNonce = freshTemporalRunState()
             local root0 = hrp()
             local returnCF = root0 and root0.CFrame or nil
 
@@ -744,6 +823,8 @@ return function(C, R, UI)
                         task.wait(0.75)
                     end
                 end
+
+                if runNonce ~= temporalRunNonce then return end
 
                 local machine = resolveAccelModel()
                 if not machine then return end
@@ -762,8 +843,17 @@ return function(C, R, UI)
                 teleportSticky(destCF, true)
                 task.wait(1.0)
 
-                doPickupNearest()
-                task.wait(1.0)
+                if not (machine and machine.Parent) then
+                    machine = resolveAccelModel()
+                    if not machine then return end
+                end
+
+                local picked = doPickupTemporalAccelerometerOnly(machine)
+                if not picked then
+                    return
+                end
+
+                task.wait(0.35)
 
                 local placeRemote = findPlaceRemote()
                 if not placeRemote then return end
@@ -771,19 +861,23 @@ return function(C, R, UI)
                 local bp = waitForAccelBlueprint(8)
                 if not (bp and bp.Parent) then return end
 
-                placeAccelAtSnap(placeRemote, bp, placement, rot)
+                local placed = placeAccelAtSnap(placeRemote, bp, placement, rot)
+                if not placed then return end
                 task.wait(1.0)
 
-                local placed = waitForAccelModel(8)
-                if placed then
-                    fireAccelRemote(placed)
+                local accelPlaced = waitForAccelModel(8)
+                if accelPlaced and accelPlaced.Parent then
+                    fireAccelRemote(accelPlaced)
                 end
 
                 task.wait(1.0)
             end)
 
             if returnCF then
-                pcall(function() teleportSticky(returnCF, true) end)
+                pcall(function()
+                    freshTemporalRunState()
+                    teleportSticky(returnCF, true)
+                end)
             end
 
             busy = false
@@ -900,6 +994,7 @@ return function(C, R, UI)
             end
 
             local function itemsFolder()
+                refreshRoots()
                 local f = RootWS:FindFirstChild("Items")
                 if f then return f end
                 local f2 = WS:FindFirstChild("Items")
@@ -949,6 +1044,7 @@ return function(C, R, UI)
             end
 
             local function findLavaBurnRemote()
+                refreshRoots()
                 local remFolder = RootRS:FindFirstChild("RemoteEvents") or RootRS
                 local r = remFolder:FindFirstChild("RequestLavaBurnItem")
                 if r and (r:IsA("RemoteFunction") or r:IsA("RemoteEvent")) then return r end
@@ -961,6 +1057,7 @@ return function(C, R, UI)
             end
 
             local function findLava()
+                refreshRoots()
                 local direct = RootWS:FindFirstChild("Map")
                 if direct then
                     local lm = direct:FindFirstChild("Landmarks")
@@ -1100,6 +1197,7 @@ return function(C, R, UI)
         end
 
         local charConn = Players.LocalPlayer.CharacterAdded:Connect(function()
+            refreshRoots()
             local pg = lp:WaitForChild("PlayerGui")
             local eg = pg:FindFirstChild("EdgeButtons")
             if eg and eg.Parent ~= pg then eg.Parent = pg end
@@ -1116,8 +1214,8 @@ return function(C, R, UI)
                 end)
                 timerThread = nil
                 timerOn = false
-
-                if rollbackThread then pcall(function() task.cancel(rollbackThread) end) rollbackThread = nil end
+                busy = false
+                stopRollbackWatch()
                 if edgeConn then pcall(function() edgeConn:Disconnect() end) edgeConn = nil end
                 if charConn then pcall(function() charConn:Disconnect() end) charConn = nil end
                 if camConn then pcall(function() camConn:Disconnect() end) camConn = nil end
