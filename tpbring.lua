@@ -92,13 +92,15 @@ return function(C, R, UI)
     end
 
     local startDrag, stopDrag = nil, nil
-    do
-        local re = RS:FindFirstChild("RemoteEvents")
+    local function refreshRemoteRefs()
+        startDrag, stopDrag = nil, nil
+        local re = RS and RS:FindFirstChild("RemoteEvents")
         if re then
             startDrag = re:FindFirstChild("RequestStartDraggingItem")
             stopDrag  = re:FindFirstChild("StopDraggingItem")
         end
     end
+    refreshRemoteRefs()
 
     local DRAG_SPEED              = 420
     local ORB_HEIGHT              = 10
@@ -416,6 +418,7 @@ return function(C, R, UI)
     end
 
     local function tryStartDrag(m, rec)
+        refreshRemoteRefs()
         if not startDrag then return end
         if rec and rec.dragging then return end
         pcall(function() startDrag:FireServer(m) end)
@@ -423,6 +426,7 @@ return function(C, R, UI)
     end
 
     local function tryStopDrag(m, rec)
+        refreshRemoteRefs()
         if not stopDrag then return end
         if rec and rec.stopped then return end
         if rec and not rec.dragging then return end
@@ -505,7 +509,9 @@ return function(C, R, UI)
         if isExcludedInst(m) then return false end
 
         local done = m:GetAttribute(DONE_ATTR)
-        if done and CURRENT_RUN_ID and tostring(done) == tostring(CURRENT_RUN_ID) then return false end
+        if done and CURRENT_RUN_ID and tostring(done) == tostring(CURRENT_RUN_ID) then
+            return false
+        end
 
         local tIn = m:GetAttribute(INFLT_ATTR)
         local jIn = m:GetAttribute(JOB_ATTR)
@@ -1380,8 +1386,6 @@ return function(C, R, UI)
         running = false
         if hb then hb:Disconnect() hb = nil end
         setUnstickEnabled(false)
-        pendingRetry = {}
-        pendingConfirm = {}
 
         for i = 1, #releaseQueue do
             local rec = releaseQueue[i]
@@ -1396,8 +1400,17 @@ return function(C, R, UI)
         end
 
         inflight = {}
+        pendingRetry = {}
+        pendingConfirm = {}
+        finalized = {}
+        fruitNudged = {}
+        dropStacks = {}
+        outsideLogCache = {}
+        outsideLogAcc = 0
         activeCount = 0
+        releaseAcc = 0.0
         destroyOrb()
+        refreshRemoteRefs()
     end
 
     local PRECLAIM_DISTANCE    = 100
@@ -1417,6 +1430,7 @@ return function(C, R, UI)
                 if preclaimAcc < PRECLAIM_INTERVAL_S then return end
                 preclaimAcc = 0
                 if not preclaimEnabled then return end
+                refreshRemoteRefs()
                 if not (startDrag and stopDrag) then return end
 
                 local itemsFolder = itemsRootOrNil()
@@ -1462,7 +1476,10 @@ return function(C, R, UI)
 
                     pcall(function() startDrag:FireServer(m) end)
                     task.delay(0.14, function()
-                        pcall(function() stopDrag:FireServer(m) end)
+                        refreshRemoteRefs()
+                        if stopDrag then
+                            pcall(function() stopDrag:FireServer(m) end)
+                        end
                     end)
                 end
 
@@ -1479,14 +1496,18 @@ return function(C, R, UI)
     local function startMode(mode)
         if mode == nil then
             CURRENT_MODE = nil
+            CURRENT_RUN_ID = nil
             setPreclaimEnabled(false)
             stopAll()
             return
         end
         if not hrp() then return end
-        if CURRENT_MODE == mode and running then return end
 
         stopAll()
+        refreshRemoteRefs()
+        orbGroundBases = { nil, nil, nil, nil }
+        preclaimedAt = {}
+
         CURRENT_MODE   = mode
         CURRENT_RUN_ID = tostring(os.clock())
         finalized      = {}
@@ -1519,7 +1540,11 @@ return function(C, R, UI)
                 color = Color3.fromRGB(100,200,255)
                 touch = false
             end
-            if not pos then CURRENT_MODE = nil return end
+            if not pos then
+                CURRENT_MODE = nil
+                CURRENT_RUN_ID = nil
+                return
+            end
             spawnOrbAt(pos, color, touch)
             if mode == "all" then
                 setUnstickEnabled(true)
@@ -1531,13 +1556,18 @@ return function(C, R, UI)
             for i = 1, 4 do
                 if orbEnabled[i] and next(orbItemSets[i]) ~= nil then any = true break end
             end
-            if not any then CURRENT_MODE = nil return end
+            if not any then
+                CURRENT_MODE = nil
+                CURRENT_RUN_ID = nil
+                return
+            end
             destroyOrb()
             orbPosVec = nil
             orbGroundBases = { nil, nil, nil, nil }
             setUnstickEnabled(false)
         else
             CURRENT_MODE = nil
+            CURRENT_RUN_ID = nil
             return
         end
 
@@ -1739,7 +1769,11 @@ return function(C, R, UI)
 
     local function cleanupModule()
         pcall(function() setPreclaimEnabled(false) end)
-        pcall(function() stopAll() end)
+        pcall(function()
+            CURRENT_MODE = nil
+            CURRENT_RUN_ID = nil
+            stopAll()
+        end)
         if charAddedConn then pcall(function() charAddedConn:Disconnect() end) end
         charAddedConn = nil
         if _G.__TPBring__cleanup == cleanupModule then
