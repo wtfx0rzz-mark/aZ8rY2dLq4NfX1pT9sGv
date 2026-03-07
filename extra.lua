@@ -235,8 +235,7 @@ return function(C, R, UI)
     end
 
     local function isHalloweenChestName(n)
-        if type(n) ~= "string" then return false end
-        return (n == "Halloween Chest") or (n:match("^Halloween Chest%d+$") ~= nil)
+        return false
     end
 
     local function setNoCollideAny(inst, on)
