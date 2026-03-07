@@ -200,6 +200,8 @@ return function(C, R, UI)
         }
     end
 
+    local DragStarted = setmetatable({}, { __mode = "k" })
+
     local function safeStartDrag(r, model)
         if r and r.StartDrag and model and model.Parent then
             local ok = pcall(function() r.StartDrag:FireServer(model) end)
@@ -224,6 +226,45 @@ return function(C, R, UI)
         pcall(safeStopDrag, r, model)
         task.delay(0.05, function() pcall(safeStopDrag, r, model) end)
         task.delay(0.20, function() pcall(safeStopDrag, r, model) end)
+    end
+    local function markDragStarted(model)
+        if not (model and model.Parent) then return end
+        DragStarted[model] = true
+        pcall(function() model:SetAttribute("BringDragStarted", true) end)
+    end
+    local function clearDragStarted(model)
+        if not model then return end
+        DragStarted[model] = nil
+        pcall(function()
+            if model and model.Parent then
+                model:SetAttribute("BringDragStarted", nil)
+            end
+        end)
+    end
+    local function stopIfDragging(r, model)
+        if not model then return end
+        if DragStarted[model] then
+            finallyStopDrag(r, model)
+            clearDragStarted(model)
+        end
+    end
+    local function stopIfDraggingTwice(r, model)
+        if not model then return end
+        if DragStarted[model] then
+            finallyStopDragTwice(r, model)
+            clearDragStarted(model)
+        end
+    end
+    local function stopAllOutstandingDrags()
+        local r = resolveRemotes()
+        for model,_ in pairs(DragStarted) do
+            if model and model.Parent then
+                finallyStopDragTwice(r, model)
+                clearDragStarted(model)
+            else
+                DragStarted[model] = nil
+            end
+        end
     end
 
     local function setCollide(model, on, snapshot)
@@ -324,6 +365,7 @@ return function(C, R, UI)
     local function burnFlow(model, campfire)
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
+        if started then markDragStarted(model) end
         Run.Heartbeat:Wait()
         task.wait(DRAG_SETTLE)
         pivotOverTarget(model, campfire)
@@ -332,12 +374,13 @@ return function(C, R, UI)
             pcall(function() r.BurnItem:FireServer(campfire, Instance.new("Model")) end)
         end
         awaitConsumedOrMoved(model, CONSUME_WAIT)
-        if started then finallyStopDrag(r, model) end
+        if started then stopIfDragging(r, model) end
         refreshPrompts(model)
     end
     local function cookFlow(model, campfire)
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
+        if started then markDragStarted(model) end
         Run.Heartbeat:Wait()
         task.wait(DRAG_SETTLE)
         moveModel(model, fireHandoffCF(campfire))
@@ -350,7 +393,7 @@ return function(C, R, UI)
         task.wait(ACTION_HOLD)
         local cookedName = RAW_TO_COOKED[model.Name]
         awaitConsumedOrMoved(model, CONSUME_WAIT)
-        if started then finallyStopDrag(r, model) end
+        if started then stopIfDragging(r, model) end
         task.delay(0.15, function()
             if cookedName then
                 local cooked = (function()
@@ -384,6 +427,7 @@ return function(C, R, UI)
     local function scrapFlow(model, scrapper)
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
+        if started then markDragStarted(model) end
         Run.Heartbeat:Wait()
         task.wait(DRAG_SETTLE)
         moveModel(model, scrCenterCF(scrapper) + Vector3.new(0, 1.5, 0))
@@ -395,7 +439,7 @@ return function(C, R, UI)
         if not okCall then pivotOverTarget(model, scrapper) end
         task.wait(ACTION_HOLD)
         awaitConsumedOrMoved(model, CONSUME_WAIT)
-        if started then finallyStopDrag(r, model) end
+        if started then stopIfDragging(r, model) end
         refreshPrompts(model)
     end
 
@@ -508,6 +552,7 @@ return function(C, R, UI)
         local root = hrp(); if not root then return false end
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
+        if started then markDragStarted(model) end
         Run.Heartbeat:Wait()
 
         local head = headPart()
@@ -546,7 +591,7 @@ return function(C, R, UI)
         end
 
         if started then
-            finallyStopDragTwice(r, model)
+            stopIfDraggingTwice(r, model)
         end
         refreshPrompts(model)
 
@@ -577,11 +622,17 @@ return function(C, R, UI)
 
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
+        if started then markDragStarted(model) end
         Run.Heartbeat:Wait()
+
         local cf = groundCFAroundPlayer(model) or computeForwardDropCF()
         if not cf then
+            if started then
+                stopIfDragging(r, model)
+            end
             return false
         end
+
         local snap = setCollide(model, false)
         zeroAssembly(model)
         if model:IsA("Model") then
@@ -590,7 +641,11 @@ return function(C, R, UI)
             local p = mainPart(model); if p then p.CFrame = cf end
         end
         setCollide(model, true, snap)
-        if started then finallyStopDrag(r, model) end
+
+        if started then
+            stopIfDragging(r, model)
+        end
+
         for _,p in ipairs(getAllParts(model)) do
             p.Anchored = false
             p.AssemblyLinearVelocity  = Vector3.new()
@@ -835,10 +890,7 @@ return function(C, R, UI)
         if selectedSet["Polar Bear Pelt"] and nm == "Polar Bear Pelt" then return true end
         if selectedSet["Arctic Fox Pelt"] and nm == "Arctic Fox Pelt" then return true end
         if selectedSet["Spear"] and l:find("spear",1,true) and not hasHumanoid(m) then return true end
-
-        -- Sword: match any item containing "sword" EXCEPT anything containing "fish" (e.g., Swordfish), and never humanoids.
         if selectedSet["Sword"] and l:find("sword",1,true) and not l:find("fish",1,true) and not hasHumanoid(m) then return true end
-
         if selectedSet["Crossbow"] and l:find("crossbow",1,true) and not l:find("cultist",1,true) and not hasHumanoid(m) then return true end
         if selectedSet["Blueprint"] and l:find("blueprint",1,true) then return true end
         if selectedSet["Flashlight"] and l:find("flashlight",1,true) and not hasHumanoid(m) then return true end
@@ -963,7 +1015,7 @@ return function(C, R, UI)
             task.wait(STEP_WAIT)
         end
 
-        dropFromOrbSmooth(model, orbPos, jobId, snapOrig, H)
+        dropFromOrbSmooth(model, orbPos, jobId, origSnap, H)
     end
 
     local function runConveyorWave(centerPos, orbPos, targets, jobId, perNameCount)
@@ -1184,6 +1236,7 @@ return function(C, R, UI)
 
         _bringBusy = false
         if not ok then
+            stopAllOutstandingDrags()
             return
         end
     end
@@ -1365,6 +1418,12 @@ return function(C, R, UI)
                     watched[m] = nil
                 end
             end
+        end)
+    end
+
+    if type(C.RegisterCleanup) == "function" then
+        C.RegisterCleanup(function()
+            stopAllOutstandingDrags()
         end)
     end
 end
