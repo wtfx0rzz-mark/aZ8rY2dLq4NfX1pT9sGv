@@ -887,7 +887,7 @@ return function(C, R, UI)
             end
 
             if anySent then
-                task.wait()
+                task.wait(0.05)
             else
                 if soonest < math.huge then
                     task.wait(math.max(0.02, soonest))
@@ -1246,7 +1246,7 @@ return function(C, R, UI)
             end
 
             if anySent then
-                task.wait()
+                task.wait(0.05)
             else
                 if soonest < math.huge then
                     task.wait(math.max(0.02, soonest))
