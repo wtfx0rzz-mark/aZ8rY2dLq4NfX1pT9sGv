@@ -238,25 +238,81 @@ return function(C, R, UI)
         return false
     end
 
-    local function setNoCollideAny(inst, on)
+    local function snapshotInst(inst)
+        local snap = {}
+        if inst:IsA("BasePart") then
+            snap[inst] = {
+                CanCollide = inst.CanCollide,
+                CanQuery   = inst.CanQuery,
+                CanTouch   = inst.CanTouch,
+                Massless   = inst.Massless,
+            }
+        else
+            for _, d in ipairs(inst:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    snap[d] = {
+                        CanCollide = d.CanCollide,
+                        CanQuery   = d.CanQuery,
+                        CanTouch   = d.CanTouch,
+                        Massless   = d.Massless,
+                    }
+                end
+            end
+        end
+        return snap
+    end
+
+    local function setNoCollideAny(inst, on, snap)
         if not (inst and inst.Parent) then return end
         if inst:IsA("BasePart") then
-            inst.CanCollide = not on
-            inst.CanQuery = not on
-            inst.CanTouch = not on
-            inst.Massless = on and true or false
-            inst.AssemblyLinearVelocity = Vector3.new()
-            inst.AssemblyAngularVelocity = Vector3.new()
+            if on then
+                inst.CanCollide = false
+                inst.CanQuery   = false
+                inst.CanTouch   = false
+                inst.Massless   = true
+                inst.AssemblyLinearVelocity  = Vector3.new()
+                inst.AssemblyAngularVelocity = Vector3.new()
+            else
+                if snap and snap[inst] then
+                    inst.CanCollide = snap[inst].CanCollide
+                    inst.CanQuery   = snap[inst].CanQuery
+                    inst.CanTouch   = snap[inst].CanTouch
+                    inst.Massless   = snap[inst].Massless
+                else
+                    inst.CanCollide = true
+                    inst.CanQuery   = true
+                    inst.CanTouch   = true
+                    inst.Massless   = false
+                end
+                inst.AssemblyLinearVelocity  = Vector3.new()
+                inst.AssemblyAngularVelocity = Vector3.new()
+            end
             return
         end
-        for _,d in ipairs(inst:GetDescendants()) do
+        for _, d in ipairs(inst:GetDescendants()) do
             if d:IsA("BasePart") then
-                d.CanCollide = not on
-                d.CanQuery = not on
-                d.CanTouch = not on
-                d.Massless = on and true or false
-                d.AssemblyLinearVelocity = Vector3.new()
-                d.AssemblyAngularVelocity = Vector3.new()
+                if on then
+                    d.CanCollide = false
+                    d.CanQuery   = false
+                    d.CanTouch   = false
+                    d.Massless   = true
+                    d.AssemblyLinearVelocity  = Vector3.new()
+                    d.AssemblyAngularVelocity = Vector3.new()
+                else
+                    if snap and snap[d] then
+                        d.CanCollide = snap[d].CanCollide
+                        d.CanQuery   = snap[d].CanQuery
+                        d.CanTouch   = snap[d].CanTouch
+                        d.Massless   = snap[d].Massless
+                    else
+                        d.CanCollide = true
+                        d.CanQuery   = true
+                        d.CanTouch   = true
+                        d.Massless   = false
+                    end
+                    d.AssemblyLinearVelocity  = Vector3.new()
+                    d.AssemblyAngularVelocity = Vector3.new()
+                end
             end
         end
     end
@@ -705,6 +761,7 @@ return function(C, R, UI)
 
     local CapturedSet = {}
     local CapturedList = {}
+    local CapturedSnaps = {}
 
     local HOLD_OFFSET_Y = 10
     local HOLD_FORWARD = 1.5
@@ -740,6 +797,7 @@ return function(C, R, UI)
                 pivotAny(m, cf)
             else
                 CapturedSet[m] = nil
+                CapturedSnaps[m] = nil
                 table.remove(CapturedList, i)
             end
         end
@@ -760,9 +818,10 @@ return function(C, R, UI)
         hoverConn = nil
     end
 
-    local function addCaptured(m)
+    local function addCaptured(m, snap)
         if CapturedSet[m] then return end
         CapturedSet[m] = true
+        CapturedSnaps[m] = snap or {}
         CapturedList[#CapturedList+1] = m
         ensureHoverOn()
     end
@@ -772,16 +831,19 @@ return function(C, R, UI)
         for i = #CapturedList, 1, -1 do
             local m = CapturedList[i]
             if m and m.Parent then
+                local snap = CapturedSnaps[m]
                 setAnchoredAny(m, false)
-                setNoCollideAny(m, false)
+                setNoCollideAny(m, false, snap)
                 finallyStopDrag(m)
                 dragUntrack(m)
             end
             CapturedSet[m] = nil
+            CapturedSnaps[m] = nil
             table.remove(CapturedList, i)
         end
         table.clear(CapturedList)
         for k,_ in pairs(CapturedSet) do CapturedSet[k] = nil end
+        for k,_ in pairs(CapturedSnaps) do CapturedSnaps[k] = nil end
     end
 
     local function chestOpened(chestModel)
@@ -1140,9 +1202,10 @@ return function(C, R, UI)
         refreshDragRemotes()
         if not dragStart(inst) then return false end
         task.wait(0.06)
-        setNoCollideAny(inst, true)
+        local snap = snapshotInst(inst)
+        setNoCollideAny(inst, true, nil)
         setAnchoredAny(inst, true)
-        addCaptured(inst)
+        addCaptured(inst, snap)
         return true
     end
 
