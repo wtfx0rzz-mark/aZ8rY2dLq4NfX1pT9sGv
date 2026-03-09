@@ -25,6 +25,7 @@ return function(C, R, UI)
     if C.State.DiamondsFirePrompts == nil then C.State.DiamondsFirePrompts = false end
     if C.State.DiamondsJumpInput == nil then C.State.DiamondsJumpInput = false end
     if C.State.DiamondsKey1Input == nil then C.State.DiamondsKey1Input = false end
+    if C.State.DiamondsAutoAfkAction == nil then C.State.DiamondsAutoAfkAction = true end
 
     if C.State._DiamondsJumpConn ~= nil then
         pcall(function() C.State._DiamondsJumpConn:Disconnect() end)
@@ -54,6 +55,7 @@ return function(C, R, UI)
     local MAX_FIRES_PER_SCAN = 8
 
     local INPUT_BASE_INTERVAL_S = 5
+    local AUTO_AFK_IDLE_S       = 300
 
     local function now() return os.clock() end
 
@@ -490,13 +492,13 @@ return function(C, R, UI)
     end
 
     local function vimTap(keyCode)
-    local ok = pcall(function()
-        VIM:SendKeyEvent(true, keyCode, false, game)
-        task.wait(0.05)
-        VIM:SendKeyEvent(false, keyCode, false, game)
-    end)
-    return ok
-end
+        local ok = pcall(function()
+            VIM:SendKeyEvent(true, keyCode, false, game)
+            task.wait(0.05)
+            VIM:SendKeyEvent(false, keyCode, false, game)
+        end)
+        return ok
+    end
 
     local function diamondsKey1SendTap()
         return vimTap(Enum.KeyCode.One)
@@ -549,16 +551,16 @@ end
     end
 
     local function diamondsJumpStart()
-    if C.State._DiamondsJumpConn then return end
-    local nextAt = now() + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
-    C.State._DiamondsJumpConn = Run.Heartbeat:Connect(function()
-        if not (C.State and C.State.DiamondsJumpInput) then return end
-        local t = now()
-        if t < nextAt then return end
-        nextAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
-        task.spawn(afkComboAction)
-    end)
-end
+        if C.State._DiamondsJumpConn then return end
+        local nextAt = now() + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
+        C.State._DiamondsJumpConn = Run.Heartbeat:Connect(function()
+            if not (C.State and C.State.DiamondsJumpInput) then return end
+            local t = now()
+            if t < nextAt then return end
+            nextAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
+            task.spawn(afkComboAction)
+        end)
+    end
 
     local function diamondsJumpStop()
         if C.State._DiamondsJumpConn then
@@ -568,16 +570,16 @@ end
     end
 
     local function diamondsKey1Start()
-    if C.State._DiamondsKey1Conn then return end
-    local nextAt = now() + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
-    C.State._DiamondsKey1Conn = Run.Heartbeat:Connect(function()
-        if not (C.State and C.State.DiamondsKey1Input) then return end
-        local t = now()
-        if t < nextAt then return end
-        nextAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
-        task.spawn(diamondsKey1SendTap)
-    end)
-end
+        if C.State._DiamondsKey1Conn then return end
+        local nextAt = now() + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
+        C.State._DiamondsKey1Conn = Run.Heartbeat:Connect(function()
+            if not (C.State and C.State.DiamondsKey1Input) then return end
+            local t = now()
+            if t < nextAt then return end
+            nextAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
+            task.spawn(diamondsKey1SendTap)
+        end)
+    end
 
     local function diamondsKey1Stop()
         if C.State._DiamondsKey1Conn then
@@ -595,7 +597,6 @@ end
             C.State.DiamondsCycle = on and true or false
 
             if C.State.DiamondsCycle then
-                -- Force AFK toggle OFF (mutual exclusion). Cycle still runs its own afkComboAction in the loop.
                 C.State.DiamondsJumpInput = false
                 diamondsJumpStop()
             end
@@ -722,6 +723,45 @@ end
                 task.wait(0.1)
             end
         end)
+
+        task.spawn(function()
+            local lastPos = nil
+            local lastMoveAt = now()
+
+            while true do
+                task.wait(1)
+
+                if not (C.State and C.State.DiamondsAutoAfkAction) then
+                    lastPos = nil
+                    lastMoveAt = now()
+                else
+                    local root = hrp()
+                    local pos = root and root.Position
+
+                    if pos then
+                        if lastPos then
+                            if (pos - lastPos).Magnitude > 0.5 then
+                                lastMoveAt = now()
+
+                                if C.State.DiamondsKey1Input then
+                                    C.State.DiamondsKey1Input = false
+                                    diamondsKey1Stop()
+                                end
+                            end
+                        end
+                        lastPos = pos
+                    end
+
+                    if not C.State.DiamondsKey1Input then
+                        local idleFor = now() - lastMoveAt
+                        if idleFor >= AUTO_AFK_IDLE_S then
+                            C.State.DiamondsKey1Input = true
+                            diamondsKey1Start()
+                        end
+                    end
+                end
+            end
+        end)
     end
 
     startLoopsOnce()
@@ -757,10 +797,17 @@ end
     tab:Section({ Title = "Jump Debug" })
 
     tab:Toggle({
+        Title = "Auto AFK Action",
+        Default = C.State.DiamondsAutoAfkAction and true or false,
+        Callback = function(on)
+            C.State.DiamondsAutoAfkAction = on and true or false
+        end
+    })
+
+    tab:Toggle({
         Title = "AFK",
         Default = C.State.DiamondsJumpInput and true or false,
         Callback = function(on)
-            -- Prevent turning AFK on while Cycle is enabled
             if on and (C.State and C.State.DiamondsCycle) then
                 C.State.DiamondsJumpInput = false
                 diamondsJumpStop()
@@ -777,7 +824,7 @@ end
     })
 
     tab:Toggle({
-        Title = "Input 1 (simulate One)",
+        Title = "Input 1",
         Default = C.State.DiamondsKey1Input and true or false,
         Callback = function(on)
             C.State.DiamondsKey1Input = on and true or false
@@ -789,7 +836,6 @@ end
         end
     })
 
-    -- Enforce mutual exclusion at load time too
     if C.State and C.State.DiamondsCycle and C.State.DiamondsJumpInput then
         C.State.DiamondsJumpInput = false
         diamondsJumpStop()
