@@ -286,6 +286,23 @@ return function(C, R, UI)
         end
     end
 
+    local function severeExternalWelds(model)
+        if not (model and model.Parent) then return end
+        for _, d in ipairs(model:GetDescendants()) do
+            if d:IsA("WeldConstraint") and d.Name == "ItemWeld" then
+                local p0 = d.Part0
+                local p1 = d.Part1
+                if (p0 and not p0:IsDescendantOf(model)) or (p1 and not p1:IsDescendantOf(model)) then
+                    pcall(function() d:Destroy() end)
+                end
+            end
+        end
+        local mainP = model:FindFirstChild("Main")
+        if mainP and mainP:IsA("BasePart") and mainP.Anchored then
+            pcall(function() mainP.Anchored = false end)
+        end
+    end
+
     local function computeForwardDropCF()
         local root = hrp(); if not root then return nil end
         local head = headPart()
@@ -616,6 +633,7 @@ return function(C, R, UI)
 
     local function dropNearPlayer(model)
         if not (model and model.Parent) then return false end
+        severeExternalWelds(model)
         if model:IsA("Model") and STICKY_DROP[model.Name] then
             return stickyDropNearPlayer(model)
         end
@@ -960,6 +978,7 @@ return function(C, R, UI)
 
     local function startConveyor(model, orbPos, jobId)
         if not (model and model.Parent) then return end
+        severeExternalWelds(model)
         pcall(function()
             model:SetAttribute(INFLT_ATTR, now())
             model:SetAttribute(JOB_ATTR, tostring(jobId))
@@ -1015,7 +1034,7 @@ return function(C, R, UI)
             task.wait(STEP_WAIT)
         end
 
-        dropFromOrbSmooth(model, orbPos, jobId, origSnap, H)
+        dropFromOrbSmooth(model, orbPos, jobId, snapOrig, H)
     end
 
     local function runConveyorWave(centerPos, orbPos, targets, jobId, perNameCount)
