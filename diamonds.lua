@@ -26,6 +26,7 @@ return function(C, R, UI)
     if C.State.DiamondsJumpInput == nil then C.State.DiamondsJumpInput = false end
     if C.State.DiamondsKey1Input == nil then C.State.DiamondsKey1Input = false end
     if C.State.DiamondsAutoAfkAction == nil then C.State.DiamondsAutoAfkAction = true end
+    if C.State.DiamondsAutoInput1Action == nil then C.State.DiamondsAutoInput1Action = true end
 
     if C.State._DiamondsJumpConn ~= nil then
         pcall(function() C.State._DiamondsJumpConn:Disconnect() end)
@@ -731,7 +732,7 @@ return function(C, R, UI)
             while true do
                 task.wait(1)
 
-                if not (C.State and C.State.DiamondsAutoAfkAction) then
+                if not (C.State and C.State.DiamondsAutoInput1Action) then
                     lastPos = nil
                     lastMoveAt = now()
                 else
@@ -742,7 +743,6 @@ return function(C, R, UI)
                         if lastPos then
                             if (pos - lastPos).Magnitude > 0.5 then
                                 lastMoveAt = now()
-
                                 if C.State.DiamondsKey1Input then
                                     C.State.DiamondsKey1Input = false
                                     diamondsKey1Stop()
@@ -757,6 +757,44 @@ return function(C, R, UI)
                         if idleFor >= AUTO_AFK_IDLE_S then
                             C.State.DiamondsKey1Input = true
                             diamondsKey1Start()
+                        end
+                    end
+                end
+            end
+        end)
+
+        task.spawn(function()
+            local lastPos = nil
+            local lastMoveAt = now()
+
+            while true do
+                task.wait(1)
+
+                if not (C.State and C.State.DiamondsAutoAfkAction) then
+                    lastPos = nil
+                    lastMoveAt = now()
+                else
+                    local root = hrp()
+                    local pos = root and root.Position
+
+                    if pos then
+                        if lastPos then
+                            if (pos - lastPos).Magnitude > 0.5 then
+                                lastMoveAt = now()
+                                if C.State.DiamondsJumpInput then
+                                    C.State.DiamondsJumpInput = false
+                                    diamondsJumpStop()
+                                end
+                            end
+                        end
+                        lastPos = pos
+                    end
+
+                    if not C.State.DiamondsJumpInput then
+                        local idleFor = now() - lastMoveAt
+                        if idleFor >= AUTO_AFK_IDLE_S then
+                            C.State.DiamondsJumpInput = true
+                            diamondsJumpStart()
                         end
                     end
                 end
@@ -801,6 +839,14 @@ return function(C, R, UI)
         Value = (C.State.DiamondsAutoAfkAction ~= false),
         Callback = function(on)
             C.State.DiamondsAutoAfkAction = on and true or false
+        end
+    })
+
+    tab:Toggle({
+        Title = "Auto Input 1 Action",
+        Value = (C.State.DiamondsAutoInput1Action ~= false),
+        Callback = function(on)
+            C.State.DiamondsAutoInput1Action = on and true or false
         end
     })
 
