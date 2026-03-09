@@ -798,7 +798,7 @@ return function(C, R, UI)
 
     tab:Toggle({
         Title = "Auto AFK Action",
-        Default = (C.State.DiamondsAutoAfkAction ~= false),
+        Value = (C.State.DiamondsAutoAfkAction ~= false),
         Callback = function(on)
             C.State.DiamondsAutoAfkAction = on and true or false
         end
