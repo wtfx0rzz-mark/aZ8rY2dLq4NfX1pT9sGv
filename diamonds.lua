@@ -490,17 +490,13 @@ return function(C, R, UI)
     end
 
     local function vimTap(keyCode)
-        local ok = pcall(function()
-            VIM:SendKeyEvent(true, keyCode, false, game)
-            task.wait(0.05)
-            VIM:SendKeyEvent(false, keyCode, false, game)
-        end)
-        return ok
-    end
-
-    local function diamondsJumpSendSpaceTap()
-        return vimTap(Enum.KeyCode.Space)
-    end
+    local ok = pcall(function()
+        VIM:SendKeyEvent(true, keyCode, false, game)
+        task.wait(0.05)
+        VIM:SendKeyEvent(false, keyCode, false, game)
+    end)
+    return ok
+end
 
     local function diamondsKey1SendTap()
         return vimTap(Enum.KeyCode.One)
@@ -553,16 +549,16 @@ return function(C, R, UI)
     end
 
     local function diamondsJumpStart()
-        if C.State._DiamondsJumpConn then return end
-        local nextAt = now() + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
-        C.State._DiamondsJumpConn = Run.Heartbeat:Connect(function()
-            if not (C.State and C.State.DiamondsJumpInput) then return end
-            local t = now()
-            if t < nextAt then return end
-            afkComboAction()
-            nextAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
-        end)
-    end
+    if C.State._DiamondsJumpConn then return end
+    local nextAt = now() + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
+    C.State._DiamondsJumpConn = Run.Heartbeat:Connect(function()
+        if not (C.State and C.State.DiamondsJumpInput) then return end
+        local t = now()
+        if t < nextAt then return end
+        nextAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
+        task.spawn(afkComboAction)
+    end)
+end
 
     local function diamondsJumpStop()
         if C.State._DiamondsJumpConn then
@@ -572,16 +568,16 @@ return function(C, R, UI)
     end
 
     local function diamondsKey1Start()
-        if C.State._DiamondsKey1Conn then return end
-        local nextAt = now() + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
-        C.State._DiamondsKey1Conn = Run.Heartbeat:Connect(function()
-            if not (C.State and C.State.DiamondsKey1Input) then return end
-            local t = now()
-            if t < nextAt then return end
-            diamondsKey1SendTap()
-            nextAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
-        end)
-    end
+    if C.State._DiamondsKey1Conn then return end
+    local nextAt = now() + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
+    C.State._DiamondsKey1Conn = Run.Heartbeat:Connect(function()
+        if not (C.State and C.State.DiamondsKey1Input) then return end
+        local t = now()
+        if t < nextAt then return end
+        nextAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
+        task.spawn(diamondsKey1SendTap)
+    end)
+end
 
     local function diamondsKey1Stop()
         if C.State._DiamondsKey1Conn then
