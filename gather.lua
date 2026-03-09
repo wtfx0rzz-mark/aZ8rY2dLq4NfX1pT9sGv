@@ -199,15 +199,46 @@ return function(C, R, UI)
             end
         end
 
-        local function setNoCollideModel(m, on)
-            for _,d in ipairs(m:GetDescendants()) do
+        local function snapshotModel(m)
+            local snap = {}
+            for _, d in ipairs(m:GetDescendants()) do
                 if d:IsA("BasePart") then
-                    d.CanCollide = not on
-                    d.CanQuery   = not on
-                    d.CanTouch   = not on
-                    d.Massless   = on and true or false
-                    d.AssemblyLinearVelocity  = Vector3.new()
-                    d.AssemblyAngularVelocity = Vector3.new()
+                    snap[d] = {
+                        CanCollide = d.CanCollide,
+                        CanQuery   = d.CanQuery,
+                        CanTouch   = d.CanTouch,
+                        Massless   = d.Massless,
+                    }
+                end
+            end
+            return snap
+        end
+
+        local function setNoCollideModel(m, on, snap)
+            for _, d in ipairs(m:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    if on then
+                        d.CanCollide = false
+                        d.CanQuery   = false
+                        d.CanTouch   = false
+                        d.Massless   = true
+                        d.AssemblyLinearVelocity  = Vector3.new()
+                        d.AssemblyAngularVelocity = Vector3.new()
+                    else
+                        if snap and snap[d] then
+                            d.CanCollide = snap[d].CanCollide
+                            d.CanQuery   = snap[d].CanQuery
+                            d.CanTouch   = snap[d].CanTouch
+                            d.Massless   = snap[d].Massless
+                        else
+                            d.CanCollide = true
+                            d.CanQuery   = true
+                            d.CanTouch   = true
+                            d.Massless   = false
+                        end
+                        d.AssemblyLinearVelocity  = Vector3.new()
+                        d.AssemblyAngularVelocity = Vector3.new()
+                    end
                 end
             end
         end
@@ -390,13 +421,14 @@ return function(C, R, UI)
 
         local gatherOn = false
         local scanConn, hoverConn = nil, nil
-        local gathered, list = {}, {}
+        local gathered, list, snapshots = {}, {}, {}
         local cultistCount = 0
         local itemsChildConn = nil
 
-        local function addGather(m)
+        local function addGather(m, snap)
             if gathered[m] then return end
             gathered[m] = true
+            snapshots[m] = snap or {}
             list[#list+1] = m
             if isCultist(m) then cultistCount = cultistCount + 1 end
         end
@@ -405,6 +437,7 @@ return function(C, R, UI)
             if not gathered[m] then return end
             if isCultist(m) then cultistCount = math.max(0, cultistCount - 1) end
             gathered[m] = nil
+            snapshots[m] = nil
             for i = #list, 1, -1 do
                 if list[i] == m then
                     table.remove(list, i)
@@ -415,6 +448,7 @@ return function(C, R, UI)
 
         local function clearAll()
             for m,_ in pairs(gathered) do gathered[m] = nil end
+            table.clear(snapshots)
             table.clear(list)
             cultistCount = 0
         end
@@ -422,8 +456,9 @@ return function(C, R, UI)
         local function releaseAll()
             for _,m in ipairs(list) do
                 if m and m.Parent then
+                    local snap = snapshots[m]
                     dragTrackRelease(m)
-                    setNoCollideModel(m, false)
+                    setNoCollideModel(m, false, snap)
                     setAnchoredModel(m, false)
                     local mp = mainPart(m)
                     if mp then
@@ -493,9 +528,10 @@ return function(C, R, UI)
                     if not dragStart(m) then break end
                     task.wait(START_YIELD)
                     pcall(function() mp:SetNetworkOwner(lp) end)
-                    setNoCollideModel(m, true)
+                    local snap = snapshotModel(m)
+                    setNoCollideModel(m, true, nil)
                     setAnchoredModel(m, true)
-                    addGather(m)
+                    addGather(m, snap)
                     dragKeepAlive(m)
                 until true
             end
@@ -532,9 +568,10 @@ return function(C, R, UI)
                     if not dragStart(m) then break end
                     task.wait(START_YIELD)
                     pcall(function() mp:SetNetworkOwner(lp) end)
-                    setNoCollideModel(m, true)
+                    local snap = snapshotModel(m)
+                    setNoCollideModel(m, true, nil)
                     setAnchoredModel(m, true)
-                    addGather(m)
+                    addGather(m, snap)
                     dragKeepAlive(m)
                 until true
             end
@@ -561,9 +598,10 @@ return function(C, R, UI)
                 if not child or not child.Parent then return end
                 local mp2 = mainPart(child); if not mp2 then return end
                 pcall(function() mp2:SetNetworkOwner(lp) end)
-                setNoCollideModel(child, true)
+                local snap = snapshotModel(child)
+                setNoCollideModel(child, true, nil)
                 setAnchoredModel(child, true)
-                addGather(child)
+                addGather(child, snap)
                 dragKeepAlive(child)
             end)
         end
@@ -672,10 +710,12 @@ return function(C, R, UI)
             local mp = mainPart(m)
             if not mp then return end
 
+            local snap = snapshots[m]
+
             dragKeepAlive(m)
             pcall(function() mp:SetNetworkOwner(lp) end)
 
-            setNoCollideModel(m, true)
+            setNoCollideModel(m, true, nil)
             setAnchoredModel(m, true)
             zeroAllMomentum(m)
 
@@ -686,7 +726,7 @@ return function(C, R, UI)
             waitIf(PLACE_PER_ITEM_DELAY_SEC)
 
             setAnchoredModel(m, false)
-            setNoCollideModel(m, false)
+            setNoCollideModel(m, false, snap)
 
             if PLACE_USE_NUDGE_DOWN then
                 for _,p in ipairs(m:GetDescendants()) do
