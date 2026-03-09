@@ -34,17 +34,19 @@ return function(C, R, UI)
         local fuelItems = { "Log","Coal","Fuel Canister","Oil Barrel","Chair","Biofuel" }
         local foodItems = {
             "Cake","Cooked Steak","Cooked Morsel","Steak","Morsel","Berry","Carrot",
-            "Chilli","Stew","Ribs","Pumpkin","Hearty Stew","Cooked Ribs","Corn","BBQ ribs","Apple","Mackerel","Salmon","Swordfish","Acorn","Strawberry"
+            "Chilli","Stew","Ribs","Pumpkin","Hearty Stew","Cooked Ribs","Corn","BBQ ribs","Apple","Mackerel","Salmon","Swordfish","Shark","Acorn","Strawberry"
         }
         local medicalItems = { "Bandage", "MedKit" }
         local weaponsArmor = {
-        "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
-        "Chainsaw","Crossbow","Katana","Kunai","Laser Cannon","Laser Sword","Morningstar","Riot Shield","Spear","Tactical Shotgun","Wildfire",
-        "Sword","Ice Axe","Scythe","Thorn Body","Corrupted Thorn Body","Impact Grenade","Dynamite","Corrupted Shotgun","Corrupted Revolver","Corrupted Thrown Axe"
+            "Revolver","Rifle","Leather Body","Iron Body","Good Axe","Strong Axe","Hammer",
+            "Chainsaw","Crossbow","Katana","Kunai","Laser Cannon","Ray Gun","Infernal Sword","Laser Sword","Ice Sword","Poison Claws","Morningstar","Riot Shield","Spear","Poison Spear","Tactical Shotgun","Wildfire",
+            "Sword","Ice Axe","Scythe","Thorn Body","Alien Armor","Corrupted Thorn Body","Impact Grenade","Dynamite","Corrupted Shotgun","Corrupted Revolver","Corrupted Thrown Axe","Blowpipe"
         }
         local ammoMisc = {
-            "Revolver Ammo","Rifle Ammo","Giant Sack","Good Sack","Mossy Coin","Cultist","Alien","Alien Elite","Sapling",
-            "Basketball","Blueprint","Diamond","Gem of the Forest Fragment","Flashlight","Old Taming flute","Cultist Gem","Tusk","Infernal Sack"
+            "Revolver Ammo","Rifle Ammo","Shotgun Ammo","Explosive Revolver Ammo","Explosive Rifle Ammo",
+            "Giant Sack","Infernal Sack","Good Sack","Mossy Coin","Cultist","Alien","Alien Elite","Sapling",
+            "Basketball","Blueprint","Diamond","Gem of the Forest Fragment","Gem of the Forest","Flashlight","Old Taming flute","Old Rod","Cultist Gem",
+            "Tusk","Sacrifice Totem","Anvil Back","Anvil Front","Anvil Base","Armor Trim","Crystal Skull Key"
         }
         local pelts = { "Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt" }
 
@@ -81,11 +83,6 @@ return function(C, R, UI)
         local PLACE_NUDGE_DOWN_STUDS   = 16
 
         local RELEASE_DAMP_FRAMES = 2
-
-        local FLASHLIGHT_STOPDRAG_AFTER_SETTLE = {
-            ["Strong Flashlight"] = true,
-            ["Old Flashlight"] = true
-        }
 
         local function waitIf(v)
             v = tonumber(v)
@@ -181,6 +178,25 @@ return function(C, R, UI)
             if isWallVariant(m) then return true end
             if isUnderLogWall(m) then return true end
             return false
+        end
+
+        local function severeExternalWelds(model)
+            if not (model and model.Parent) then return end
+            for _, d in ipairs(model:GetDescendants()) do
+                if d:IsA("WeldConstraint") then
+                    local p0 = d.Part0
+                    local p1 = d.Part1
+                    if (p0 and not p0:IsDescendantOf(model)) or (p1 and not p1:IsDescendantOf(model)) then
+                        pcall(function() d:Destroy() end)
+                    end
+                end
+                if d:IsA("BasePart") and d.Anchored then
+                    pcall(function() d.Anchored = false end)
+                end
+            end
+            if model:IsA("BasePart") and model.Anchored then
+                pcall(function() model.Anchored = false end)
+            end
         end
 
         local function setNoCollideModel(m, on)
@@ -364,7 +380,7 @@ return function(C, R, UI)
             if isExcludedModel(m) or isUnderLogWall(m) then return false end
             if m.Name == "Log" and isWallVariant(m) then return false end
             local mp = mainPart(m)
-            if not mp or mp.Anchored then return false end
+            if not mp then return false end
             if origin and rad then
                 if (mp.Position - origin).Magnitude > rad then return false end
             end
@@ -473,6 +489,7 @@ return function(C, R, UI)
                     if isCultist(m) and cultistCount >= CULTIST_LIMIT then break end
                     if not canGather(m, selectedSet, origin, rad) then break end
                     local mp = mainPart(m); if not mp then break end
+                    severeExternalWelds(m)
                     if not dragStart(m) then break end
                     task.wait(START_YIELD)
                     pcall(function() mp:SetNetworkOwner(lp) end)
@@ -511,6 +528,7 @@ return function(C, R, UI)
                     if isCultist(m) and cultistCount >= CULTIST_LIMIT then break end
                     if not canGather(m, selectedSet, origin, rad) then break end
                     local mp = mainPart(m); if not mp then break end
+                    severeExternalWelds(m)
                     if not dragStart(m) then break end
                     task.wait(START_YIELD)
                     pcall(function() mp:SetNetworkOwner(lp) end)
@@ -536,6 +554,7 @@ return function(C, R, UI)
             if isCultist(child) and cultistCount >= CULTIST_LIMIT then return end
             if not canGather(child, selectedSet, origin, rad) then return end
             local mp = mainPart(child); if not mp then return end
+            severeExternalWelds(child)
             if not dragStart(child) then return end
             task.delay(START_YIELD, function()
                 if not gatherOn then return end
@@ -648,49 +667,6 @@ return function(C, R, UI)
             end
         end
 
-        local function rayParamsForRevolverSnap(ignoreModel)
-            local params = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            params.IgnoreWater = true
-            local ex = { lp.Character }
-            local items = itemsRootOrNil()
-            if items then table.insert(ex, items) end
-            if ignoreModel then table.insert(ex, ignoreModel) end
-            params.FilterDescendantsInstances = ex
-            return params
-        end
-
-        local function revolverSnapDown(m, maxDepth, pad)
-            if not (m and m.Parent and m:IsA("Model")) then return false end
-            if m.Name ~= "Revolver" then return false end
-
-            local rp = mainPart(m)
-            if not (rp and rp.Parent) then return false end
-
-            local depth = maxDepth or 360
-            local extraPad = pad or 0.14
-
-            local params = rayParamsForRevolverSnap(m)
-            local start = rp.Position + Vector3.new(0, 80, 0)
-            local hit = WS:Raycast(start, Vector3.new(0, -depth, 0), params)
-            if not hit then return false end
-
-            local halfY = (rp.Size.Y * 0.5)
-            local targetPos = Vector3.new(rp.Position.X, hit.Position.Y + halfY + extraPad, rp.Position.Z)
-
-            local cf = rp.CFrame
-            local rot = (cf - cf.Position)
-            local targetCF = CFrame.new(targetPos) * rot
-
-            setNoCollideModel(m, true)
-            zeroAllMomentum(m)
-            pivotModel(m, targetCF)
-            zeroAllMomentum(m)
-            setNoCollideModel(m, false)
-
-            return true
-        end
-
         local function dropOneItem(m, baseForward, basePos)
             if not (m and m.Parent) then return end
             local mp = mainPart(m)
@@ -731,24 +707,6 @@ return function(C, R, UI)
             pcall(function() if mp.SetNetworkOwnershipAuto then mp:SetNetworkOwnershipAuto() end end)
 
             finallyStopDrag(m)
-
-            if m and m.Parent and m:IsA("Model") then
-                if FLASHLIGHT_STOPDRAG_AFTER_SETTLE[m.Name] then
-                    task.spawn(function()
-                        waitForSettle(m, 1.50)
-                        if m and m.Parent then
-                            pcall(function() safeStopDrag(m) end)
-                        end
-                    end)
-                elseif m.Name == "Revolver" then
-                    task.spawn(function()
-                        task.wait(0.25)
-                        if not (m and m.Parent) then return end
-                        revolverSnapDown(m, 360, 0.14)
-                    end)
-                end
-            end
-
             dragUntrack(m)
         end
 
