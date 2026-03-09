@@ -720,6 +720,8 @@ return function(C, R, UI)
         return pos + Vector3.new(0, ORB_HEIGHT + 1, 0)
     end
 
+    -- FIX: markForConfirm now snapshots the runId at the moment of confirm so
+    -- processPendingConfirm can guard against cross-run DONE_ATTR stamping.
     local function markForConfirm(m)
         if not (m and m.Parent) then return end
         pendingConfirm[m] = { at = os.clock(), runId = CURRENT_RUN_ID }
@@ -731,6 +733,10 @@ return function(C, R, UI)
         finalized[m] = nil
     end
 
+    -- FIX: guard DONE_ATTR write against run ID mismatch caused by toggling
+    -- off/on while a delivery confirmation is still in-flight. Previously the
+    -- new run's ID could be stamped onto an item that belonged to the old run,
+    -- permanently blocking it for the current run and causing silent misses.
     local function processPendingConfirm()
         if not CURRENT_RUN_ID then
             pendingConfirm = {}
@@ -744,17 +750,30 @@ return function(C, R, UI)
             if not m then
                 pendingConfirm[m] = nil
             else
-                local alive = (m.Parent ~= nil)
+                local alive  = (m.Parent ~= nil)
                 local inItems = alive and itemsFolder and m:IsDescendantOf(itemsFolder)
 
                 if (not alive) or (itemsFolder and (not inItems)) then
-                    pcall(function()
-                        m:SetAttribute(DONE_ATTR, CURRENT_RUN_ID)
-                    end)
+                    -- Item was consumed / removed. Only stamp DONE_ATTR when
+                    -- the confirm still belongs to the current run. If the run
+                    -- changed between delivery and confirm, clear the attribute
+                    -- instead so the item is not blocked in the new run.
+                    local confirmedRunId = info and info.runId
+                    if confirmedRunId and confirmedRunId == CURRENT_RUN_ID then
+                        pcall(function()
+                            m:SetAttribute(DONE_ATTR, CURRENT_RUN_ID)
+                        end)
+                    else
+                        pcall(function()
+                            m:SetAttribute(DONE_ATTR, nil)
+                        end)
+                    end
                     pendingConfirm[m] = nil
                 else
                     local t0 = (info and info.at) or now
                     if (now - t0) >= CONFIRM_WINDOW_S then
+                        -- Item came back into Items within the window — clear
+                        -- everything so it can be picked up again.
                         pendingConfirm[m] = nil
                         pcall(function()
                             m:SetAttribute(DONE_ATTR, nil)
@@ -1513,9 +1532,7 @@ return function(C, R, UI)
         finalized      = {}
         fruitNudged    = {}
         dropStacks     = {}
-        outsideLogCache = {}
-        outsideLogAcc = 0
-        pendingRetry = {}
+        pendingRetry   = {}
         pendingConfirm = {}
 
         releaseRateHz = RELEASE_RATE_HZ_DEFAULT
@@ -1576,6 +1593,16 @@ return function(C, R, UI)
         releaseAcc   = 0
         activeCount  = 0
 
+        -- FIX: populate the outside log cache immediately on start so that
+        -- Logs are not skipped for the first OUTSIDE_LOG_SCAN_INT seconds
+        -- of each run.
+        outsideLogAcc = 0
+        outsideLogCache = {}
+        local sel = currentSelectedSet()
+        if sel and sel["Log"] and OUTSIDE_LOGS_ENABLED then
+            outsideLogCache = collectOutsideLogs(CURRENT_RUN_ID)
+        end
+
         local scanAcc = 0
         local moveAcc = 0
         local moveInterval = 1 / MOVE_HZ
@@ -1593,8 +1620,8 @@ return function(C, R, UI)
                 scanAcc = scanAcc - SCAN_INTERVAL
                 local jobId = tostring(os.clock())
                 outsideLogAcc = outsideLogAcc + SCAN_INTERVAL
-                local sel = currentSelectedSet()
-                if sel and sel["Log"] and OUTSIDE_LOGS_ENABLED and outsideLogAcc >= OUTSIDE_LOG_SCAN_INT then
+                local curSel = currentSelectedSet()
+                if curSel and curSel["Log"] and OUTSIDE_LOGS_ENABLED and outsideLogAcc >= OUTSIDE_LOG_SCAN_INT then
                     outsideLogAcc = 0
                     outsideLogCache = collectOutsideLogs(jobId)
                 end
