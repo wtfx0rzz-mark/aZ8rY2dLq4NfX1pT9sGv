@@ -25,7 +25,7 @@ return function(C, R, UI)
     if C.State.DiamondsFirePrompts == nil then C.State.DiamondsFirePrompts = false end
     if C.State.DiamondsJumpInput == nil then C.State.DiamondsJumpInput = false end
     if C.State.DiamondsKey1Input == nil then C.State.DiamondsKey1Input = false end
-    if C.State.DiamondsAutoAfkAction == nil then C.State.DiamondsAutoAfkAction = true end
+    if C.State.DiamondsAutoAfkAction == nil then C.State.DiamondsAutoAfkAction = false end
     if C.State.DiamondsAutoInput1Action == nil then C.State.DiamondsAutoInput1Action = true end
 
     if C.State._DiamondsJumpConn ~= nil then
@@ -836,7 +836,7 @@ return function(C, R, UI)
 
     tab:Toggle({
         Title = "Auto AFK Action",
-        Value = (C.State.DiamondsAutoAfkAction ~= false),
+        Value = (C.State.DiamondsAutoAfkAction == true),
         Callback = function(on)
             C.State.DiamondsAutoAfkAction = on and true or false
         end
@@ -844,7 +844,7 @@ return function(C, R, UI)
 
     tab:Toggle({
         Title = "Auto Input 1 Action",
-        Value = (C.State.DiamondsAutoInput1Action ~= false),
+        Value = (C.State.DiamondsAutoInput1Action == true),
         Callback = function(on)
             C.State.DiamondsAutoInput1Action = on and true or false
         end
