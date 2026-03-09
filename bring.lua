@@ -289,7 +289,7 @@ return function(C, R, UI)
     local function severeExternalWelds(model)
         if not (model and model.Parent) then return end
         for _, d in ipairs(model:GetDescendants()) do
-            if d:IsA("WeldConstraint") and d.Name == "ItemWeld" then
+            if d:IsA("WeldConstraint") then
                 local p0 = d.Part0
                 local p1 = d.Part1
                 if (p0 and not p0:IsDescendantOf(model)) or (p1 and not p1:IsDescendantOf(model)) then
@@ -297,7 +297,7 @@ return function(C, R, UI)
                 end
             end
         end
-        local mainP = model:FindFirstChild("Main")
+        local mainP = model:FindFirstChild("Main") or model:FindFirstChild("Handle")
         if mainP and mainP:IsA("BasePart") and mainP.Anchored then
             pcall(function() mainP.Anchored = false end)
         end
