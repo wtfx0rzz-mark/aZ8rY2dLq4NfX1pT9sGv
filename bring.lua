@@ -162,33 +162,6 @@ return function(C, R, UI)
         return 2
     end
 
-    local function isStrongFlashlight(model)
-        if not (model and model:IsA("Model")) then return false end
-        if model.Name ~= "Strong Flashlight" then return false end
-        local mainBP = model:FindFirstChild("Main", true)
-        if not (mainBP and mainBP:IsA("BasePart")) then return false end
-        return mainBP:FindFirstChild("RightGripAttachment") ~= nil
-    end
-
-    local function disableWelds(model)
-        local disabled = {}
-        for _, d in ipairs(model:GetDescendants()) do
-            if d:IsA("WeldConstraint") and d.Enabled then
-                d.Enabled = false
-                disabled[#disabled + 1] = d
-            end
-        end
-        return disabled
-    end
-
-    local function restoreWelds(disabled)
-        for _, d in ipairs(disabled) do
-            if d and d.Parent then
-                d.Enabled = true
-            end
-        end
-    end
-
     local function requestMoreStreamingAround(posList)
         if not (WS and WS.StreamingEnabled) then return end
         local seen = {}
@@ -562,18 +535,11 @@ return function(C, R, UI)
 
         local snap = setCollide(model, false)
         zeroAssembly(model)
-
-        if isStrongFlashlight(model) then
-            local mainBP = model:FindFirstChild("Main", true)
-            local wlds = disableWelds(model)
-            mainBP.CFrame = cf
-            restoreWelds(wlds)
-        elseif model:IsA("Model") then
+        if model:IsA("Model") then
             model:PivotTo(cf)
         else
             local p = mainPart(model); if p then p.CFrame = cf end
         end
-
         setCollide(model, true, snap)
 
         if started then
