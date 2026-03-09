@@ -369,14 +369,6 @@ return function(C, R, UI)
         return type(n) == "string" and (n:find("Sword", 1, true) ~= nil)
     end
 
-    local function isFlashlightVariantName(n)
-        return type(n) == "string" and (n:find("Flashlight", 1, true) ~= nil)
-    end
-
-    local function isRevolverVariantName(n)
-        return type(n) == "string" and (n:find("Revolver", 1, true) ~= nil)
-    end
-
     local BANDAGE_LIMIT = 10
     local MEDKIT_LIMIT  = 5
 
@@ -1126,17 +1118,6 @@ return function(C, R, UI)
 
         local n = inst.Name
 
-        if isRevolverVariantName(n) then
-            return true
-        end
-
-        if isFlashlightVariantName(n) then
-            if n == "Strong Flashlight" and (not hasSpecialInInventory(n)) then
-                pcall(function() takeItemToInventory(inst) end)
-            end
-            return true
-        end
-
         if n == "Thorn Body" then
             if tryEquipThornBody(inst) then
                 return true
@@ -1345,15 +1326,7 @@ return function(C, R, UI)
                     local did = false
                     local n = inst.Name
 
-                    if isRevolverVariantName(n) then
-                        if preSet then preSet[k] = true end
-                        did = false
-                    elseif isFlashlightVariantName(n) then
-                        if n == "Strong Flashlight" and (not hasSpecialInInventory(n)) then
-                            did = (takeItemToInventory(inst) and true or false)
-                        end
-                        if preSet then preSet[k] = true end
-                    elseif n == "Thorn Body" then
+                    if n == "Thorn Body" then
                         did = (tryEquipThornBody(inst) and true or false)
                     elseif ALWAYS_TAKE_NAMES[n] then
                         did = takeItemToInventory(inst) and true or false
@@ -1390,13 +1363,7 @@ return function(C, R, UI)
                 local n = inst.Name
                 local did = false
 
-                if isRevolverVariantName(n) then
-                    did = false
-                elseif isFlashlightVariantName(n) then
-                    if n == "Strong Flashlight" and (not hasSpecialInInventory(n)) then
-                        did = (takeItemToInventory(inst) and true or false)
-                    end
-                elseif n == "Thorn Body" then
+                if n == "Thorn Body" then
                     did = (tryEquipThornBody(inst) and true or false)
                 elseif ALWAYS_TAKE_NAMES[n] then
                     did = takeItemToInventory(inst) and true or false
@@ -1433,15 +1400,7 @@ return function(C, R, UI)
                     local n = inst.Name
                     local did = false
 
-                    if isRevolverVariantName(n) then
-                        preSet[k] = true
-                        did = false
-                    elseif isFlashlightVariantName(n) then
-                        if n == "Strong Flashlight" and (not hasSpecialInInventory(n)) then
-                            did = (takeItemToInventory(inst) and true or false)
-                        end
-                        preSet[k] = true
-                    elseif n == "Thorn Body" then
+                    if n == "Thorn Body" then
                         did = (tryEquipThornBody(inst) and true or false)
                     elseif ALWAYS_TAKE_NAMES[n] then
                         did = takeItemToInventory(inst) and true or false
@@ -1611,7 +1570,6 @@ return function(C, R, UI)
     local currentRunChest = nil
     local emptySince = 0
 
-    -- PATCH: keep a handle to the Chest Run toggle so we can flip it OFF when auto-stopping.
     local chestRunToggleObj = nil
     local _settingChestRunToggle = false
     local function setChestRunToggleUI(v)
@@ -1805,7 +1763,6 @@ return function(C, R, UI)
             currentRunChest = nil
             if #Tracked == 0 then
                 if AUTO_STOP_IF_EMPTY_SECONDS and AUTO_STOP_IF_EMPTY_SECONDS > 0 then
-                    -- PATCH: stop + flip the UI toggle OFF
                     runOn = false
                     C.State.Toggles.ChestRun = false
                     setSkipGuiVisible(false)
@@ -1878,7 +1835,6 @@ return function(C, R, UI)
                     if AUTO_STOP_IF_EMPTY_SECONDS and AUTO_STOP_IF_EMPTY_SECONDS > 0 then
                         if emptySince == 0 then emptySince = os.clock() end
                         if (os.clock() - emptySince) >= AUTO_STOP_IF_EMPTY_SECONDS then
-                            -- PATCH: stop + flip the UI toggle OFF
                             runOn = false
                             C.State.Toggles.ChestRun = false
                             setSkipGuiVisible(false)
@@ -1967,8 +1923,6 @@ return function(C, R, UI)
     local ITEM_SEARCH_INTERVAL_SECONDS = 0.75
 
     local function isSearchTargetName(n)
-        if isRevolverVariantName(n) then return false end
-        if isFlashlightVariantName(n) and n ~= "Strong Flashlight" then return false end
         if n == "Thorn Body" then return true end
         if ALWAYS_TAKE_NAMES[n] then return true end
         if SPECIAL_TAKE_NAMES[n] == true then return true end
@@ -1977,15 +1931,6 @@ return function(C, R, UI)
     end
 
     local function needsSearchItem(n)
-        if isRevolverVariantName(n) then
-            return false
-        end
-        if isFlashlightVariantName(n) then
-            if n == "Strong Flashlight" then
-                return (not hasSpecialInInventory(n))
-            end
-            return false
-        end
         if n == "Thorn Body" then
             return (not hasThornBodyOwned())
         end
@@ -2033,17 +1978,6 @@ return function(C, R, UI)
         if not (target and target.Parent) then return end
 
         local n = target.Name
-
-        if isRevolverVariantName(n) then
-            return
-        end
-
-        if isFlashlightVariantName(n) then
-            if n == "Strong Flashlight" and (not hasSpecialInInventory(n)) then
-                pcall(function() takeItemToInventory(target) end)
-            end
-            return
-        end
 
         if n == "Thorn Body" then
             pcall(function()
@@ -2112,7 +2046,6 @@ return function(C, R, UI)
         end
     })
 
-    -- PATCH: store toggle object + prevent recursion when we set it programmatically
     chestRunToggleObj = ExtraTab:Toggle({
         Title = "Chest Run",
         Value = C.State.Toggles.ChestRun,
