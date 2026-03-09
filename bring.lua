@@ -162,6 +162,41 @@ return function(C, R, UI)
         return 2
     end
 
+    local function isGripRooted(model)
+        if not (model and model:IsA("Model")) then return false end
+        local mainBP = model:FindFirstChild("Main", true)
+        if not (mainBP and mainBP:IsA("BasePart")) then return false end
+        return mainBP:FindFirstChild("RightGripAttachment") ~= nil
+    end
+
+    local function disableWelds(model)
+        local disabled = {}
+        for _, d in ipairs(model:GetDescendants()) do
+            if d:IsA("WeldConstraint") and d.Enabled then
+                d.Enabled = false
+                disabled[#disabled + 1] = d
+            end
+        end
+        return disabled
+    end
+
+    local function restoreWelds(disabled)
+        for _, d in ipairs(disabled) do
+            if d and d.Parent then
+                d.Enabled = true
+            end
+        end
+    end
+
+    local function moveGripRooted(model, cf)
+        local mainBP = model:FindFirstChild("Main", true)
+        if not (mainBP and mainBP:IsA("BasePart")) then return false end
+        local disabled = disableWelds(model)
+        mainBP.CFrame = cf
+        restoreWelds(disabled)
+        return true
+    end
+
     local function requestMoreStreamingAround(posList)
         if not (WS and WS.StreamingEnabled) then return end
         local seen = {}
@@ -313,7 +348,9 @@ return function(C, R, UI)
         local above = mp.CFrame + Vector3.new(0, FALLBACK_UP, 0)
         local snap = setCollide(model, false)
         zeroAssembly(model)
-        if model:IsA("Model") then
+        if isGripRooted(model) then
+            moveGripRooted(model, above)
+        elseif model:IsA("Model") then
             model:PivotTo(above)
         else
             local p=mainPart(model); if p then p.CFrame=above end
@@ -323,10 +360,13 @@ return function(C, R, UI)
         end
         task.delay(COLLIDE_OFF_SEC, function() setCollide(model, true, snap) end)
     end
+
     local function moveModel(model, cf)
         local snap = setCollide(model, false)
         zeroAssembly(model)
-        if model:IsA("Model") then
+        if isGripRooted(model) then
+            moveGripRooted(model, cf)
+        elseif model:IsA("Model") then
             model:PivotTo(cf)
         else
             local p=mainPart(model); if p then p.CFrame=cf end
@@ -429,7 +469,11 @@ return function(C, R, UI)
                     if mp then
                         local dir = (mp.Position - center).Unit
                         local snap = setCollide(cooked, false)
-                        if cooked:IsA("Model") then cooked:PivotTo(mp.CFrame + CFrame.new(dir*1.5).Position) end
+                        if isGripRooted(cooked) then
+                            moveGripRooted(cooked, mp.CFrame + CFrame.new(dir*1.5).Position)
+                        elseif cooked:IsA("Model") then
+                            cooked:PivotTo(mp.CFrame + CFrame.new(dir*1.5).Position)
+                        end
                         setCollide(cooked, true, snap)
                     end
                 end
@@ -527,24 +571,25 @@ return function(C, R, UI)
 
         local cf = groundCFAroundPlayer(model) or computeForwardDropCF()
         if not cf then
-            if started then
-                stopIfDragging(r, model)
-            end
+            if started then stopIfDragging(r, model) end
             return false
         end
 
         local snap = setCollide(model, false)
         zeroAssembly(model)
-        if model:IsA("Model") then
+
+        if isGripRooted(model) then
+            moveGripRooted(model, cf)
+        elseif model:IsA("Model") then
             model:PivotTo(cf)
         else
-            local p = mainPart(model); if p then p.CFrame = cf end
+            local p = mainPart(model)
+            if p then p.CFrame = cf end
         end
+
         setCollide(model, true, snap)
 
-        if started then
-            stopIfDragging(r, model)
-        end
+        if started then stopIfDragging(r, model) end
 
         for _,p in ipairs(getAllParts(model)) do
             p.Anchored = false
@@ -584,7 +629,9 @@ return function(C, R, UI)
     local ORB_PICK_RADIUS = 60
 
     local function setPivot(model, cf)
-        if model:IsA("Model") then
+        if isGripRooted(model) then
+            moveGripRooted(model, cf)
+        elseif model:IsA("Model") then
             model:PivotTo(cf)
         else
             local p = mainPart(model); if p then p.CFrame = cf end
@@ -603,7 +650,16 @@ return function(C, R, UI)
         local y = g and (g.Y + halfY + 0.15) or (orbPos.Y + math.max(0.5, (H or 2) * 0.25))
         local above = Vector3.new(orbPos.X, y, orbPos.Z)
 
-        setPivot(model, CFrame.new(above))
+        if isGripRooted(model) then
+            local disabled = disableWelds(model)
+            local mainBP = model:FindFirstChild("Main", true)
+            if mainBP and mainBP:IsA("BasePart") then
+                mainBP.CFrame = CFrame.new(above)
+            end
+            restoreWelds(disabled)
+        else
+            setPivot(model, CFrame.new(above))
+        end
 
         for _,p in ipairs(getAllParts(model)) do
             p.Anchored = false
@@ -850,8 +906,15 @@ return function(C, R, UI)
         local snapOrig = setCollide(model, false)
         zeroAssembly(model)
 
+        local gripRooted = isGripRooted(model)
+        local mainBP = gripRooted and model:FindFirstChild("Main", true) or nil
+
         local function setPivotLocal(model0, cf)
-            if model0:IsA("Model") then
+            if gripRooted and mainBP and mainBP:IsA("BasePart") then
+                local disabled = disableWelds(model0)
+                mainBP.CFrame = cf
+                restoreWelds(disabled)
+            elseif model0:IsA("Model") then
                 model0:PivotTo(cf)
             else
                 local p = mainPart(model0); if p then p.CFrame = cf end
@@ -859,9 +922,14 @@ return function(C, R, UI)
         end
 
         while model and model.Parent do
-            local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
-            if not pivot then break end
-            local pos = pivot.Position
+            local pos
+            if gripRooted and mainBP and mainBP:IsA("BasePart") then
+                pos = mainBP.Position
+            else
+                local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
+                if not pivot then break end
+                pos = pivot.Position
+            end
             local dy = riserY - pos.Y
             if math.abs(dy) <= 0.4 then break end
             local stepY = math.sign(dy) * math.min(DRAG_SPEED * VERTICAL_MULT * STEP_WAIT, math.abs(dy))
@@ -873,10 +941,16 @@ return function(C, R, UI)
             end
             task.wait(STEP_WAIT)
         end
+
         while model and model.Parent do
-            local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
-            if not pivot then break end
-            local pos = pivot.Position
+            local pos
+            if gripRooted and mainBP and mainBP:IsA("BasePart") then
+                pos = mainBP.Position
+            else
+                local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
+                if not pivot then break end
+                pos = pivot.Position
+            end
             local delta = Vector3.new(orbPos.X - pos.X, 0, orbPos.Z - pos.Z)
             local dist = delta.Magnitude
             if dist <= 1.0 then break end
@@ -1241,7 +1315,16 @@ return function(C, R, UI)
             pcall(function() mp.AssemblyAngularVelocity = Vector3.new() end)
             pcall(function()
                 local p = mp.Position
-                mp.CFrame = CFrame.new(Vector3.new(p.X, orbY + ORB_RESET_UP, p.Z))
+                if isGripRooted(m) then
+                    local disabled = disableWelds(m)
+                    local mainBP = m:FindFirstChild("Main", true)
+                    if mainBP and mainBP:IsA("BasePart") then
+                        mainBP.CFrame = CFrame.new(Vector3.new(p.X, orbY + ORB_RESET_UP, p.Z))
+                    end
+                    restoreWelds(disabled)
+                else
+                    mp.CFrame = CFrame.new(Vector3.new(p.X, orbY + ORB_RESET_UP, p.Z))
+                end
             end)
             refreshPrompts(m)
         end
