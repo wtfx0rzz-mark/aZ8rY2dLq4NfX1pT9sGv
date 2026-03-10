@@ -14,10 +14,6 @@ return function(C, R, UI)
     local tab  = Tabs.Troll or Tabs.Main or Tabs.Auto
     assert(tab, "Troll tab not found")
 
-    ---------------------------------------------------------------------
-    -- CONFIG
-    ---------------------------------------------------------------------
-
     local INITIAL_POPULATE_DELAY = 2.0
 
     local TICK          = 0.02
@@ -93,26 +89,12 @@ return function(C, R, UI)
     local DRIFT_MAX_HEIGHT  = 400
     local DRIFT_MAX_TIME    = 10
 
-    ---------------------------------------------------------------------
-    -- PLAYER FLING STATE
-    ---------------------------------------------------------------------
-
     local flingEnabled = false
     local flingPower   = 10000
-
-    -- FIX: hold a connection so we can actually stop the loop
-    local flingConn = nil
-
-    ---------------------------------------------------------------------
-    -- BEAR TRAP HEIGHT CONFIG
-    ---------------------------------------------------------------------
+    local flingConn    = nil
 
     local TRAP_HEIGHT_OFFSET_DEFAULT = 0
     local trapHeightOffset = TRAP_HEIGHT_OFFSET_DEFAULT
-
-    ---------------------------------------------------------------------
-    -- HELPERS
-    ---------------------------------------------------------------------
 
     local function hrp(p)
         p = p or lp
@@ -431,10 +413,6 @@ return function(C, R, UI)
         return out
     end
 
-    ---------------------------------------------------------------------
-    -- PLAYER FLING LOOP (FIXED: can stop)
-    ---------------------------------------------------------------------
-
     local function startFlingLoop()
         if flingConn then return end
 
@@ -470,10 +448,6 @@ return function(C, R, UI)
         end
     end
 
-    ---------------------------------------------------------------------
-    -- CHAOTIC LOG SMOG STATE
-    ---------------------------------------------------------------------
-
     local running = false
     local desiredPerTarget = CFG.DesiredLogs
 
@@ -484,7 +458,7 @@ return function(C, R, UI)
     local targets     = {}
 
     local reconcileConn, hbConn = nil, nil
-    local scanAt   = 0
+    local scanAt    = 0
     local scanCache = {}
 
     local function ensureUid(uid)
@@ -497,6 +471,8 @@ return function(C, R, UI)
     end
 
     local function logsNear(center, excludeSet, limit)
+        local root = itemsRoot()
+
         local params = OverlapParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
         params.FilterDescendantsInstances = { lp.Character }
@@ -507,13 +483,15 @@ return function(C, R, UI)
             if part:IsA("BasePart") then
                 local m = part:FindFirstAncestorOfClass("Model")
                 if m and m.Name == "Log" and not uniq[m] and not excludeSet[m] then
-                    local mp = mainPart(m)
-                    if mp then
-                        uniq[m] = true
-                        items[#items+1] = {
-                            m = m,
-                            d = (mp.Position - center).Magnitude
-                        }
+                    if root and m:IsDescendantOf(root) then
+                        local mp = mainPart(m)
+                        if mp then
+                            uniq[m] = true
+                            items[#items+1] = {
+                                m = m,
+                                d = (mp.Position - center).Magnitude
+                            }
+                        end
                     end
                 end
             end
@@ -881,10 +859,6 @@ return function(C, R, UI)
         countByUid  = {}
     end
 
-    ---------------------------------------------------------------------
-    -- DROPDOWN STATE (SHARED)
-    ---------------------------------------------------------------------
-
     local selectedSet = {}
     local playerDD
 
@@ -903,10 +877,6 @@ return function(C, R, UI)
 
     buildPlayerDropdownOnce()
     task.delay(INITIAL_POPULATE_DELAY, buildPlayerDropdownOnce)
-
-    ---------------------------------------------------------------------
-    -- PLAYER NUDGE (Items float from players)
-    ---------------------------------------------------------------------
 
     local playerNudgeEnabled = false
     local playerNudgeConn    = nil
@@ -997,10 +967,10 @@ return function(C, R, UI)
                 if not mp then
                     driftItems[mdl] = nil
                 else
-                    local pos  = mp.Position
+                    local pos   = mp.Position
                     local baseY = info.originY or pos.Y
-                    local h    = pos.Y - baseY
-                    local age  = now2 - (info.start or now2)
+                    local h     = pos.Y - baseY
+                    local age   = now2 - (info.start or now2)
 
                     local nearestDist = math.huge
                     for _, tgt in ipairs(pTargets) do
@@ -1040,10 +1010,6 @@ return function(C, R, UI)
         end
     end
 
-    ---------------------------------------------------------------------
-    -- SINK ITEMS (Workspace.Items)
-    ---------------------------------------------------------------------
-
     local sinkItemsEnabled = false
     local sinkItemsConn    = nil
 
@@ -1070,10 +1036,6 @@ return function(C, R, UI)
             end
         end
     end
-
-    ---------------------------------------------------------------------
-    -- ITEMS AVOID PLAYERS (hop away)
-    ---------------------------------------------------------------------
 
     local itemsAvoidEnabled = false
     local itemsAvoidConn    = nil
@@ -1129,8 +1091,8 @@ return function(C, R, UI)
                                 end
                                 local dir = (horiz.Magnitude > 1e-3) and horiz.Unit or Vector3.new(0, 0, 1)
 
-                                local pv   = closestVel or Vector3.zero
-                                local pvXZ = Vector3.new(pv.X, 0, pv.Z)
+                                local pv     = closestVel or Vector3.zero
+                                local pvXZ   = Vector3.new(pv.X, 0, pv.Z)
                                 local pSpeed = pvXZ.Magnitude
 
                                 local horizSpeed
@@ -1172,21 +1134,13 @@ return function(C, R, UI)
         end
     end
 
-    ---------------------------------------------------------------------
-    -- BEAR TRAPS: SEND TO PLAYERS
-    ---------------------------------------------------------------------
-
     local function sendTrapsToPlayers()
         resolveRemotes()
         local traps = getAllBearTraps()
-        if #traps == 0 then
-            return
-        end
+        if #traps == 0 then return end
 
         local pTargets = selectedPlayersList(selectedSet)
-        if #pTargets == 0 then
-            return
-        end
+        if #pTargets == 0 then return end
 
         local assignments = {}
         for i, trap in ipairs(traps) do
@@ -1208,10 +1162,8 @@ return function(C, R, UI)
                             task.spawn(function()
                                 if not trap or not trap.Parent then return end
                                 safeStartDrag(trap)
-
                                 local targetCF = root.CFrame * CFrame.new(0, trapHeightOffset, 0)
                                 setPivot(trap, targetCF)
-
                                 safeStopDrag(trap)
                                 safeSetTrap(trap)
                             end)
@@ -1221,10 +1173,6 @@ return function(C, R, UI)
             end
         end
     end
-
-    ---------------------------------------------------------------------
-    -- UI WIRING
-    ---------------------------------------------------------------------
 
     tab:Section({ Title = "Troll: Chaotic Log Smog" })
 
