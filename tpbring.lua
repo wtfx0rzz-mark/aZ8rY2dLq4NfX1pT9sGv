@@ -157,7 +157,7 @@ return function(C, R, UI)
     local RETRY_PUSH_BACK = 10.0
     local RETRY_MAX_TRIES = 6
 
-    local CONFIRM_WINDOW_S = 1.25
+    local CONFIRM_WINDOW_S = 2.0
     local pendingConfirm   = {}
 
     local CURRENT_RUN_ID = nil
