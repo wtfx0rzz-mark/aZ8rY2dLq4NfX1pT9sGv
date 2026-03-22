@@ -213,7 +213,9 @@ return function(C, R, UI)
     local fuelModeSet  = { ["Coal"] = true, ["Fuel Canister"] = true, ["Oil Barrel"] = true, ["Log"] = true }
     local scrapModeSet = {}
     for k,v in pairs(junkSet) do if v then scrapModeSet[k] = true end end
-    scrapModeSet["Log"] = true
+    scrapModeSet["Log"]              = true
+    scrapModeSet["Cultist Gem"]      = true
+    scrapModeSet["Gem of the Forest"] = true
     local logOnlySet   = { ["Log"] = true }
 
     local allModeSet = {}
@@ -231,10 +233,7 @@ return function(C, R, UI)
     addListToSet(ammoMisc, allModeSet)
     addListToSet(pelts, allModeSet)
 
-    -- Items that are allowed to exist outside the Items folder (e.g. logs that
-    -- fell out of bounds). Scanned via WS:GetDescendants() in addition to the
-    -- Items folder iteration.
-    local ALLOW_OUTSIDE_ITEMS = { ["Log"] = true }
+    local ALLOW_OUTSIDE_ITEMS = {}
 
     local groupedItemValues = {}
     local function appendListIntoGrouped(list)
@@ -342,12 +341,8 @@ return function(C, R, UI)
         if not (selectedSet and m) then return false end
         local itemsFolder = itemsRootOrNil()
 
-        -- Outside-Items items are only valid if explicitly allowed
         if itemsFolder and not m:IsDescendantOf(itemsFolder) then
-            local nm0 = m.Name or ""
-            if not (ALLOW_OUTSIDE_ITEMS[nm0] and selectedSet[nm0]) then
-                return false
-            end
+            return false
         end
 
         local nm = m.Name or ""
@@ -373,8 +368,9 @@ return function(C, R, UI)
         if selectedSet["Crossbow"] and l:find("crossbow",1,true) and not l:find("cultist",1,true) and not hasHumanoid(m) then return true end
         if selectedSet["Blueprint"] and l:find("blueprint",1,true) then return true end
         if (selectedSet["Flashlight"] or selectedSet["Strong Flashlight"]) and l:find("flashlight",1,true) and not hasHumanoid(m) then return true end
-        if selectedSet["Cultist Gem"] and l:find("cultist",1,true) and l:find("gem",1,true) then return true end
-        if selectedSet["Forest Gem"] and (l:find("forest gem",1,true) or (l:find("forest",1,true) and l:find("fragment",1,true))) then return true end
+        if selectedSet["Cultist Gem"] and nm == "Cultist Gem" then return true end
+        if selectedSet["Gem of the Forest"] and nm == "Gem of the Forest" then return true end
+        if selectedSet["Forest Gem"] and nm == "Forest Gem" then return true end
         if selectedSet["Tusk"] and l:find("tusk",1,true) then return true end
         return false
     end
@@ -388,11 +384,6 @@ return function(C, R, UI)
         return nm == "Apple" or nm == "Berry"
     end
 
-    -- ---------------------------------------------------------------
-    -- Drag remote helpers — each item gets exactly ONE StartDrag fire
-    -- and exactly ONE StopDrag fire per conveyor lifecycle. The flags
-    -- dragFired / stopFired on the rec table enforce this hard.
-    -- ---------------------------------------------------------------
     local function tryStartDrag(m, rec)
         if not rec then return end
         if rec.dragFired then return end
@@ -404,8 +395,8 @@ return function(C, R, UI)
 
     local function tryStopDrag(m, rec)
         if not rec then return end
-        if not rec.dragFired then return end  -- never started, skip
-        if rec.stopFired then return end      -- already stopped, skip
+        if not rec.dragFired then return end
+        if rec.stopFired then return end
         refreshRemoteRefs()
         if not stopDrag then return end
         rec.stopFired = true
@@ -421,8 +412,6 @@ return function(C, R, UI)
         if not mp then return end
         fruitNudged[m] = true
         task.spawn(function()
-            -- Fruit nudge uses its own isolated rec so it never
-            -- conflicts with the main inflight rec's drag flags.
             local tmp = { dragFired = false, stopFired = false }
             tryStartDrag(m, tmp)
             for _,p in ipairs(allParts(m)) do
@@ -474,16 +463,11 @@ return function(C, R, UI)
         if inflight[m] then return false end
 
         local itemsFolder = itemsRootOrNil()
-        -- Must be a direct child of Items (not nested)
         if itemsFolder and m:IsDescendantOf(itemsFolder) and not isDirectItemChild(m) then
             return false
         end
-        -- Outside Items only allowed for explicitly whitelisted item names
         if itemsFolder and not m:IsDescendantOf(itemsFolder) then
-            local nm0 = m.Name or ""
-            if not (ALLOW_OUTSIDE_ITEMS[nm0] and selectedSet and selectedSet[nm0]) then
-                return false
-            end
+            return false
         end
 
         if isExcludedInst(m) then return false end
@@ -575,12 +559,6 @@ return function(C, R, UI)
         cloneArray(groupedItemValues),
     }
 
-    -- ---------------------------------------------------------------
-    -- Candidate collection — always iterates the Items folder children
-    -- directly and, for whitelisted outside items, WS:GetDescendants().
-    -- No spatial queries are used. This is the most reliable approach
-    -- and avoids any sphere-clipping or filter misconfiguration issues.
-    -- ---------------------------------------------------------------
     local function collectCandidatesFromSet(selectedSet, jobId, maxDist)
         if not selectedSet then return {} end
         local itemsFolder = itemsRootOrNil()
@@ -589,7 +567,6 @@ return function(C, R, UI)
 
         local uniq, out = {}, {}
 
-        -- Primary: iterate Items folder children directly
         if itemsFolder then
             for _,m in ipairs(itemsFolder:GetChildren()) do
                 if (m:IsA("Model") or m:IsA("BasePart")) and not uniq[m] then
@@ -603,34 +580,6 @@ return function(C, R, UI)
                         else
                             uniq[m] = true
                             out[#out+1] = m
-                        end
-                    end
-                end
-            end
-        end
-
-        -- Secondary: scan workspace descendants for outside-Items whitelisted items
-        for nm,_ in pairs(ALLOW_OUTSIDE_ITEMS) do
-            if selectedSet[nm] then
-                for _,d in ipairs(WS:GetDescendants()) do
-                    if d.Name == nm and (d:IsA("BasePart") or d:IsA("Model")) then
-                        -- Skip anything already inside Items
-                        if itemsFolder and d:IsDescendantOf(itemsFolder) then continue end
-                        -- Resolve to the topmost model or the part itself
-                        local m = d:IsA("Model") and d or (d:FindFirstAncestorOfClass("Model") or d)
-                        if not uniq[m] and not isUnderLogWall(m) then
-                            if canPick(m, selectedSet, jobId) then
-                                if rootPos then
-                                    local mp = mainPart(m)
-                                    if mp and (mp.Position - rootPos).Magnitude <= (maxDist or OUTSIDE_LOG_MAX_DIST) then
-                                        uniq[m] = true
-                                        out[#out+1] = m
-                                    end
-                                else
-                                    uniq[m] = true
-                                    out[#out+1] = m
-                                end
-                            end
                         end
                     end
                 end
@@ -695,7 +644,6 @@ return function(C, R, UI)
 
     local function markForConfirm(m)
         if not (m and m.Parent) then return end
-        -- Snapshot runId so processPendingConfirm can guard cross-run stamping
         pendingConfirm[m] = { at = os.clock(), runId = CURRENT_RUN_ID }
         pcall(function()
             m:SetAttribute(INFLT_ATTR, nil)
@@ -718,9 +666,6 @@ return function(C, R, UI)
                 local inItems = alive and itemsFolder and m:IsDescendantOf(itemsFolder)
 
                 if (not alive) or (itemsFolder and not inItems) then
-                    -- Item consumed. Only stamp DONE_ATTR if still on the same run.
-                    -- If the run changed mid-delivery, clear instead so the new run
-                    -- is not blocked.
                     local confirmedRunId = info and info.runId
                     if confirmedRunId and confirmedRunId == CURRENT_RUN_ID then
                         pcall(function() m:SetAttribute(DONE_ATTR, CURRENT_RUN_ID) end)
@@ -731,7 +676,6 @@ return function(C, R, UI)
                 else
                     local t0 = (info and info.at) or now
                     if (now - t0) >= CONFIRM_WINDOW_S then
-                        -- Item came back into Items — clear so it can be retried
                         pendingConfirm[m] = nil
                         pcall(function()
                             m:SetAttribute(DONE_ATTR, nil)
@@ -873,7 +817,6 @@ return function(C, R, UI)
         local info = inflight[m]
         local snap = (rec and rec.snap) or (info and info.snap) or snapshotCollide(m)
 
-        -- Exactly one StopDrag per item
         if info then tryStopDrag(m, info) end
 
         if rec and rec.dropKind == "air" and orbPosVec then
@@ -993,8 +936,8 @@ return function(C, R, UI)
             released   = false,
             dropping   = false,
             droppingAt = nil,
-            dragFired  = false,   -- exactly one StartDrag per item
-            stopFired  = false,   -- exactly one StopDrag per item
+            dragFired  = false,
+            stopFired  = false,
             counted    = true,
             destKey    = destKey or "default",
             off        = off,
@@ -1049,7 +992,6 @@ return function(C, R, UI)
                 if not itemsFolder then return end
                 local now = os.clock()
 
-                -- Iterate Items children directly — no raycasting needed
                 for _,m in ipairs(itemsFolder:GetChildren()) do
                     local mp = mainPart(m)
                     if not mp then continue end
@@ -1244,8 +1186,6 @@ return function(C, R, UI)
         end
     end
 
-    -- Wipe stale in-flight attributes left over from a previous session so
-    -- items are never permanently blocked at the start of a new run.
     local function clearStaleAttributes()
         local itemsFolder = itemsRootOrNil()
         if not itemsFolder then return end
@@ -1306,7 +1246,6 @@ return function(C, R, UI)
                 if not campPos then return end
                 local now = os.clock()
 
-                -- Iterate Items directly instead of raycasting
                 for _,m in ipairs(itemsFolder:GetChildren()) do
                     if inflight[m] then continue end
                     if isExcludedInst(m) then continue end
@@ -1317,8 +1256,6 @@ return function(C, R, UI)
                     local last = preclaimedAt[m]
                     if last and (now - last) < PRECLAIM_TTL_S then continue end
                     preclaimedAt[m] = now
-                    -- Isolated tmp rec ensures preclaim drag flags never
-                    -- bleed into a later inflight rec for the same item.
                     local tmp = { dragFired = false, stopFired = false }
                     tryStartDrag(m, tmp)
                     task.delay(0.14, function()
@@ -1356,7 +1293,6 @@ return function(C, R, UI)
         pendingRetry   = {}
         pendingConfirm = {}
 
-        -- Clear stale attributes before the run begins
         clearStaleAttributes()
 
         releaseRateHz     = RELEASE_RATE_HZ_DEFAULT
