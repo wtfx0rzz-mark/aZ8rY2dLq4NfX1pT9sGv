@@ -402,15 +402,15 @@ return function(C, R, UI)
     end
 
     local function getAllBearTraps()
-        local root = trapsRoot()
-        local out = {}
-        if not root then return out end
-        for _,d in ipairs(root:GetDescendants()) do
-            if d:IsA("Model") and d.Name == "Bear Trap" then
-                out[#out+1] = d
-            end
+    local root = trapsRoot()
+    local out = {}
+    if not root then return out end
+    for _,d in ipairs(root:GetDescendants()) do
+        if d:IsA("Model") and (d.Name == "Bear Trap" or d.Name == "Volcanic Bear Trap") then
+            out[#out+1] = d
         end
-        return out
+    end
+    return out
     end
 
     local function startFlingLoop()
