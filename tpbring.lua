@@ -105,7 +105,7 @@ return function(C, R, UI)
     local DRAG_SPEED              = 420
     local ORB_HEIGHT              = 10
     local GROUND_ORB_DROP_HEIGHT  = 6
-    local MAX_CONCURRENT          = 100
+    local MAX_CONCURRENT          = 50
     local SCAN_INTERVAL           = 0.20
     local MOVE_HZ                 = 30
 
