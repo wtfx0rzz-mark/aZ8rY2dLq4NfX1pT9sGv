@@ -1350,23 +1350,23 @@ return function(C, R, UI)
         end
 
         local function ta_getAllBearTraps()
-            local now = os.clock()
-            if trapCache and (now - trapCacheAt) < 2.0 then
-                return trapCache
-            end
-            trapCacheAt = now
-            trapCache = {}
+    local now = os.clock()
+    if trapCache and (now - trapCacheAt) < 2.0 then
+        return trapCache
+    end
+    trapCacheAt = now
+    trapCache = {}
 
-            local root = ta_trapsRoot()
-            if not root then return trapCache end
+    local root = ta_trapsRoot()
+    if not root then return trapCache end
 
-            for _, d in ipairs(root:GetDescendants()) do
-                if d:IsA("Model") and d.Name == "Bear Trap" then
-                    trapCache[#trapCache + 1] = d
-                end
-            end
-            return trapCache
+    for _, d in ipairs(root:GetDescendants()) do
+        if d:IsA("Model") and (d.Name == "Bear Trap" or d.Name == "Volcanic Bear Trap") then
+            trapCache[#trapCache + 1] = d
         end
+    end
+    return trapCache
+end
 
         local function ta_moveTrapToCF(trap, cf, setNow)
             if not trap or not trap.Parent or not cf then return end
