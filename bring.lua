@@ -109,9 +109,11 @@ return function(C, R, UI)
         local n = (m.Name or ""):lower()
         if n == "pelt trader" then return true end
         if n:find("trader",1,true) or n:find("shopkeeper",1,true) then return true end
-        if isWallVariant(m) then return true end
-        if isUnderLogWall(m) then return true end
         return false
+    end
+    local function isLogWallBlocked(m, selectedSet)
+        if not (selectedSet and selectedSet["Log"] and m.Name == "Log") then return false end
+        return isWallVariant(m) or isUnderLogWall(m)
     end
     local function mainPart(obj)
         if not obj or not obj.Parent then return nil end
@@ -413,7 +415,7 @@ return function(C, R, UI)
                     local center = fireCenterCF(campfire).Position
                     local best, bestD
                     for _,m in ipairs(WS:GetDescendants()) do
-                        if m:IsA("Model") and m.Name == cookedName and not isExcludedModel(m) and not isUnderLogWall(m) then
+                        if m:IsA("Model") and m.Name == cookedName and not isExcludedModel(m) then
                             local mp = mainPart(m)
                             if mp then
                                 local d = (mp.Position - center).Magnitude
@@ -800,8 +802,8 @@ return function(C, R, UI)
         if not (m and m.Parent and m:IsA("Model")) then return false end
         local itemsFolder = itemsRootOrNil()
         if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
-        if isExcludedModel(m) or isUnderLogWall(m) then return false end
-        if m.Name == "Log" and isWallVariant(m) then return false end
+        if isExcludedModel(m) then return false end
+        if isLogWallBlocked(m, selectedSet) then return false end
         local tIn = tonumber(m:GetAttribute(INFLT_ATTR))
         local jIn = m:GetAttribute(JOB_ATTR)
         if tIn and jIn and tostring(jIn) ~= tostring(jobId) and (now() - tIn) < STUCK_TTL then
@@ -1064,13 +1066,12 @@ return function(C, R, UI)
                             end
                         end
 
-                        if not isExcludedModel(m) and not isUnderLogWall(m) then
-                            local nm = m.Name
-                            if not (nm == "Log" and isWallVariant(m)) then
-                                perNameCount[nm] = (perNameCount[nm] or 0) + 1
-                                if (not limitOn) or perNameCount[nm] <= maxPerName then
-                                    local mp = mainPart(m)
-                                    if mp then queue[#queue+1] = m end
+                        if not isExcludedModel(m) and not isLogWallBlocked(m, selectedSet) then
+                            local mp = mainPart(m)
+                            if mp then
+                                perNameCount[m.Name] = (perNameCount[m.Name] or 0) + 1
+                                if (not limitOn) or perNameCount[m.Name] <= maxPerName then
+                                    queue[#queue+1] = m
                                 end
                             end
                         end
