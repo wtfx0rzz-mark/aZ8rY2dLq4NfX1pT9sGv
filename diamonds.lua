@@ -27,6 +27,7 @@ return function(C, R, UI)
     if C.State.DiamondsKey1Input == nil then C.State.DiamondsKey1Input = false end
     if C.State.DiamondsAutoAfkAction == nil then C.State.DiamondsAutoAfkAction = false end
     if C.State.DiamondsAutoInput1Action == nil then C.State.DiamondsAutoInput1Action = true end
+    if C.State._DiamondsKey1ManualOn == nil then C.State._DiamondsKey1ManualOn = false end
 
     if C.State._DiamondsJumpConn ~= nil then
         pcall(function() C.State._DiamondsJumpConn:Disconnect() end)
@@ -743,7 +744,7 @@ return function(C, R, UI)
                         if lastPos then
                             if (pos - lastPos).Magnitude > 0.5 then
                                 lastMoveAt = now()
-                                if C.State.DiamondsKey1Input then
+                                if C.State.DiamondsKey1Input and not C.State._DiamondsKey1ManualOn then
                                     C.State.DiamondsKey1Input = false
                                     diamondsKey1Stop()
                                 end
@@ -752,7 +753,7 @@ return function(C, R, UI)
                         lastPos = pos
                     end
 
-                    if not C.State.DiamondsKey1Input then
+                    if not C.State.DiamondsKey1Input and not C.State._DiamondsKey1ManualOn then
                         local idleFor = now() - lastMoveAt
                         if idleFor >= AUTO_AFK_IDLE_S then
                             C.State.DiamondsKey1Input = true
@@ -874,6 +875,7 @@ return function(C, R, UI)
         Default = C.State.DiamondsKey1Input and true or false,
         Callback = function(on)
             C.State.DiamondsKey1Input = on and true or false
+            C.State._DiamondsKey1ManualOn = on and true or false
             if C.State.DiamondsKey1Input then
                 diamondsKey1Start()
             else
