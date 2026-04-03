@@ -27,19 +27,28 @@ return function(C, R, UI)
     end
 
     local function allParts(m)
-        local t = {}
-        if not m then return t end
-        if m:IsA("BasePart") then
-            t[1] = m
-            return t
-        end
-        for _,d in ipairs(m:GetDescendants()) do
-            if d:IsA("BasePart") then
-                t[#t+1] = d
-            end
-        end
+    local t = {}
+    if not m then return t end
+    if m:IsA("BasePart") then
+        t[1] = m
         return t
     end
+    for _,d in ipairs(m:GetDescendants()) do
+        if d:IsA("BasePart") then
+            t[#t+1] = d
+        end
+    end
+    return t
+end
+
+local function isAnyPartLocked(m)
+    for _, p in ipairs(allParts(m)) do
+        local locked = false
+        local ok = pcall(function() locked = p.Locked end)
+        if ok and locked then return true end
+    end
+    return false
+end
 
     local function setPivot(m, cf)
         if not m then return end
@@ -907,9 +916,10 @@ return function(C, R, UI)
     end
 
     local function startConveyor(m, jobId, destBaseVec, destKey, dropKind)
-        if not (running and m and m.Parent) then return end
-        if not mainPart(m) then return end
-        if not destBaseVec then return end
+    if not (running and m and m.Parent) then return end
+    if isAnyPartLocked(m) then return end
+    if not mainPart(m) then return end
+    if not destBaseVec then return end
 
         if isFruitModel(m) then fruitPreNudge(m) end
 
