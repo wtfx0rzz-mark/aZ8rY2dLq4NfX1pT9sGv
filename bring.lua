@@ -519,7 +519,7 @@ return function(C, R, UI)
     end
 
     local function dropNearPlayer(model)
-        if not (model and model.Parent) or model.Locked then return false end
+            if not (model and model.Parent) then return false end
         severeExternalWelds(model)
 
         local r = resolveRemotes()
