@@ -336,13 +336,15 @@ return function(C, R, UI)
         end
 
         local function nudgeShockwave(origin, radius)
-            local myChar = lp.Character
-            local params = OverlapParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            params.FilterDescendantsInstances = { myChar }
-
-            local parts = WS:GetPartBoundsInRadius(origin, radius, params) or {}
-            local seen  = {}
+        local myChar = lp.Character
+        local scrapper = WS:FindFirstChild("Map") and WS.Map:FindFirstChild("Campground") and WS.Map.Campground:FindFirstChild("Scrapper")
+        local params = OverlapParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        local excluded = { myChar }
+        if scrapper then excluded[#excluded+1] = scrapper end
+        params.FilterDescendantsInstances = excluded
+        local parts = WS:GetPartBoundsInRadius(origin, radius, params) or {}
+        local seen  = {}
 
             for _, part in ipairs(parts) do
                 if part:IsA("BasePart") and not part.Anchored then
