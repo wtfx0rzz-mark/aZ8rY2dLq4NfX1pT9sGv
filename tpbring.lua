@@ -333,7 +333,7 @@ return function(C, R, UI)
     local function isDirectItemChild(m)
         local itemsFolder = itemsRootOrNil()
         if not itemsFolder then return true end
-        if not (m and m.Parent and not m.Locked) then return false end
+        if not (m and m.Parent) then return false end
         return m.Parent == itemsFolder
     end
 
@@ -456,7 +456,7 @@ return function(C, R, UI)
     end
 
     local function canPick(m, selectedSet, jobId)
-        if not (running and m and m.Parent and not m.Locked) then return end
+        if not (running and m and m.Parent) then return end
         if not (m:IsA("Model") or m:IsA("BasePart")) then return false end
         if finalized[m] then return false end
         if pendingConfirm[m] then return false end
