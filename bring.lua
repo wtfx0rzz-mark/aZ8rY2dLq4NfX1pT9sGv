@@ -199,7 +199,7 @@ return function(C, R, UI)
     local DragStarted = setmetatable({}, { __mode = "k" })
 
     local function safeStartDrag(r, model)
-        if r and r.StartDrag and model and model.Parent then
+        if r and r.StartDrag and model and model.Parent and not model.Locked then
             local ok = pcall(function() r.StartDrag:FireServer(model) end)
             return ok
         end
@@ -518,8 +518,15 @@ return function(C, R, UI)
         return CFrame.lookAt(pos, pos + Vector3.new(dir.X, 0, dir.Z))
     end
 
+    local function isValidItem(model)
+        if not model then return false end
+        if not model.Parent then return false end
+        if model.Locked then return false end
+        return true
+    end
+
     local function dropNearPlayer(model)
-        if not (model and model.Parent) then return false end
+        if not isValidItem(model) then return false end
         severeExternalWelds(model)
 
         local r = resolveRemotes()
@@ -527,11 +534,14 @@ return function(C, R, UI)
         if started then markDragStarted(model) end
         Run.Heartbeat:Wait()
 
+        if not isValidItem(model) then
+            if started then stopIfDragging(r, model) end
+            return false
+        end
+
         local cf = groundCFAroundPlayer(model) or computeForwardDropCF()
         if not cf then
-            if started then
-                stopIfDragging(r, model)
-            end
+            if started then stopIfDragging(r, model) end
             return false
         end
 
@@ -544,9 +554,7 @@ return function(C, R, UI)
         end
         setCollide(model, true, snap)
 
-        if started then
-            stopIfDragging(r, model)
-        end
+        if started then stopIfDragging(r, model) end
 
         for _,p in ipairs(getAllParts(model)) do
             p.Anchored = false
@@ -594,7 +602,7 @@ return function(C, R, UI)
     end
 
     local function dropFromOrbSmooth(model, orbPos, jobId, origSnap, H)
-        if not (model and model.Parent) then return end
+        if not isValidItem(model) then return end
         zeroAssembly(model)
 
         local rp = physicalRootPart(model)
@@ -799,7 +807,8 @@ return function(C, R, UI)
     end
 
     local function canPick(m, center, radius, selectedSet, jobId)
-        if not (m and m.Parent and m:IsA("Model")) then return false end
+        if not isValidItem(m) then return false end
+        if not m:IsA("Model") then return false end
         local itemsFolder = itemsRootOrNil()
         if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
         if isExcludedModel(m) then return false end
@@ -836,7 +845,7 @@ return function(C, R, UI)
     end
 
     local function startConveyor(model, orbPos, jobId)
-        if not (model and model.Parent) then return end
+        if not isValidItem(model) then return end
         severeExternalWelds(model)
         pcall(function()
             model:SetAttribute(INFLT_ATTR, now())
@@ -860,7 +869,7 @@ return function(C, R, UI)
             end
         end
 
-        while model and model.Parent do
+        while model and model.Parent and not model.Locked do
             local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
             if not pivot then break end
             local pos = pivot.Position
@@ -875,7 +884,7 @@ return function(C, R, UI)
             end
             task.wait(STEP_WAIT)
         end
-        while model and model.Parent do
+        while model and model.Parent and not model.Locked do
             local pivot = model:IsA("Model") and model:GetPivot() or (mainPart(model) and mainPart(model).CFrame)
             if not pivot then break end
             local pos = pivot.Position
@@ -893,7 +902,11 @@ return function(C, R, UI)
             task.wait(STEP_WAIT)
         end
 
-        dropFromOrbSmooth(model, orbPos, jobId, snapOrig, H)
+        if isValidItem(model) then
+            dropFromOrbSmooth(model, orbPos, jobId, snapOrig, H)
+        else
+            setCollide(model, true, snapOrig)
+        end
     end
 
     local function runConveyorWave(centerPos, orbPos, targets, jobId, perNameCount)
@@ -918,7 +931,7 @@ return function(C, R, UI)
 
         local active = 0
         local function spawnOne(m)
-            if m and m.Parent then
+            if isValidItem(m) then
                 active += 1
                 task.spawn(function()
                     startConveyor(m, orbPos, jobId)
@@ -1005,12 +1018,8 @@ return function(C, R, UI)
 
     local _bringBusy = false
     local function fastBringToGround(selectedSet, opts)
-        if not selectedSet or next(selectedSet) == nil then
-            return
-        end
-        if _bringBusy then
-            return
-        end
+        if not selectedSet or next(selectedSet) == nil then return end
+        if _bringBusy then return end
         _bringBusy = true
 
         local skipFoodRot   = (opts and opts.SkipFoodRot == true) or false
@@ -1023,98 +1032,67 @@ return function(C, R, UI)
 
             local limitOn = C.State.BringLimitEnabled and true or false
             local maxPerName = currentLimit()
-
             local perNameCount = {}
 
-            local function scanQueue(alreadyMoved)
-                local seenModel, queue = {}, {}
-                local desc = itemsFolder:GetDescendants()
-                for _,d in ipairs(desc) do
-                    local m = nil
-                    if d:IsA("Model") then
-                        if nameMatches(selectedSet, d) then m = d end
-                    elseif d:IsA("BasePart") then
-                        m = nearestSelectedModelFromPart(d, selectedSet)
-                    end
-                    if m and not seenModel[m] and not alreadyMoved[m] then
-                        seenModel[m] = true
-
-                        if excludeCorpse then
-                            local ln = (m.Name or ""):lower()
-                            if ln:find("corpse", 1, true) then
-                                continue
-                            end
-                        end
-
-                        if skipFoodRot then
-                            local rot = m:GetAttribute("FoodRot")
-                            if rot ~= nil then
-                                local nm0 = tostring(m.Name or "")
-                                local rk = "Rotten " .. nm0
-                                local allow = false
-                                if selectedSet["Rotten"] and foodSet[nm0] then allow = true end
-                                if selectedSet[rk] then allow = true end
-                                if not allow then
-                                    continue
-                                end
-                            end
-                        end
-
-                        if m.Name == "Stew" then
-                            if isModelWeldedToOutside(m) or isStewOnCrockpot(m) then
-                                continue
-                            end
-                        end
-
-                        if not isExcludedModel(m) and not isLogWallBlocked(m, selectedSet) then
-                            local mp = mainPart(m)
-                            if mp then
-                                perNameCount[m.Name] = (perNameCount[m.Name] or 0) + 1
-                                if (not limitOn) or perNameCount[m.Name] <= maxPerName then
-                                    queue[#queue+1] = m
-                                end
-                            end
-                        end
-                    end
-                end
-                return queue
+            if root then
+                requestMoreStreamingAround({ root.Position })
             end
 
-            local alreadyMoved = {}
-            local maxPasses = 3
-            for pass = 1, maxPasses do
-                if root then
-                    requestMoreStreamingAround({ root.Position })
+            local seenModel, queue = {}, {}
+            for _,d in ipairs(itemsFolder:GetDescendants()) do
+                local m = nil
+                if d:IsA("Model") then
+                    if nameMatches(selectedSet, d) then m = d end
+                elseif d:IsA("BasePart") then
+                    m = nearestSelectedModelFromPart(d, selectedSet)
                 end
+                if m and not seenModel[m] and isValidItem(m) then
+                    seenModel[m] = true
 
-                local queue = scanQueue(alreadyMoved)
+                    if excludeCorpse then
+                        local ln = (m.Name or ""):lower()
+                        if ln:find("corpse", 1, true) then continue end
+                    end
 
-                if #queue == 0 then
-                    if WS.StreamingEnabled and root then
-                        requestMoreStreamingAround({ root.Position })
-                        task.wait(0.20)
-                    else
-                        break
+                    if skipFoodRot then
+                        local rot = m:GetAttribute("FoodRot")
+                        if rot ~= nil then
+                            local nm0 = tostring(m.Name or "")
+                            local rk = "Rotten " .. nm0
+                            local allow = false
+                            if selectedSet["Rotten"] and foodSet[nm0] then allow = true end
+                            if selectedSet[rk] then allow = true end
+                            if not allow then continue end
+                        end
                     end
-                else
-                    local dropped = 0
-                    for i=1,#queue do
-                        local m = queue[i]
-                        alreadyMoved[m] = true
-                        if dropNearPlayer(m) then dropped += 1 end
-                        if i % 25 == 0 then Run.Heartbeat:Wait() end
+
+                    if m.Name == "Stew" then
+                        if isModelWeldedToOutside(m) or isStewOnCrockpot(m) then continue end
                     end
-                    if WS.StreamingEnabled and dropped > 0 then
-                        task.wait(0.10)
+
+                    if not isExcludedModel(m) and not isLogWallBlocked(m, selectedSet) then
+                        if mainPart(m) then
+                            perNameCount[m.Name] = (perNameCount[m.Name] or 0) + 1
+                            if (not limitOn) or perNameCount[m.Name] <= maxPerName then
+                                queue[#queue+1] = m
+                            end
+                        end
                     end
                 end
+            end
+
+            for i = 1, #queue do
+                local m = queue[i]
+                if isValidItem(m) then
+                    dropNearPlayer(m)
+                end
+                if i % 25 == 0 then Run.Heartbeat:Wait() end
             end
         end)
 
         _bringBusy = false
         if not ok then
             stopAllOutstandingDrags()
-            return
         end
     end
 
