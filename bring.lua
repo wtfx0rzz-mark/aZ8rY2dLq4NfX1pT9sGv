@@ -198,17 +198,8 @@ return function(C, R, UI)
 
     local DragStarted = setmetatable({}, { __mode = "k" })
 
-    local function isValidItem(model)
-        if not model then return false end
-        if not model.Parent then return false end
-        local locked = false
-        pcall(function() locked = model.Locked == true end)
-        if locked then return false end
-        return true
-    end
-
     local function safeStartDrag(r, model)
-        if r and r.StartDrag and isValidItem(model) then
+        if r and r.StartDrag and model and model.Parent then
             local ok = pcall(function() r.StartDrag:FireServer(model) end)
             return ok
         end
@@ -536,14 +527,11 @@ return function(C, R, UI)
         if started then markDragStarted(model) end
         Run.Heartbeat:Wait()
 
-        if not (model and model.Parent) then
-            if started then stopIfDragging(r, model) end
-            return false
-        end
-
         local cf = groundCFAroundPlayer(model) or computeForwardDropCF()
         if not cf then
-            if started then stopIfDragging(r, model) end
+            if started then
+                stopIfDragging(r, model)
+            end
             return false
         end
 
@@ -556,7 +544,9 @@ return function(C, R, UI)
         end
         setCollide(model, true, snap)
 
-        if started then stopIfDragging(r, model) end
+        if started then
+            stopIfDragging(r, model)
+        end
 
         for _,p in ipairs(getAllParts(model)) do
             p.Anchored = false
@@ -819,7 +809,9 @@ return function(C, R, UI)
         if tIn and jIn and tostring(jIn) ~= tostring(jobId) and (now() - tIn) < STUCK_TTL then
             return false
         end
-        if not nameMatches(selectedSet, m) then return false end
+        if not nameMatches(selectedSet, m) then
+            return false
+        end
         local mp = mainPart(m); if not mp then return false end
         return (mp.Position - center).Magnitude <= radius
     end
@@ -890,4 +882,425 @@ return function(C, R, UI)
             local delta = Vector3.new(orbPos.X - pos.X, 0, orbPos.Z - pos.Z)
             local dist = delta.Magnitude
             if dist <= 1.0 then break end
-            local step
+            local step = math.min(DRAG_SPEED * STEP_WAIT, dist)
+            local dir = delta.Unit
+            local newPos = Vector3.new(pos.X, riserY, pos.Z) + dir * step
+            setPivotLocal(model, CFrame.new(newPos, newPos + dir))
+            for _,p in ipairs(getAllParts(model)) do
+                p.AssemblyLinearVelocity  = Vector3.new()
+                p.AssemblyAngularVelocity = Vector3.new()
+            end
+            task.wait(STEP_WAIT)
+        end
+
+        dropFromOrbSmooth(model, orbPos, jobId, snapOrig, H)
+    end
+
+    local function runConveyorWave(centerPos, orbPos, targets, jobId, perNameCount)
+        local picked = getCandidates(centerPos, ORB_PICK_RADIUS, targets, jobId)
+        if #picked == 0 then
+            return 0
+        end
+
+        local limitOn = C.State.BringLimitEnabled and true or false
+        local maxPerName = currentLimit()
+
+        local cnt = perNameCount or {}
+        local out = {}
+        for _,m in ipairs(picked) do
+            local nm = m.Name or ""
+            cnt[nm] = (cnt[nm] or 0) + 1
+            if (not limitOn) or cnt[nm] <= maxPerName then
+                out[#out+1] = m
+            end
+        end
+        picked = out
+
+        local active = 0
+        local function spawnOne(m)
+            if m and m.Parent then
+                active += 1
+                task.spawn(function()
+                    startConveyor(m, orbPos, jobId)
+                    active -= 1
+                end)
+            end
+        end
+
+        for i = 1, #picked do
+            while active >= 10 do Run.Heartbeat:Wait() end
+            spawnOne(picked[i])
+            task.wait(0.5)
+        end
+
+        local deadline = now() + math.max(5, 0.5 * #picked + 5)
+        while active > 0 and now() < deadline do
+            Run.Heartbeat:Wait()
+        end
+
+        return #picked
+    end
+
+    local function runConveyorJob(centerPos, orbPos, targets, jobId)
+        local t0 = now()
+        local emptyPasses = 0
+        local perNameCount = {}
+
+        while true do
+            if now() - t0 >= JOB_HARD_TIMEOUT_S then
+                break
+            end
+            local moved = runConveyorWave(centerPos, orbPos, targets, jobId, perNameCount)
+            if moved == 0 then
+                emptyPasses += 1
+                if emptyPasses >= 2 then break end
+                requestMoreStreamingAround({ centerPos, orbPos })
+                task.wait(0.2)
+            else
+                emptyPasses = 0
+            end
+        end
+    end
+
+    local function burnNearby()
+        local camp = CAMPFIRE_PATH; if not camp then return end
+        local root = hrp(); if not root then return end
+        local campCF = (mainPart(camp) and mainPart(camp).CFrame or camp:GetPivot())
+        requestMoreStreamingAround({ root.Position, campCF.Position })
+        local jobId = ("%d-%d"):format(os.time(), math.random(1,1e6))
+        local orb2 = makeOrb(root.CFrame, "orb2")
+        local orb1 = makeOrb(campCF + Vector3.new(0, ORB_OFFSET_Y + 10, 0), "orb1")
+        local targets = mergedSet(fuelSet, cookSet)
+        runConveyorJob(orb2.Position, orb1.Position, targets, jobId)
+        if orb1 then orb1:Destroy() end
+        if orb2 then orb2:Destroy() end
+    end
+
+    local function scrapNearby()
+        local scr = SCRAPPER_PATH; if not scr then return end
+        local root = hrp(); if not root then return end
+        local scrCF = (mainPart(scr) and mainPart(scr).CFrame or scr:GetPivot()).Position
+        requestMoreStreamingAround({ root.Position, scrCF })
+        local jobId = ("%d-%d"):format(os.time(), math.random(1,1e6))
+        local orb2 = makeOrb(root.CFrame, "orb2")
+        local orb1 = makeOrb((mainPart(SCRAPPER_PATH) and mainPart(SCRAPPER_PATH).CFrame or SCRAPPER_PATH:GetPivot()) + Vector3.new(0, ORB_OFFSET_Y + 10, 0), "orb1")
+        local targets = mergedSet(junkSet, scrapAlso)
+        runConveyorJob(orb2.Position, orb1.Position, targets, jobId)
+        if orb1 then orb1:Destroy() end
+        if orb2 then orb2:Destroy() end
+    end
+
+    local function setFromChoice(choice)
+        local s = {}
+        if type(choice) == "table" then
+            for _,v in ipairs(choice) do if v and v ~= "" then s[v]=true end end
+        elseif choice and choice ~= "" then
+            s[choice] = true
+        end
+        return s
+    end
+
+    local selJunkMany, selFuelMany, selFoodMany, selMedicalMany, selWAMany, selMiscMany, selPeltMany =
+        {},{},{},{},{},{},{}
+
+    local _bringBusy = false
+    local function fastBringToGround(selectedSet, opts)
+        if not selectedSet or next(selectedSet) == nil then
+            return
+        end
+        if _bringBusy then
+            return
+        end
+        _bringBusy = true
+
+        local skipFoodRot   = (opts and opts.SkipFoodRot == true) or false
+        local excludeCorpse = (opts and opts.ExcludeCorpse == true) or false
+
+        local ok = pcall(function()
+            dropCounter = 0
+            local itemsFolder = itemsRootOrNil(); if not itemsFolder then return end
+            local root = hrp()
+
+            local limitOn = C.State.BringLimitEnabled and true or false
+            local maxPerName = currentLimit()
+
+            local perNameCount = {}
+
+            local function scanQueue(alreadyMoved)
+                local seenModel, queue = {}, {}
+                local desc = itemsFolder:GetDescendants()
+                for _,d in ipairs(desc) do
+                    local m = nil
+                    if d:IsA("Model") then
+                        if nameMatches(selectedSet, d) then m = d end
+                    elseif d:IsA("BasePart") then
+                        m = nearestSelectedModelFromPart(d, selectedSet)
+                    end
+                    if m and not seenModel[m] and not alreadyMoved[m] then
+                        seenModel[m] = true
+
+                        if excludeCorpse then
+                            local ln = (m.Name or ""):lower()
+                            if ln:find("corpse", 1, true) then
+                                continue
+                            end
+                        end
+
+                        if skipFoodRot then
+                            local rot = m:GetAttribute("FoodRot")
+                            if rot ~= nil then
+                                local nm0 = tostring(m.Name or "")
+                                local rk = "Rotten " .. nm0
+                                local allow = false
+                                if selectedSet["Rotten"] and foodSet[nm0] then allow = true end
+                                if selectedSet[rk] then allow = true end
+                                if not allow then
+                                    continue
+                                end
+                            end
+                        end
+
+                        if m.Name == "Stew" then
+                            if isModelWeldedToOutside(m) or isStewOnCrockpot(m) then
+                                continue
+                            end
+                        end
+
+                        if not isExcludedModel(m) and not isLogWallBlocked(m, selectedSet) then
+                            local mp = mainPart(m)
+                            if mp then
+                                perNameCount[m.Name] = (perNameCount[m.Name] or 0) + 1
+                                if (not limitOn) or perNameCount[m.Name] <= maxPerName then
+                                    queue[#queue+1] = m
+                                end
+                            end
+                        end
+                    end
+                end
+                return queue
+            end
+
+            local alreadyMoved = {}
+            local maxPasses = 3
+            for pass = 1, maxPasses do
+                if root then
+                    requestMoreStreamingAround({ root.Position })
+                end
+
+                local queue = scanQueue(alreadyMoved)
+
+                if #queue == 0 then
+                    if WS.StreamingEnabled and root then
+                        requestMoreStreamingAround({ root.Position })
+                        task.wait(0.20)
+                    else
+                        break
+                    end
+                else
+                    local dropped = 0
+                    for i=1,#queue do
+                        local m = queue[i]
+                        alreadyMoved[m] = true
+                        if dropNearPlayer(m) then dropped += 1 end
+                        if i % 25 == 0 then Run.Heartbeat:Wait() end
+                    end
+                    if WS.StreamingEnabled and dropped > 0 then
+                        task.wait(0.10)
+                    end
+                end
+            end
+        end)
+
+        _bringBusy = false
+        if not ok then
+            stopAllOutstandingDrags()
+            return
+        end
+    end
+
+    local function multiSelectDropdown(args)
+        return tab:Dropdown({
+            Title = args.title,
+            Values = args.values,
+            Multi = true,
+            AllowNone = true,
+            Callback = function(choice) args.setter(setFromChoice(choice)) end
+        })
+    end
+
+    local function parseSliderNumber(v)
+        if type(v) == "number" then return v end
+        if type(v) == "string" then return tonumber(v) end
+        if type(v) ~= "table" then return nil end
+
+        local keys = {
+            "Value","value",
+            "Current","current",
+            "CurrentValue","currentValue",
+            "Number","number",
+            "Slider","slider",
+        }
+        for _,k in ipairs(keys) do
+            local n = tonumber(v[k])
+            if n then return n end
+        end
+
+        if type(v.Value) == "table" then
+            local n = tonumber(v.Value.Value) or tonumber(v.Value.Current) or tonumber(v.Value.CurrentValue)
+            if n then return n end
+        end
+
+        if #v >= 1 then
+            local n = tonumber(v[1])
+            if n then return n end
+        end
+
+        return nil
+    end
+
+    tab:Section({ Title = "Actions" })
+    tab:Button({ Title = "Burn/Cook Nearby", Callback = burnNearby })
+    tab:Button({ Title = "Scrap Nearby",      Callback = scrapNearby })
+
+    tab:Section({ Title = "Bring Limits" })
+    tab:Toggle({
+        Title = "Enable per-name limit",
+        Default = C.State.BringLimitEnabled and true or false,
+        Callback = function(on)
+            C.State.BringLimitEnabled = on and true or false
+        end
+    })
+    tab:Slider({
+        Title = "Max per item name",
+        Value = { Min = 1, Max = 100, Default = currentLimit() },
+        Callback = function(v)
+            local nv = parseSliderNumber(v)
+            if nv then
+                C.State.BringLimitAmount = math.clamp(nv, 1, 100)
+            end
+        end
+    })
+
+    tab:Section({ Title = "Bring Scrap" })
+    multiSelectDropdown({ title = "Bring Scrap", values = junkItems, setter = function(s) selJunkMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selJunkMany) end })
+
+    tab:Section({ Title = "Bring Fuel" })
+    multiSelectDropdown({ title = "Bring Fuel", values = fuelItems, setter = function(s) selFuelMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selFuelMany) end })
+
+    tab:Section({ Title = "Bring Food" })
+    multiSelectDropdown({ title = "Bring Food", values = foodItems, setter = function(s) selFoodMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selFoodMany, { SkipFoodRot = true }) end })
+
+    tab:Section({ Title = "Bring Medical" })
+    multiSelectDropdown({ title = "Bring Medical", values = medicalItems, setter = function(s) selMedicalMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selMedicalMany) end })
+
+    tab:Section({ Title = "Bring Weapons/Armor" })
+    multiSelectDropdown({ title = "Bring Weapons/Armor", values = weaponsArmor, setter = function(s) selWAMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selWAMany) end })
+
+    tab:Section({ Title = "Bring Ammo & Misc" })
+    multiSelectDropdown({ title = "Bring Ammo & Misc", values = ammoMisc, setter = function(s) selMiscMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selMiscMany) end })
+
+    tab:Section({ Title = "Bring Pelts" })
+    multiSelectDropdown({ title = "Bring Pelts", values = pelts, setter = function(s) selPeltMany = s end })
+    tab:Button({ Title = "Bring Selected", Callback = function() fastBringToGround(selPeltMany, { ExcludeCorpse = true }) end })
+
+    do
+        local ORB_RADIUS     = 2.2
+        local ORB_STUCK_SECS = 0.9
+        local ORB_FALL_DELTA = 2.5
+        local ORB_MAX_KICKS  = 2
+        local ORB_RESET_UP   = 1.2
+        local ORB_KICK_VY    = -60
+        local GUARD_HZ       = 12
+
+        local function campOrbPos()
+            local camp = CAMPFIRE_PATH
+            if not camp then return nil end
+            local c = (mainPart(camp) and mainPart(camp).CFrame or camp:GetPivot()).Position
+            return Vector3.new(c.X, c.Y + ORB_OFFSET_Y + 10, c.Z)
+        end
+        local function scrapOrbPos()
+            local scr = SCRAPPER_PATH
+            if not scr then return nil end
+            local c = (mainPart(scr) and mainPart(scr).CFrame or scr:GetPivot()).Position
+            return Vector3.new(c.X, c.Y + ORB_OFFSET_Y + 10, c.Z)
+        end
+        local function liveOrb1Pos()
+            local o = WS:FindFirstChild("orb1")
+            return o and o:IsA("BasePart") and o.Position or nil
+        end
+
+        local function kickDown(m, orbY)
+            local mp = mainPart(m); if not mp then return end
+            pcall(function() mp.Anchored = false end)
+            pcall(function() mp.AssemblyLinearVelocity  = Vector3.new(0, ORB_KICK_VY, 0) end)
+            pcall(function() mp.AssemblyAngularVelocity = Vector3.new() end)
+            pcall(function()
+                local p = mp.Position
+                mp.CFrame = CFrame.new(Vector3.new(p.X, orbY + ORB_RESET_UP, p.Z))
+            end)
+            refreshPrompts(m)
+        end
+
+        local watched = setmetatable({}, {__mode="k"})
+        local acc = 0
+        Run.Heartbeat:Connect(function(dt)
+            acc += dt
+            if acc < (1 / GUARD_HZ) then return end
+            acc = 0
+
+            local positions = {}
+            local pLive = liveOrb1Pos(); if pLive then positions[#positions+1] = pLive end
+            local pCamp = campOrbPos();  if pCamp then positions[#positions+1] = pCamp end
+            local pScr  = scrapOrbPos(); if pScr  then positions[#positions+1] = pScr  end
+            if #positions == 0 then return end
+
+            local items = WS:FindFirstChild("Items"); if not items then return end
+            for _,m in ipairs(items:GetChildren()) do
+                if not m:IsA("Model") then continue end
+                local mp = mainPart(m); if not mp then continue end
+
+                local nearest, orbY = nil, nil
+                local pos = mp.Position
+                for _,o in ipairs(positions) do
+                    local d = (pos - o).Magnitude
+                    if d <= ORB_RADIUS then nearest, orbY = true, o.Y; break end
+                end
+
+                if nearest then
+                    local rec = watched[m]
+                    if not rec then
+                        watched[m] = {t=now(), y0=pos.Y, kicks=0}
+                    else
+                        local fell = (rec.y0 - pos.Y) >= ORB_FALL_DELTA or pos.Y < (orbY - ORB_FALL_DELTA)
+                        if fell then
+                            watched[m] = nil
+                        elseif (now() - rec.t) >= ORB_STUCK_SECS then
+                            if rec.kicks < ORB_MAX_KICKS then
+                                rec.kicks += 1
+                                rec.t = now()
+                                rec.y0 = pos.Y
+                                kickDown(m, orbY)
+                            else
+                                watched[m] = nil
+                            end
+                        end
+                    end
+                else
+                    watched[m] = nil
+                end
+            end
+        end)
+    end
+
+    if type(C.RegisterCleanup) == "function" then
+        C.RegisterCleanup(function()
+            stopAllOutstandingDrags()
+        end)
+    end
+end
