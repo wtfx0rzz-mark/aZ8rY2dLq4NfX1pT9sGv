@@ -145,6 +145,14 @@ return function(C, R, UI)
         end
         return t
     end
+    local function isAnyPartLocked(model)
+    for _, p in ipairs(getAllParts(model)) do
+        local locked = false
+        local ok = pcall(function() locked = p.Locked end)
+        if ok and locked then return true end
+    end
+    return false
+end
     local function bboxHeight(model)
         local rp = physicalRootPart(model)
         if rp then return rp.Size.Y end
@@ -519,8 +527,9 @@ return function(C, R, UI)
     end
 
     local function dropNearPlayer(model)
-            if not (model and model.Parent) then return false end
-        severeExternalWelds(model)
+    if not (model and model.Parent) then return false end
+    if isAnyPartLocked(model) then return false end
+    severeExternalWelds(model)
 
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
