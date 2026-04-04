@@ -100,12 +100,27 @@ return function(C, R, UI)
     end
 
     local function applyNoFog()
-        Lighting.FogStart = 1e6
-        Lighting.FogEnd = 1e6 + 1
-        for _, d in ipairs(Lighting:GetDescendants()) do
-            touchAtmosphere(d)
+    Lighting.FogStart = 1e6
+    Lighting.FogEnd = 1e6 + 1
+    for _, d in ipairs(Lighting:GetDescendants()) do
+        touchAtmosphere(d)
+    end
+    local boundaries = WS:FindFirstChild("Map") and WS.Map:FindFirstChild("Boundaries")
+    if boundaries then
+        for _, child in ipairs(boundaries:GetChildren()) do
+            if (child.Name or ""):lower():find("fog", 1, true) then
+                for _, d in ipairs(child:GetDescendants()) do
+                    if d:IsA("BasePart") then
+                        d.Transparency = 1
+                    end
+                    if d:IsA("ParticleEmitter") or d:IsA("SelectionBox") or d:IsA("SpecialMesh") then
+                        d.Enabled = false
+                    end
+                end
+            end
         end
     end
+end
 
     local function startRemoveFog()
         if fogRunning then return end
