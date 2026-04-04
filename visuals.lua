@@ -98,27 +98,22 @@ return function(C, R, UI)
         inst.Haze = 0
         inst.Glare = 0
     end
-
+    local function touchSky(inst)
+        if not inst or not inst:IsA("Sky") then return end
+        inst.SkyboxBk = "rbxasset://textures/sky/sky512_bk.tex"
+        inst.SkyboxDn = "rbxasset://textures/sky/sky512_dn.tex"
+        inst.SkyboxFt = "rbxasset://textures/sky/sky512_ft.tex"
+        inst.SkyboxLf = "rbxasset://textures/sky/sky512_lf.tex"
+        inst.SkyboxRt = "rbxasset://textures/sky/sky512_rt.tex"
+        inst.SkyboxUp = "rbxasset://textures/sky/sky512_up.tex"
+    end
+    
     local function applyNoFog()
     Lighting.FogStart = 1e6
     Lighting.FogEnd = 1e6 + 1
     for _, d in ipairs(Lighting:GetDescendants()) do
         touchAtmosphere(d)
-    end
-    local boundaries = WS:FindFirstChild("Map") and WS.Map:FindFirstChild("Boundaries")
-    if boundaries then
-        for _, child in ipairs(boundaries:GetChildren()) do
-            if (child.Name or ""):lower():find("fog", 1, true) then
-                for _, d in ipairs(child:GetDescendants()) do
-                    if d:IsA("BasePart") then
-                        d.Transparency = 1
-                    end
-                    if d:IsA("ParticleEmitter") or d:IsA("SelectionBox") or d:IsA("SpecialMesh") then
-                        d.Enabled = false
-                    end
-                end
-            end
-        end
+        touchSky(d)
     end
 end
 
