@@ -934,37 +934,34 @@ return function(C, R, UI)
         })
 
         local timerOn = false
-        local timerThread = nil
-        local TIMER_SECONDS = 180
+        local timerConn = nil
 
         local function stopTimer()
             timerOn = false
-            if timerThread then
-                pcall(function() task.cancel(timerThread) end)
-                timerThread = nil
+            if timerConn then
+                pcall(function() timerConn:Disconnect() end)
+                timerConn = nil
             end
+        end
+
+        local function getPeriod(clock)
+            return (clock >= 6 and clock < 20) and "DAY" or "NIGHT"
         end
 
         local function startTimer()
             if timerOn then return end
             timerOn = true
-            if timerThread then
-                pcall(function() task.cancel(timerThread) end)
-                timerThread = nil
-            end
-            timerThread = task.spawn(function()
-                runTemporalSequence(true)
-                local nextAt = os.clock() + TIMER_SECONDS
-                while timerOn do
-                    local now = os.clock()
-                    if now >= nextAt then
-                        runTemporalSequence(true)
-                        nextAt = nextAt + TIMER_SECONDS
-                        if now >= nextAt + TIMER_SECONDS then
-                            nextAt = now + TIMER_SECONDS
-                        end
+            local lastPeriod = getPeriod(game:GetService("Lighting").ClockTime)
+            timerConn = game:GetService("Lighting"):GetPropertyChangedSignal("ClockTime"):Connect(function()
+                if not timerOn then return end
+                local period = getPeriod(game:GetService("Lighting").ClockTime)
+                if period ~= lastPeriod then
+                    lastPeriod = period
+                    if period == "NIGHT" then
+                        task.spawn(function()
+                            runTemporalSequence(true)
+                        end)
                     end
-                    task.wait(0.25)
                 end
             end)
         end
@@ -1209,11 +1206,7 @@ return function(C, R, UI)
 
         _G.__MoreTemporal = {
             Destroy = function()
-                pcall(function()
-                    if timerThread then task.cancel(timerThread) end
-                end)
-                timerThread = nil
-                timerOn = false
+                stopTimer()
                 busy = false
                 stopRollbackWatch()
                 if edgeConn then pcall(function() edgeConn:Disconnect() end) edgeConn = nil end
