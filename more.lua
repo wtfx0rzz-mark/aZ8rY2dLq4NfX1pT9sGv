@@ -815,7 +815,7 @@ return function(C, R, UI)
             local root0 = hrp()
             local returnCF = root0 and root0.CFrame or nil
 
-            local ok = pcall(function()
+            local ok, err = pcall(function()
                 if fromTimer == true then
                     local tp = C.State.MoreTemporalTeleportCF
                     if typeof(tp) == "CFrame" then
@@ -849,9 +849,7 @@ return function(C, R, UI)
                 end
 
                 local picked = doPickupTemporalAccelerometerOnly(machine)
-                if not picked then
-                    return
-                end
+                if not picked then return end
 
                 task.wait(0.35)
 
@@ -873,6 +871,10 @@ return function(C, R, UI)
                 task.wait(1.0)
             end)
 
+            if not ok then
+                warn("[More] runTemporalSequence error: " .. tostring(err))
+            end
+
             if returnCF then
                 pcall(function()
                     freshTemporalRunState()
@@ -881,7 +883,6 @@ return function(C, R, UI)
             end
 
             busy = false
-            return ok
         end
 
         local edgeConn = edgeBtn.MouseButton1Click:Connect(function()
