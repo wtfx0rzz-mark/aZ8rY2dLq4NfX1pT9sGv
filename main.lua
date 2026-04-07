@@ -60,8 +60,8 @@ C.Config = C.Config or {
 }
 
 C.State = C.State or { AuraRadius = 150, Toggles = {} }
-C.State._MainBiomeRendered = C.State._MainBiomeRendered or false
-C.State._MainEventRendered = C.State._MainEventRendered or false
+C.State._MainBiomeRendered = false
+C.State._MainEventRendered = false
 
 _G.C  = C
 _G.R  = _G.R or {}
