@@ -1238,7 +1238,6 @@ return function(C, R, UI)
                 startAutoBurn()
             end
 
-            -- shared scrap bring helpers
             local SCRAP_BRING_INTERVAL = 120
             local DRAG_SETTLE          = 0.06
             local scrapDragStarted     = setmetatable({}, { __mode = "k" })
@@ -1346,7 +1345,18 @@ return function(C, R, UI)
                 return CFrame.new(cf.Position + Vector3.new(0, 5, 0))
             end
 
-            local function scrapDropAtScrapper(m)
+            local function scrapperFragmentDropCF()
+                local map  = WS:FindFirstChild("Map")
+                local camp = map and map:FindFirstChild("Campground")
+                local scr  = camp and camp:FindFirstChild("Scrapper")
+                if not scr then return nil end
+                local mp = mainPart(scr)
+                local cf = (mp and mp.CFrame) or (scr:IsA("Model") and scr:GetPivot()) or nil
+                if not cf then return nil end
+                return CFrame.new(cf.Position + Vector3.new(8, 5, 0))
+            end
+
+            local function scrapDropAtScrapper(m, useFragmentOffset)
                 if not (m and m.Parent) then return false end
                 scrapSevereExternalWelds(m)
                 local r = scrapGetRemotes()
@@ -1354,7 +1364,7 @@ return function(C, R, UI)
                 if started then scrapDragStarted[m] = true end
                 Run.Heartbeat:Wait()
                 task.wait(DRAG_SETTLE)
-                local destCF = scrapperDropCF()
+                local destCF = useFragmentOffset and scrapperFragmentDropCF() or scrapperDropCF()
                 if not destCF then
                     scrapStopIfDragging(r, m)
                     return false
@@ -1394,7 +1404,7 @@ return function(C, R, UI)
                     if m and m.Parent then
                         active += 1
                         task.spawn(function()
-                            scrapDropAtScrapper(m)
+                            scrapDropAtScrapper(m, m.Name == "Gem of the Forest Fragment")
                             active -= 1
                         end)
                     end
@@ -1407,11 +1417,11 @@ return function(C, R, UI)
                 end
             end
 
-            local function makeScrapBringToggle(stateKey, selectedSet)
-                local running   = false
+            local function makeScrapBringToggle(selectedSet)
+                local running     = false
                 local timerThread = nil
-                local descConn  = nil
-                local descSeen  = setmetatable({}, { __mode = "k" })
+                local descConn    = nil
+                local descSeen    = setmetatable({}, { __mode = "k" })
 
                 local function stop()
                     running = false
@@ -1441,7 +1451,7 @@ return function(C, R, UI)
                             task.spawn(function()
                                 task.wait(0.2)
                                 if not (inst and inst.Parent) then return end
-                                scrapDropAtScrapper(inst)
+                                scrapDropAtScrapper(inst, inst.Name == "Gem of the Forest Fragment")
                                 task.delay(30, function() descSeen[inst] = nil end)
                             end)
                         end)
@@ -1467,8 +1477,8 @@ return function(C, R, UI)
                 ["Gem of the Forest"]          = true,
             }
 
-            local cultistGemBring = makeScrapBringToggle("MoreAutoScrapCultistGem", CULTIST_GEM_SET)
-            local forestGemBring  = makeScrapBringToggle("MoreAutoScrapForestGem",  FOREST_GEM_SET)
+            local cultistGemBring = makeScrapBringToggle(CULTIST_GEM_SET)
+            local forestGemBring  = makeScrapBringToggle(FOREST_GEM_SET)
 
             if C.State.Toggles.MoreAutoScrapCultistGem == nil then
                 C.State.Toggles.MoreAutoScrapCultistGem = false
