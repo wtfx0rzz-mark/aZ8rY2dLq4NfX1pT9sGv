@@ -83,7 +83,7 @@ return function(C, R, UI)
         local DUMMY_MODEL = Instance.new("Model")
         DUMMY_MODEL.Name = "__cg_dummy__"
 
-        local function zeroAssembly(root)
+        local function zeroAssemblyPart(root)
             if not root then return end
             root.AssemblyLinearVelocity  = Vector3.new()
             root.AssemblyAngularVelocity = Vector3.new()
@@ -203,7 +203,7 @@ return function(C, R, UI)
                         waitGameplayResumed(1.0)
                         pcall(function() (lp.Character or {}).PrimaryPart.CFrame = cf end)
                         pcall(function() root.CFrame = cf end)
-                        zeroAssembly(root)
+                        zeroAssemblyPart(root)
                         setCollideAll(true, snap)
                         waitGameplayResumed(1.0)
                     end
@@ -258,7 +258,7 @@ return function(C, R, UI)
 
             if ch then pcall(function() ch:PivotTo(targetCF) end) end
             pcall(function() root.CFrame = targetCF end)
-            if STICK_CLEAR_VEL then zeroAssembly(root) end
+            if STICK_CLEAR_VEL then zeroAssemblyPart(root) end
 
             if dropMode then
                 if not hadNoclip then setCollideAll(true, snap) end
@@ -271,20 +271,20 @@ return function(C, R, UI)
             while (os.clock() - t0) < STICK_DURATION do
                 if ch then pcall(function() ch:PivotTo(targetCF) end) end
                 pcall(function() root.CFrame = targetCF end)
-                if STICK_CLEAR_VEL then zeroAssembly(root) end
+                if STICK_CLEAR_VEL then zeroAssemblyPart(root) end
                 Run.Heartbeat:Wait()
             end
             for _=1,STICK_EXTRA_FR do
                 if ch then pcall(function() ch:PivotTo(targetCF) end) end
                 pcall(function() root.CFrame = targetCF end)
-                if STICK_CLEAR_VEL then zeroAssembly(root) end
+                if STICK_CLEAR_VEL then zeroAssemblyPart(root) end
                 Run.Heartbeat:Wait()
             end
 
             if not hadNoclip then
                 setCollideAll(true, snap)
             end
-            if STICK_CLEAR_VEL then zeroAssembly(root) end
+            if STICK_CLEAR_VEL then zeroAssemblyPart(root) end
             waitGameplayResumed(1.0)
             startRollbackWatch(targetCF)
         end
@@ -995,9 +995,7 @@ return function(C, R, UI)
                 refreshRoots()
                 local f = RootWS:FindFirstChild("Items")
                 if f then return f end
-                local f2 = WS:FindFirstChild("Items")
-                if f2 then return f2 end
-                return nil
+                return WS:FindFirstChild("Items")
             end
 
             local function isMyCharModel(m)
@@ -1079,13 +1077,11 @@ return function(C, R, UI)
             local function candidateFromPart(part, items, selectedSet)
                 if not (part and part:IsA("BasePart")) then return nil end
                 if RootWS ~= WS and not part:IsDescendantOf(RootWS) then return nil end
-
                 if items and part:IsDescendantOf(items) then
                     local m = topModelUnderItems(part, items) or part:FindFirstAncestorOfClass("Model")
                     if m and isSelectedItem(m, selectedSet) then return m end
                     if isSelectedItem(part, selectedSet) then return part end
                 end
-
                 local m = part:FindFirstAncestorOfClass("Model")
                 if m and isSelectedNPC(m, selectedSet) then return m end
                 return nil
@@ -1120,15 +1116,12 @@ return function(C, R, UI)
                         warn("[More] LavaBurn missing Remote or Lava")
                         return
                     end
-
                     local root = hrp()
                     if not root then return end
                     local items = itemsFolder()
-
                     local params = OverlapParams.new()
                     params.FilterType = Enum.RaycastFilterType.Exclude
                     params.FilterDescendantsInstances = { lp.Character }
-
                     local parts = WS:GetPartBoundsInRadius(root.Position, SCAN_RADIUS, params) or {}
                     local uniq, targets = {}, {}
                     for _,p in ipairs(parts) do
@@ -1138,20 +1131,15 @@ return function(C, R, UI)
                             targets[#targets+1] = cand
                         end
                     end
-
                     local okN, errN = 0, 0
                     for i = 1, #targets do
                         local inst = targets[i]
                         if inst and inst.Parent then
                             local okCall = false
                             if Remote:IsA("RemoteFunction") then
-                                okCall = pcall(function()
-                                    return Remote:InvokeServer(inst, Lava)
-                                end)
+                                okCall = pcall(function() return Remote:InvokeServer(inst, Lava) end)
                             else
-                                okCall = pcall(function()
-                                    Remote:FireServer(inst, Lava)
-                                end)
+                                okCall = pcall(function() Remote:FireServer(inst, Lava) end)
                             end
                             if okCall then okN += 1 else errN += 1 end
                         end
@@ -1188,9 +1176,7 @@ return function(C, R, UI)
 
             tab:Button({
                 Title = "Burn",
-                Callback = function()
-                    burnSelected()
-                end
+                Callback = function() burnSelected() end
             })
 
             local autoBurnConn = nil
@@ -1208,7 +1194,6 @@ return function(C, R, UI)
                 stopAutoBurn()
                 local items = itemsFolder()
                 if not items then return end
-
                 autoBurnConn = items.DescendantAdded:Connect(function(inst)
                     if not inst:IsA("Model") then return end
                     if autoBurnSeen[inst] then return end
@@ -1216,7 +1201,6 @@ return function(C, R, UI)
                     if not n:find("cultist", 1, true) then return end
                     if not inst:FindFirstChildWhichIsA("Humanoid", true) then return end
                     autoBurnSeen[inst] = true
-
                     task.spawn(function()
                         task.wait(0.2)
                         if not (inst and inst.Parent) then return end
@@ -1230,9 +1214,7 @@ return function(C, R, UI)
                                 Remote:FireServer(inst, Lava)
                             end
                         end)
-                        task.delay(30, function()
-                            autoBurnSeen[inst] = nil
-                        end)
+                        task.delay(30, function() autoBurnSeen[inst] = nil end)
                     end)
                 end)
             end
@@ -1246,11 +1228,7 @@ return function(C, R, UI)
                 Value = (C.State.Toggles.MoreAutoBurnCultist == true),
                 Callback = function(state)
                     C.State.Toggles.MoreAutoBurnCultist = (state == true)
-                    if state then
-                        startAutoBurn()
-                    else
-                        stopAutoBurn()
-                    end
+                    if state then startAutoBurn() else stopAutoBurn() end
                 end
             })
 
@@ -1261,17 +1239,17 @@ return function(C, R, UI)
 
         -- Auto Scrap section
         do
-            local SCRAP_DRAG_SPEED  = 18
-            local SCRAP_STEP_WAIT   = 0.03
-            local SCRAP_VERTICAL_M  = 1.35
-            local SCRAP_HOVER_Y     = 20
-            local FRAGMENT_SIDE_OFF = 3.0
-            local FRAGMENT_RISE_Y   = 1.5
-            local DRAG_SETTLE       = 0.06
+            local SCRAP_DRAG_SPEED   = 18
+            local SCRAP_VERTICAL_M   = 1.35
+            local SCRAP_STEP_WAIT    = 0.03
+            local SCRAP_ORB_HEIGHT   = 10
+            local SCRAP_INTERVAL_S   = 120
+            local SCRAP_DRAG_SETTLE  = 0.06
+            local SCRAP_STUCK_TTL    = 6.0
 
             local scrapDragStarted = setmetatable({}, { __mode = "k" })
 
-            local function resolveScrapRemotes()
+            local function scrapResolveRemotes()
                 refreshRoots()
                 local re = RootRS:FindFirstChild("RemoteEvents")
                 return {
@@ -1323,7 +1301,7 @@ return function(C, R, UI)
             local function scrapGetAllParts(m)
                 local t = {}
                 if not m then return t end
-                if m:IsA("BasePart") then t[1] = m return t end
+                if m:IsA("BasePart") then t[1] = m; return t end
                 for _, d in ipairs(m:GetDescendants()) do
                     if d:IsA("BasePart") then t[#t+1] = d end
                 end
@@ -1370,6 +1348,51 @@ return function(C, R, UI)
                 end
             end
 
+            local function scrapPhysRootPart(m)
+                if not (m and m.Parent) then return nil end
+                if m:IsA("BasePart") then return m end
+                if not m:IsA("Model") then return mainPart(m) end
+                local found = m:FindFirstChild("Main", true)
+                if found and found:IsA("BasePart") then return found end
+                if m.PrimaryPart then return m.PrimaryPart end
+                return m:FindFirstChildWhichIsA("BasePart", true)
+            end
+
+            local function scrapBboxHeight(m)
+                local rp = scrapPhysRootPart(m)
+                if rp then return rp.Size.Y end
+                local parts = scrapGetAllParts(m)
+                local minY, maxY = nil, nil
+                for _, p in ipairs(parts) do
+                    if p and p.Parent and p.CanCollide then
+                        local y0 = p.Position.Y - p.Size.Y * 0.5
+                        local y1 = p.Position.Y + p.Size.Y * 0.5
+                        if not minY or y0 < minY then minY = y0 end
+                        if not maxY or y1 > maxY then maxY = y1 end
+                    end
+                end
+                if minY and maxY then return math.max(0.5, maxY - minY) end
+                return 2
+            end
+
+            local function scrapGroundBelow(xz, ignoreModel)
+                local items = (RootWS and RootWS:FindFirstChild("Items")) or WS:FindFirstChild("Items")
+                local ch = lp.Character
+                local origin = Vector3.new(xz.X, 320, xz.Z)
+                local dir = Vector3.new(0, -900, 0)
+                local rp = RaycastParams.new()
+                rp.FilterType = Enum.RaycastFilterType.Exclude
+                local ignore = {}
+                if ignoreModel then ignore[#ignore+1] = ignoreModel end
+                if items then ignore[#ignore+1] = items end
+                if ch then ignore[#ignore+1] = ch end
+                rp.FilterDescendantsInstances = ignore
+                rp.IgnoreWater = true
+                local res = WS:Raycast(origin, dir, rp)
+                if res and res.Position then return res.Position end
+                return Vector3.new(xz.X, 0, xz.Z)
+            end
+
             local function findScrapper()
                 local map = WS:FindFirstChild("Map")
                 if not map then return nil end
@@ -1383,49 +1406,53 @@ return function(C, R, UI)
                 return nil
             end
 
-            local function scrapperCenterCF()
+            local function scrapperOrbPos()
                 local scr = findScrapper()
                 if not scr then return nil end
                 local mp = mainPart(scr)
-                return (mp and mp.CFrame) or (scr:IsA("Model") and scr:GetPivot()) or nil
-            end
-
-            local function scrapperHoverPos()
-                local cf = scrapperCenterCF()
+                local cf = (mp and mp.CFrame) or (scr:IsA("Model") and scr:GetPivot()) or nil
                 if not cf then return nil end
-                return cf.Position + Vector3.new(0, SCRAP_HOVER_Y, 0)
+                return cf.Position + Vector3.new(0, SCRAP_ORB_HEIGHT, 0)
             end
 
-            local function fragmentStackPos()
-                local cf = scrapperCenterCF()
-                if not cf then return nil end
-                return cf.Position + Vector3.new(FRAGMENT_SIDE_OFF, FRAGMENT_RISE_Y, 0)
+            local function scrapDropFromOrb(m, orbPos, snap, H)
+                if not (m and m.Parent) then return end
+                scrapZeroAssembly(m)
+                local rp2 = scrapPhysRootPart(m)
+                local halfY = (rp2 and rp2.Size and rp2.Size.Y * 0.5) or math.max(0.5, (H or scrapBboxHeight(m)) * 0.5)
+                local xz = Vector3.new(orbPos.X, orbPos.Y, orbPos.Z)
+                local g = scrapGroundBelow(xz, m)
+                local y = g and (g.Y + halfY + 0.15) or (orbPos.Y + math.max(0.5, (H or 2) * 0.25))
+                local above = Vector3.new(orbPos.X, y, orbPos.Z)
+                scrapSetPivot(m, CFrame.new(above))
+                for _, p in ipairs(scrapGetAllParts(m)) do
+                    p.Anchored = false
+                    p.AssemblyLinearVelocity  = Vector3.new()
+                    p.AssemblyAngularVelocity = Vector3.new()
+                end
+                scrapSetCollide(m, true, snap)
+                scrapRefreshPrompts(m)
             end
 
-            local function scrapConveyor(m, destPos, onArrive)
-                if not (m and m.Parent and destPos) then return end
-
+            local function scrapStartConveyor(m, orbPos)
+                if not (m and m.Parent) then return end
                 scrapSevereExternalWelds(m)
+                local mp = mainPart(m)
+                if not mp then return end
+                local H = scrapBboxHeight(m)
+                local riserY = orbPos.Y - 1.0 + math.clamp(H * 0.45, 0.8, 3.0)
+                local lookDir = (Vector3.new(orbPos.X, mp.Position.Y, orbPos.Z) - mp.Position)
+                lookDir = (lookDir.Magnitude > 0.001) and lookDir.Unit or Vector3.zAxis
 
-                local r = resolveScrapRemotes()
+                local r = scrapResolveRemotes()
                 local started = scrapSafeStartDrag(r, m)
                 if started then scrapDragStarted[m] = true end
 
                 Run.Heartbeat:Wait()
-                task.wait(DRAG_SETTLE)
-
-                local mp = mainPart(m)
-                if not mp then
-                    scrapStopIfDragging(r, m)
-                    return
-                end
+                task.wait(SCRAP_DRAG_SETTLE)
 
                 local snap = scrapSetCollide(m, false)
                 scrapZeroAssembly(m)
-
-                local riserY = destPos.Y - 1.0 + math.clamp((mp.Size.Y or 1) * 0.45, 0.8, 3.0)
-                local lookDir = (Vector3.new(destPos.X, mp.Position.Y, destPos.Z) - mp.Position)
-                lookDir = (lookDir.Magnitude > 0.001) and lookDir.Unit or Vector3.zAxis
 
                 while m and m.Parent do
                     local pivot = m:IsA("Model") and m:GetPivot() or (mainPart(m) and mainPart(m).CFrame)
@@ -1443,7 +1470,7 @@ return function(C, R, UI)
                     local pivot = m:IsA("Model") and m:GetPivot() or (mainPart(m) and mainPart(m).CFrame)
                     if not pivot then break end
                     local pos = pivot.Position
-                    local delta = Vector3.new(destPos.X - pos.X, 0, destPos.Z - pos.Z)
+                    local delta = Vector3.new(orbPos.X - pos.X, 0, orbPos.Z - pos.Z)
                     local dist = delta.Magnitude
                     if dist <= 1.0 then break end
                     local step = math.min(SCRAP_DRAG_SPEED * SCRAP_STEP_WAIT, dist)
@@ -1456,162 +1483,97 @@ return function(C, R, UI)
 
                 scrapStopIfDragging(r, m)
 
-                if not (m and m.Parent) then
-                    scrapSetCollide(m, true, snap)
-                    return
-                end
-
-                if onArrive then
-                    onArrive(m, snap)
+                if m and m.Parent then
+                    scrapDropFromOrb(m, orbPos, snap, H)
                 else
                     scrapSetCollide(m, true, snap)
-                    for _, p in ipairs(scrapGetAllParts(m)) do
-                        p.Anchored = false
-                        p.AssemblyLinearVelocity  = Vector3.new()
-                        p.AssemblyAngularVelocity = Vector3.new()
-                        pcall(function() p:SetNetworkOwner(nil) end)
-                        pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
-                    end
-                    scrapZeroAssembly(m)
-                    scrapRefreshPrompts(m)
                 end
             end
 
-            -- Auto Scrap: Cultist Gem
-            local autoScrapCultistGemConn = nil
-            local autoScrapCultistGemSeen = {}
-
-            local function stopAutoScrapCultistGem()
-                if autoScrapCultistGemConn then
-                    pcall(function() autoScrapCultistGemConn:Disconnect() end)
-                    autoScrapCultistGemConn = nil
-                end
-                autoScrapCultistGemSeen = {}
+            local function scrapItemsFolder()
+                refreshRoots()
+                local f = RootWS and RootWS:FindFirstChild("Items")
+                if f then return f end
+                return WS:FindFirstChild("Items")
             end
 
-            local function startAutoScrapCultistGem()
-                stopAutoScrapCultistGem()
-                local items = (RootWS and RootWS:FindFirstChild("Items")) or WS:FindFirstChild("Items")
+            local CULTIST_GEM_SET = { ["Cultist Gem"] = true }
+            local FOREST_GEM_SET  = {
+                ["Gem of the Forest Fragment"] = true,
+                ["Gem of the Forest"]          = true,
+            }
+
+            local function scrapRunPass(selectedSet)
+                local orbPos = scrapperOrbPos()
+                if not orbPos then return end
+                local items = scrapItemsFolder()
                 if not items then return end
 
-                autoScrapCultistGemConn = items.DescendantAdded:Connect(function(inst)
-                    if not inst:IsA("Model") then return end
-                    if autoScrapCultistGemSeen[inst] then return end
-                    if inst.Name ~= "Cultist Gem" then return end
-                    autoScrapCultistGemSeen[inst] = true
+                local seen = {}
+                local queue = {}
+                for _, m in ipairs(items:GetChildren()) do
+                    if m:IsA("Model") and not seen[m] then
+                        if selectedSet[m.Name] then
+                            seen[m] = true
+                            queue[#queue+1] = m
+                        end
+                    end
+                end
 
-                    task.spawn(function()
-                        task.wait(0.2)
-                        if not (inst and inst.Parent) then return end
-                        local dest = scrapperHoverPos()
-                        if not dest then return end
-
-                        scrapConveyor(inst, dest, function(m, snap)
-                            if not (m and m.Parent) then
-                                scrapSetCollide(m, true, snap)
-                                return
-                            end
-                            scrapSetCollide(m, true, snap)
-                            scrapSetPivot(m, CFrame.new(dest))
-                            for _, p in ipairs(scrapGetAllParts(m)) do
-                                p.Anchored = false
-                                p.AssemblyLinearVelocity = Vector3.new(0, -60, 0)
-                                p.AssemblyAngularVelocity = Vector3.new()
-                                pcall(function() p:SetNetworkOwner(nil) end)
-                                pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
-                            end
-                            scrapRefreshPrompts(m)
+                local active = 0
+                for i = 1, #queue do
+                    local m = queue[i]
+                    if m and m.Parent then
+                        active += 1
+                        task.spawn(function()
+                            scrapStartConveyor(m, orbPos)
+                            active -= 1
                         end)
-
-                        task.delay(60, function()
-                            autoScrapCultistGemSeen[inst] = nil
-                        end)
-                    end)
-                end)
+                    end
+                    while active >= 10 do Run.Heartbeat:Wait() end
+                    task.wait(0.5)
+                end
+                local deadline = os.clock() + math.max(5, 0.5 * #queue + 5)
+                while active > 0 and os.clock() < deadline do
+                    Run.Heartbeat:Wait()
+                end
             end
+
+            local function makeScrapTimer(stateKey, selectedSet)
+                local running = false
+                local thread  = nil
+
+                local function stop()
+                    running = false
+                    if thread then
+                        pcall(function() task.cancel(thread) end)
+                        thread = nil
+                    end
+                end
+
+                local function start()
+                    stop()
+                    running = true
+                    thread = task.spawn(function()
+                        while running do
+                            pcall(function() scrapRunPass(selectedSet) end)
+                            local t0 = os.clock()
+                            while running and (os.clock() - t0) < SCRAP_INTERVAL_S do
+                                task.wait(1)
+                            end
+                        end
+                    end)
+                end
+
+                return { start = start, stop = stop }
+            end
+
+            local cultistGemTimer = makeScrapTimer("MoreAutoScrapCultistGem", CULTIST_GEM_SET)
+            local forestGemTimer  = makeScrapTimer("MoreAutoScrapForestGem",  FOREST_GEM_SET)
 
             if C.State.Toggles.MoreAutoScrapCultistGem == nil then
                 C.State.Toggles.MoreAutoScrapCultistGem = false
             end
-
-            -- Auto Scrap: Forest Gem Fragment + Gem of the Forest
-            local autoScrapForestGemConn = nil
-            local autoScrapForestGemSeen = {}
-
-            local function stopAutoScrapForestGem()
-                if autoScrapForestGemConn then
-                    pcall(function() autoScrapForestGemConn:Disconnect() end)
-                    autoScrapForestGemConn = nil
-                end
-                autoScrapForestGemSeen = {}
-            end
-
-            local function startAutoScrapForestGem()
-                stopAutoScrapForestGem()
-                local items = (RootWS and RootWS:FindFirstChild("Items")) or WS:FindFirstChild("Items")
-                if not items then return end
-
-                autoScrapForestGemConn = items.DescendantAdded:Connect(function(inst)
-                    if not inst:IsA("Model") then return end
-                    if autoScrapForestGemSeen[inst] then return end
-                    local n = inst.Name
-                    if n ~= "Gem of the Forest Fragment" and n ~= "Gem of the Forest" then return end
-                    autoScrapForestGemSeen[inst] = true
-
-                    task.spawn(function()
-                        task.wait(0.2)
-                        if not (inst and inst.Parent) then return end
-
-                        if n == "Gem of the Forest Fragment" then
-                            local stackPos = fragmentStackPos()
-                            if not stackPos then return end
-                            local hoverPos = stackPos + Vector3.new(0, SCRAP_HOVER_Y, 0)
-
-                            scrapConveyor(inst, hoverPos, function(m, snap)
-                                if not (m and m.Parent) then
-                                    scrapSetCollide(m, true, snap)
-                                    return
-                                end
-                                scrapSetCollide(m, true, snap)
-                                scrapSetPivot(m, CFrame.new(stackPos))
-                                for _, p in ipairs(scrapGetAllParts(m)) do
-                                    p.Anchored = false
-                                    p.AssemblyLinearVelocity  = Vector3.new()
-                                    p.AssemblyAngularVelocity = Vector3.new()
-                                    pcall(function() p:SetNetworkOwner(nil) end)
-                                    pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
-                                end
-                                scrapRefreshPrompts(m)
-                            end)
-                        else
-                            local dest = scrapperHoverPos()
-                            if not dest then return end
-
-                            scrapConveyor(inst, dest, function(m, snap)
-                                if not (m and m.Parent) then
-                                    scrapSetCollide(m, true, snap)
-                                    return
-                                end
-                                scrapSetCollide(m, true, snap)
-                                scrapSetPivot(m, CFrame.new(dest))
-                                for _, p in ipairs(scrapGetAllParts(m)) do
-                                    p.Anchored = false
-                                    p.AssemblyLinearVelocity = Vector3.new(0, -60, 0)
-                                    p.AssemblyAngularVelocity = Vector3.new()
-                                    pcall(function() p:SetNetworkOwner(nil) end)
-                                    pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
-                                end
-                                scrapRefreshPrompts(m)
-                            end)
-                        end
-
-                        task.delay(60, function()
-                            autoScrapForestGemSeen[inst] = nil
-                        end)
-                    end)
-                end)
-            end
-
             if C.State.Toggles.MoreAutoScrapForestGem == nil then
                 C.State.Toggles.MoreAutoScrapForestGem = false
             end
@@ -1623,34 +1585,21 @@ return function(C, R, UI)
                 Value = (C.State.Toggles.MoreAutoScrapCultistGem == true),
                 Callback = function(state)
                     C.State.Toggles.MoreAutoScrapCultistGem = (state == true)
-                    if state then
-                        startAutoScrapCultistGem()
-                    else
-                        stopAutoScrapCultistGem()
-                    end
+                    if state then cultistGemTimer.start() else cultistGemTimer.stop() end
                 end
             })
-
-            if C.State.Toggles.MoreAutoScrapCultistGem == true then
-                startAutoScrapCultistGem()
-            end
 
             tab:Toggle({
                 Title = "Auto Scrap: Forest Gem",
                 Value = (C.State.Toggles.MoreAutoScrapForestGem == true),
                 Callback = function(state)
                     C.State.Toggles.MoreAutoScrapForestGem = (state == true)
-                    if state then
-                        startAutoScrapForestGem()
-                    else
-                        stopAutoScrapForestGem()
-                    end
+                    if state then forestGemTimer.start() else forestGemTimer.stop() end
                 end
             })
 
-            if C.State.Toggles.MoreAutoScrapForestGem == true then
-                startAutoScrapForestGem()
-            end
+            if C.State.Toggles.MoreAutoScrapCultistGem == true then cultistGemTimer.start() end
+            if C.State.Toggles.MoreAutoScrapForestGem  == true then forestGemTimer.start()  end
         end
 
         local charConn = Players.LocalPlayer.CharacterAdded:Connect(function()
@@ -1668,6 +1617,8 @@ return function(C, R, UI)
             Destroy = function()
                 stopTimer()
                 stopAutoBurn()
+                cultistGemTimer.stop()
+                forestGemTimer.stop()
                 busy = false
                 stopRollbackWatch()
                 if edgeConn then pcall(function() edgeConn:Disconnect() end) edgeConn = nil end
