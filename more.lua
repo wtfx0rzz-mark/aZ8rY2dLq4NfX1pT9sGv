@@ -1259,30 +1259,116 @@ return function(C, R, UI)
             end
         end
 
-        -- Scrapper delivery section
+        -- Auto Scrap section
         do
-            local SCRAPPER_DRAG_SPEED   = 420
-            local SCRAPPER_MOVE_HZ      = 30
-            local SCRAPPER_ARRIVE_EPS   = 1.1
-            local SCRAPPER_STALL_SEC    = 0.6
-            local SCRAPPER_HOVER_Y      = 10
-            local FRAGMENT_STACK_OFFSET = 3.0
-            local FRAGMENT_RELEASE_UP   = 1.5
+            local SCRAP_DRAG_SPEED  = 18
+            local SCRAP_STEP_WAIT   = 0.03
+            local SCRAP_VERTICAL_M  = 1.35
+            local SCRAP_HOVER_Y     = 20
+            local FRAGMENT_SIDE_OFF = 3.0
+            local FRAGMENT_RISE_Y   = 1.5
+            local DRAG_SETTLE       = 0.06
 
-            local scrapperDragStart = nil
-            local scrapperDragStop  = nil
+            local scrapDragStarted = setmetatable({}, { __mode = "k" })
 
-            local function refreshScrapperRemotes()
-                scrapperDragStart = nil
-                scrapperDragStop  = nil
+            local function resolveScrapRemotes()
                 refreshRoots()
                 local re = RootRS:FindFirstChild("RemoteEvents")
-                if re then
-                    scrapperDragStart = re:FindFirstChild("RequestStartDraggingItem")
-                    scrapperDragStop  = re:FindFirstChild("StopDraggingItem")
+                return {
+                    StartDrag = re and re:FindFirstChild("RequestStartDraggingItem"),
+                    StopDrag  = re and re:FindFirstChild("StopDraggingItem"),
+                }
+            end
+
+            local function scrapSafeStartDrag(r, m)
+                if not (r and r.StartDrag and m and m.Parent) then return false end
+                local ok = pcall(function() r.StartDrag:FireServer(m) end)
+                return ok
+            end
+
+            local function scrapFinallyStopDragTwice(r, m)
+                pcall(function() if r and r.StopDrag and m then r.StopDrag:FireServer(m) end end)
+                Run.Heartbeat:Wait()
+                pcall(function() if r and r.StopDrag and m then r.StopDrag:FireServer(m) end end)
+                task.delay(0.05, function() pcall(function() if r and r.StopDrag and m then r.StopDrag:FireServer(m) end end) end)
+                task.delay(0.20, function() pcall(function() if r and r.StopDrag and m then r.StopDrag:FireServer(m) end end) end)
+            end
+
+            local function scrapStopIfDragging(r, m)
+                if not m then return end
+                if scrapDragStarted[m] then
+                    scrapFinallyStopDragTwice(r, m)
+                    scrapDragStarted[m] = nil
                 end
             end
-            refreshScrapperRemotes()
+
+            local function scrapSevereExternalWelds(m)
+                if not (m and m.Parent) then return end
+                for _, d in ipairs(m:GetDescendants()) do
+                    if d:IsA("WeldConstraint") then
+                        local p0, p1 = d.Part0, d.Part1
+                        if (p0 and not p0:IsDescendantOf(m)) or (p1 and not p1:IsDescendantOf(m)) then
+                            pcall(function() d:Destroy() end)
+                        end
+                    end
+                    if d:IsA("BasePart") and d.Anchored then
+                        pcall(function() d.Anchored = false end)
+                    end
+                end
+                if m:IsA("BasePart") and m.Anchored then
+                    pcall(function() m.Anchored = false end)
+                end
+            end
+
+            local function scrapGetAllParts(m)
+                local t = {}
+                if not m then return t end
+                if m:IsA("BasePart") then t[1] = m return t end
+                for _, d in ipairs(m:GetDescendants()) do
+                    if d:IsA("BasePart") then t[#t+1] = d end
+                end
+                return t
+            end
+
+            local function scrapSetCollide(m, on, snapshot)
+                local parts = scrapGetAllParts(m)
+                if on and snapshot then
+                    for part, can in pairs(snapshot) do
+                        if part and part.Parent then part.CanCollide = can end
+                    end
+                    return
+                end
+                local snap = {}
+                for _, p in ipairs(parts) do snap[p] = p.CanCollide; p.CanCollide = false end
+                return snap
+            end
+
+            local function scrapZeroAssembly(m)
+                for _, p in ipairs(scrapGetAllParts(m)) do
+                    p.AssemblyLinearVelocity  = Vector3.new()
+                    p.AssemblyAngularVelocity = Vector3.new()
+                end
+            end
+
+            local function scrapSetPivot(m, cf)
+                if m:IsA("Model") then
+                    pcall(function() m:PivotTo(cf) end)
+                else
+                    local p = mainPart(m)
+                    if p then p.CFrame = cf end
+                end
+            end
+
+            local function scrapRefreshPrompts(m)
+                if not (m and m.Parent) then return end
+                for _, d in ipairs(m:GetDescendants()) do
+                    if d:IsA("ProximityPrompt") then
+                        local was = d.Enabled
+                        d.Enabled = false
+                        task.defer(function() d.Enabled = was ~= false end)
+                    end
+                end
+            end
 
             local function findScrapper()
                 local map = WS:FindFirstChild("Map")
@@ -1297,163 +1383,98 @@ return function(C, R, UI)
                 return nil
             end
 
-            local function scrapperBasePos()
+            local function scrapperCenterCF()
                 local scr = findScrapper()
                 if not scr then return nil end
                 local mp = mainPart(scr)
-                local cf = (mp and mp.CFrame) or (scr:IsA("Model") and scr:GetPivot()) or nil
-                if not cf then return nil end
-                return cf.Position
+                return (mp and mp.CFrame) or (scr:IsA("Model") and scr:GetPivot()) or nil
             end
 
-            local function scrapperAirTargetPos()
-                local base = scrapperBasePos()
-                if not base then return nil end
-                return base + Vector3.new(0, SCRAPPER_HOVER_Y, 0)
+            local function scrapperHoverPos()
+                local cf = scrapperCenterCF()
+                if not cf then return nil end
+                return cf.Position + Vector3.new(0, SCRAP_HOVER_Y, 0)
             end
 
             local function fragmentStackPos()
-                local base = scrapperBasePos()
-                if not base then return nil end
-                return base + Vector3.new(FRAGMENT_STACK_OFFSET, FRAGMENT_RELEASE_UP, 0)
+                local cf = scrapperCenterCF()
+                if not cf then return nil end
+                return cf.Position + Vector3.new(FRAGMENT_SIDE_OFF, FRAGMENT_RISE_Y, 0)
             end
 
-            local function allPartsOf(m)
-                local t = {}
-                if not m then return t end
-                if m:IsA("BasePart") then t[1] = m return t end
-                for _, d in ipairs(m:GetDescendants()) do
-                    if d:IsA("BasePart") then t[#t+1] = d end
-                end
-                return t
-            end
-
-            local function snapshotCollideOf(m)
-                local s = {}
-                for _, p in ipairs(allPartsOf(m)) do
-                    s[p] = p.CanCollide
-                end
-                return s
-            end
-
-            local function restoreCollideOf(snap)
-                for part, can in pairs(snap or {}) do
-                    if part and part.Parent then part.CanCollide = can end
-                end
-            end
-
-            local function setNocollideOf(m)
-                local s = {}
-                for _, p in ipairs(allPartsOf(m)) do
-                    s[p] = p.CanCollide
-                    p.CanCollide = false
-                end
-                return s
-            end
-
-            local function zeroAssemblyOf(m)
-                for _, p in ipairs(allPartsOf(m)) do
-                    p.AssemblyLinearVelocity  = Vector3.new()
-                    p.AssemblyAngularVelocity = Vector3.new()
-                end
-            end
-
-            local function setPivotOf(m, cf)
-                if not m then return end
-                if m:IsA("Model") then
-                    pcall(function() m:PivotTo(cf) end)
-                else
-                    local p = mainPart(m)
-                    if p then p.CFrame = cf end
-                end
-            end
-
-            local function fireDragStart(m)
-                refreshScrapperRemotes()
-                if not scrapperDragStart then return end
-                pcall(function() scrapperDragStart:FireServer(m) end)
-            end
-
-            local function fireDragStop(m)
-                refreshScrapperRemotes()
-                if not scrapperDragStop then return end
-                pcall(function() scrapperDragStop:FireServer(m) end)
-            end
-
-            local function conveyor(m, destPos, onArrive)
+            local function scrapConveyor(m, destPos, onArrive)
                 if not (m and m.Parent and destPos) then return end
-                local snap = setNocollideOf(m)
-                local parts = allPartsOf(m)
-                for _, p in ipairs(parts) do
-                    p.Anchored = true
-                    p.AssemblyLinearVelocity  = Vector3.new()
-                    p.AssemblyAngularVelocity = Vector3.new()
+
+                scrapSevereExternalWelds(m)
+
+                local r = resolveScrapRemotes()
+                local started = scrapSafeStartDrag(r, m)
+                if started then scrapDragStarted[m] = true end
+
+                Run.Heartbeat:Wait()
+                task.wait(DRAG_SETTLE)
+
+                local mp = mainPart(m)
+                if not mp then
+                    scrapStopIfDragging(r, m)
+                    return
                 end
-                fireDragStart(m)
 
-                local lastD   = math.huge
-                local lastT   = os.clock()
-                local moveAcc = 0
-                local hbConn  = nil
+                local snap = scrapSetCollide(m, false)
+                scrapZeroAssembly(m)
 
-                hbConn = Run.Heartbeat:Connect(function(dt)
-                    if not (m and m.Parent) then
-                        if hbConn then hbConn:Disconnect() hbConn = nil end
-                        fireDragStop(m)
-                        restoreCollideOf(snap)
-                        return
+                local riserY = destPos.Y - 1.0 + math.clamp((mp.Size.Y or 1) * 0.45, 0.8, 3.0)
+                local lookDir = (Vector3.new(destPos.X, mp.Position.Y, destPos.Z) - mp.Position)
+                lookDir = (lookDir.Magnitude > 0.001) and lookDir.Unit or Vector3.zAxis
+
+                while m and m.Parent do
+                    local pivot = m:IsA("Model") and m:GetPivot() or (mainPart(m) and mainPart(m).CFrame)
+                    if not pivot then break end
+                    local pos = pivot.Position
+                    local dy = riserY - pos.Y
+                    if math.abs(dy) <= 0.4 then break end
+                    local stepY = math.sign(dy) * math.min(SCRAP_DRAG_SPEED * SCRAP_VERTICAL_M * SCRAP_STEP_WAIT, math.abs(dy))
+                    scrapSetPivot(m, CFrame.new(Vector3.new(pos.X, pos.Y + stepY, pos.Z), Vector3.new(pos.X, pos.Y + stepY, pos.Z) + lookDir))
+                    scrapZeroAssembly(m)
+                    task.wait(SCRAP_STEP_WAIT)
+                end
+
+                while m and m.Parent do
+                    local pivot = m:IsA("Model") and m:GetPivot() or (mainPart(m) and mainPart(m).CFrame)
+                    if not pivot then break end
+                    local pos = pivot.Position
+                    local delta = Vector3.new(destPos.X - pos.X, 0, destPos.Z - pos.Z)
+                    local dist = delta.Magnitude
+                    if dist <= 1.0 then break end
+                    local step = math.min(SCRAP_DRAG_SPEED * SCRAP_STEP_WAIT, dist)
+                    local dir = delta.Unit
+                    local newPos = Vector3.new(pos.X, riserY, pos.Z) + dir * step
+                    scrapSetPivot(m, CFrame.new(newPos, newPos + dir))
+                    scrapZeroAssembly(m)
+                    task.wait(SCRAP_STEP_WAIT)
+                end
+
+                scrapStopIfDragging(r, m)
+
+                if not (m and m.Parent) then
+                    scrapSetCollide(m, true, snap)
+                    return
+                end
+
+                if onArrive then
+                    onArrive(m, snap)
+                else
+                    scrapSetCollide(m, true, snap)
+                    for _, p in ipairs(scrapGetAllParts(m)) do
+                        p.Anchored = false
+                        p.AssemblyLinearVelocity  = Vector3.new()
+                        p.AssemblyAngularVelocity = Vector3.new()
+                        pcall(function() p:SetNetworkOwner(nil) end)
+                        pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
                     end
-
-                    moveAcc = moveAcc + dt
-                    if moveAcc < (1 / SCRAPPER_MOVE_HZ) then return end
-                    local step = moveAcc
-                    moveAcc = 0
-
-                    local mp = mainPart(m)
-                    if not mp then
-                        hbConn:Disconnect() hbConn = nil
-                        fireDragStop(m)
-                        restoreCollideOf(snap)
-                        return
-                    end
-
-                    local pos = mp.Position
-                    local flatDelta = Vector3.new(destPos.X - pos.X, 0, destPos.Z - pos.Z)
-                    local distH = flatDelta.Magnitude
-
-                    if distH <= SCRAPPER_ARRIVE_EPS and math.abs(destPos.Y - pos.Y) <= 1.2 then
-                        hbConn:Disconnect() hbConn = nil
-                        fireDragStop(m)
-                        if onArrive then
-                            task.spawn(onArrive, m, snap)
-                        else
-                            restoreCollideOf(snap)
-                            for _, p in ipairs(allPartsOf(m)) do
-                                p.Anchored = false
-                                pcall(function() p:SetNetworkOwner(nil) end)
-                                pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
-                            end
-                            zeroAssemblyOf(m)
-                        end
-                        return
-                    end
-
-                    if distH >= lastD - 0.02 then
-                        if os.clock() - lastT >= SCRAPPER_STALL_SEC then
-                            lastT = os.clock()
-                        end
-                    else
-                        lastT = os.clock()
-                    end
-                    lastD = distH
-
-                    local moveStep = math.min(SCRAPPER_DRAG_SPEED * step, math.max(0, distH))
-                    local dir = distH > 1e-3 and (flatDelta / math.max(distH, 1e-3)) or Vector3.new()
-                    local vy  = math.clamp(destPos.Y - pos.Y, -7, 7)
-                    local newPos = Vector3.new(pos.X, pos.Y + vy * step * 10, pos.Z) + dir * moveStep
-                    local look = dir.Magnitude > 0 and dir or Vector3.new(0, 0, 1)
-                    setPivotOf(m, CFrame.new(newPos, newPos + look))
-                end)
+                    scrapZeroAssembly(m)
+                    scrapRefreshPrompts(m)
+                end
             end
 
             -- Auto Scrap: Cultist Gem
@@ -1482,19 +1503,24 @@ return function(C, R, UI)
                     task.spawn(function()
                         task.wait(0.2)
                         if not (inst and inst.Parent) then return end
-                        local dest = scrapperAirTargetPos()
+                        local dest = scrapperHoverPos()
                         if not dest then return end
 
-                        conveyor(inst, dest, function(m, snap)
-                            if not (m and m.Parent) then return end
-                            restoreCollideOf(snap)
-                            for _, p in ipairs(allPartsOf(m)) do
+                        scrapConveyor(inst, dest, function(m, snap)
+                            if not (m and m.Parent) then
+                                scrapSetCollide(m, true, snap)
+                                return
+                            end
+                            scrapSetCollide(m, true, snap)
+                            scrapSetPivot(m, CFrame.new(dest))
+                            for _, p in ipairs(scrapGetAllParts(m)) do
                                 p.Anchored = false
-                                p.AssemblyLinearVelocity = Vector3.new(0, -80, 0)
+                                p.AssemblyLinearVelocity = Vector3.new(0, -60, 0)
+                                p.AssemblyAngularVelocity = Vector3.new()
                                 pcall(function() p:SetNetworkOwner(nil) end)
                                 pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
                             end
-                            zeroAssemblyOf(m)
+                            scrapRefreshPrompts(m)
                         end)
 
                         task.delay(60, function()
@@ -1509,8 +1535,8 @@ return function(C, R, UI)
             end
 
             -- Auto Scrap: Forest Gem Fragment + Gem of the Forest
-            local autoScrapForestGemConn  = nil
-            local autoScrapForestGemSeen  = {}
+            local autoScrapForestGemConn = nil
+            local autoScrapForestGemSeen = {}
 
             local function stopAutoScrapForestGem()
                 if autoScrapForestGemConn then
@@ -1537,34 +1563,45 @@ return function(C, R, UI)
                         if not (inst and inst.Parent) then return end
 
                         if n == "Gem of the Forest Fragment" then
-                            local dest = fragmentStackPos()
-                            if not dest then return end
+                            local stackPos = fragmentStackPos()
+                            if not stackPos then return end
+                            local hoverPos = stackPos + Vector3.new(0, SCRAP_HOVER_Y, 0)
 
-                            conveyor(inst, dest + Vector3.new(0, SCRAPPER_HOVER_Y, 0), function(m, snap)
-                                if not (m and m.Parent) then return end
-                                restoreCollideOf(snap)
-                                setPivotOf(m, CFrame.new(dest))
-                                for _, p in ipairs(allPartsOf(m)) do
+                            scrapConveyor(inst, hoverPos, function(m, snap)
+                                if not (m and m.Parent) then
+                                    scrapSetCollide(m, true, snap)
+                                    return
+                                end
+                                scrapSetCollide(m, true, snap)
+                                scrapSetPivot(m, CFrame.new(stackPos))
+                                for _, p in ipairs(scrapGetAllParts(m)) do
                                     p.Anchored = false
+                                    p.AssemblyLinearVelocity  = Vector3.new()
+                                    p.AssemblyAngularVelocity = Vector3.new()
                                     pcall(function() p:SetNetworkOwner(nil) end)
                                     pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
                                 end
-                                zeroAssemblyOf(m)
+                                scrapRefreshPrompts(m)
                             end)
                         else
-                            local dest = scrapperAirTargetPos()
+                            local dest = scrapperHoverPos()
                             if not dest then return end
 
-                            conveyor(inst, dest, function(m, snap)
-                                if not (m and m.Parent) then return end
-                                restoreCollideOf(snap)
-                                for _, p in ipairs(allPartsOf(m)) do
+                            scrapConveyor(inst, dest, function(m, snap)
+                                if not (m and m.Parent) then
+                                    scrapSetCollide(m, true, snap)
+                                    return
+                                end
+                                scrapSetCollide(m, true, snap)
+                                scrapSetPivot(m, CFrame.new(dest))
+                                for _, p in ipairs(scrapGetAllParts(m)) do
                                     p.Anchored = false
-                                    p.AssemblyLinearVelocity = Vector3.new(0, -80, 0)
+                                    p.AssemblyLinearVelocity = Vector3.new(0, -60, 0)
+                                    p.AssemblyAngularVelocity = Vector3.new()
                                     pcall(function() p:SetNetworkOwner(nil) end)
                                     pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
                                 end
-                                zeroAssemblyOf(m)
+                                scrapRefreshPrompts(m)
                             end)
                         end
 
