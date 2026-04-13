@@ -1540,6 +1540,58 @@ return function(C, R, UI)
 
             if C.State.Toggles.MoreAutoScrapCultistGem == true then cultistGemBring.start() end
             if C.State.Toggles.MoreAutoScrapForestGem  == true then forestGemBring.start()  end
+
+            local RECYCLE_INTERVAL = 180
+
+            local recycleThread = nil
+
+            local function findRecycleMaterialRemote()
+                refreshRoots()
+                local re = RootRS:FindFirstChild("RemoteEvents")
+                local r = re and re:FindFirstChild("RequestRecycleMaterial")
+                if r and r:IsA("RemoteEvent") then return r end
+                for _, d in ipairs(RootRS:GetDescendants()) do
+                    if d.Name == "RequestRecycleMaterial" and d:IsA("RemoteEvent") then
+                        return d
+                    end
+                end
+                return nil
+            end
+
+            local function stopAutoRecycle()
+                if recycleThread then
+                    pcall(function() task.cancel(recycleThread) end)
+                    recycleThread = nil
+                end
+            end
+
+            local function startAutoRecycle()
+                stopAutoRecycle()
+                recycleThread = task.spawn(function()
+                    while true do
+                        pcall(function()
+                            local r = findRecycleMaterialRemote()
+                            if r then r:FireServer() end
+                        end)
+                        task.wait(RECYCLE_INTERVAL)
+                    end
+                end)
+            end
+
+            if C.State.Toggles.MoreAutoRecycle == nil then
+                C.State.Toggles.MoreAutoRecycle = false
+            end
+
+            tab:Toggle({
+                Title = "Auto Recycle",
+                Value = (C.State.Toggles.MoreAutoRecycle == true),
+                Callback = function(state)
+                    C.State.Toggles.MoreAutoRecycle = (state == true)
+                    if state then startAutoRecycle() else stopAutoRecycle() end
+                end
+            })
+
+            if C.State.Toggles.MoreAutoRecycle == true then startAutoRecycle() end
         end
 
         local charConn = Players.LocalPlayer.CharacterAdded:Connect(function()
@@ -1559,6 +1611,7 @@ return function(C, R, UI)
                 stopAutoBurn()
                 cultistGemBring.stop()
                 forestGemBring.stop()
+                stopAutoRecycle()
                 busy = false
                 stopRollbackWatch()
                 if edgeConn then pcall(function() edgeConn:Disconnect() end) edgeConn = nil end
