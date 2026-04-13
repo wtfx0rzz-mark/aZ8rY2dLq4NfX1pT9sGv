@@ -814,6 +814,7 @@ return function(C, R, UI)
             local runNonce = freshTemporalRunState()
             local root0 = hrp()
             local returnCF = root0 and root0.CFrame or nil
+            local savedPlacement, savedRot = nil, nil
 
             local ok, err = pcall(function()
                 if fromTimer == true then
@@ -832,13 +833,12 @@ return function(C, R, UI)
                 local destCF = nightSkipTeleportCF(machine)
                 if not destCF then return end
 
-                local placement, rot
                 if C.State.MoreTemporalPlacePos and typeof(C.State.MoreTemporalPlacePos) == "Vector3" then
-                    placement, rot = placementFromOrb(machine, C.State.MoreTemporalPlacePos)
+                    savedPlacement, savedRot = placementFromOrb(machine, C.State.MoreTemporalPlacePos)
                 else
-                    placement, rot = placementFromExistingModel(machine)
+                    savedPlacement, savedRot = placementFromExistingModel(machine)
                 end
-                if not placement then return end
+                if not savedPlacement then return end
 
                 teleportSticky(destCF, true)
                 task.wait(1.0)
@@ -854,13 +854,35 @@ return function(C, R, UI)
                 task.wait(0.35)
 
                 local placeRemote = findPlaceRemote()
-                if not placeRemote then return end
+                if not placeRemote then
+                    local bp = findAccelBlueprintInstance()
+                    if bp and bp.Parent and savedPlacement and savedRot then
+                        warn("[More] runTemporalSequence: no place remote, attempting recovery place")
+                        placeAccelAtSnap(placeRemote, bp, savedPlacement, savedRot)
+                    end
+                    return
+                end
 
                 local bp = waitForAccelBlueprint(8)
-                if not (bp and bp.Parent) then return end
+                if not (bp and bp.Parent) then
+                    warn("[More] runTemporalSequence: blueprint timeout, machine may be stuck in inventory")
+                    return
+                end
 
-                local placed = placeAccelAtSnap(placeRemote, bp, placement, rot)
-                if not placed then return end
+                local placed = placeAccelAtSnap(placeRemote, bp, savedPlacement, savedRot)
+                if not placed then
+                    warn("[More] runTemporalSequence: place failed, retrying once")
+                    task.wait(0.5)
+                    bp = findAccelBlueprintInstance()
+                    if bp and bp.Parent then
+                        placed = placeAccelAtSnap(placeRemote, bp, savedPlacement, savedRot)
+                    end
+                    if not placed then
+                        warn("[More] runTemporalSequence: place failed after retry, machine stuck in inventory")
+                        return
+                    end
+                end
+
                 task.wait(1.0)
 
                 local accelPlaced = waitForAccelModel(8)
@@ -873,6 +895,15 @@ return function(C, R, UI)
 
             if not ok then
                 warn("[More] runTemporalSequence error: " .. tostring(err))
+                local bp = findAccelBlueprintInstance()
+                if bp and bp.Parent and savedPlacement and savedRot then
+                    warn("[More] runTemporalSequence: error recovery - attempting to re-place from inventory")
+                    local placeRemote = findPlaceRemote()
+                    if placeRemote then
+                        task.wait(0.5)
+                        placeAccelAtSnap(placeRemote, bp, savedPlacement, savedRot)
+                    end
+                end
             end
 
             if returnCF then
