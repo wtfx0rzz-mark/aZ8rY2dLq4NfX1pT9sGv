@@ -707,7 +707,7 @@ return function(C, R, UI)
                         C.State._DiamondsCycleNextInputAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
                     else
                         if t >= nextInputAt then
-                            pcall(afkComboAction)
+                            pcall(diamondsKey1SendTap)
                             C.State._DiamondsCycleNextInputAt = t + nextJitteredIntervalSeconds(INPUT_BASE_INTERVAL_S)
                         end
                     end
