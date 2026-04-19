@@ -1541,7 +1541,7 @@ return function(C, R, UI)
             if C.State.Toggles.MoreAutoScrapCultistGem == true then cultistGemBring.start() end
             if C.State.Toggles.MoreAutoScrapForestGem  == true then forestGemBring.start()  end
 
-            local RECYCLE_INTERVAL = 180
+            local RECYCLE_INTERVAL = 123
 
             local recycleThread = nil
 
@@ -1558,6 +1558,21 @@ return function(C, R, UI)
                 return nil
             end
 
+            local function findRecycler()
+                refreshRoots()
+                local folder = (RootWS and RootWS:FindFirstChild("Structures")) or WS:FindFirstChild("Structures")
+                if folder then
+                    local r = folder:FindFirstChild("Recycler")
+                    if r and r:IsA("Model") then return r end
+                end
+                for _, d in ipairs((RootWS or WS):GetDescendants()) do
+                    if d.Name == "Recycler" and d:IsA("Model") then
+                        return d
+                    end
+                end
+                return nil
+            end
+
             local function stopAutoRecycle()
                 if recycleThread then
                     pcall(function() task.cancel(recycleThread) end)
@@ -1567,13 +1582,27 @@ return function(C, R, UI)
 
             local function startAutoRecycle()
                 stopAutoRecycle()
+                
+                task.spawn(function()
+                    pcall(function()
+                        local remote = findRecycleMaterialRemote()
+                        local recycler = findRecycler()
+                        if remote and recycler then
+                            remote:FireServer(recycler, "TotalGreenGems")
+                        end
+                    end)
+                end)
+                
                 recycleThread = task.spawn(function()
                     while true do
-                        pcall(function()
-                            local r = findRecycleMaterialRemote()
-                            if r then r:FireServer() end
-                        end)
                         task.wait(RECYCLE_INTERVAL)
+                        pcall(function()
+                            local remote = findRecycleMaterialRemote()
+                            local recycler = findRecycler()
+                            if remote and recycler then
+                                remote:FireServer(recycler, "TotalGreenGems")
+                            end
+                        end)
                     end
                 end)
             end
@@ -1581,6 +1610,8 @@ return function(C, R, UI)
             if C.State.Toggles.MoreAutoRecycle == nil then
                 C.State.Toggles.MoreAutoRecycle = false
             end
+
+            tab:Section({ Title = "Auto Recycle" })
 
             tab:Toggle({
                 Title = "Auto Recycle",
