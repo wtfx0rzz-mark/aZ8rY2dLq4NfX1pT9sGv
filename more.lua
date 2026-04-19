@@ -990,9 +990,16 @@ return function(C, R, UI)
                 if period ~= lastPeriod then
                     lastPeriod = period
                     if period == "NIGHT" then
-                        task.spawn(function()
-                            runTemporalSequence(true)
-                        end)
+                        local root = hrp()
+                        local accel = WS:FindFirstChild("Temporal Accelerometer")
+                        if root and accel then
+                            local verticalDistance = root.Position.Y - accel.Position.Y
+                            if verticalDistance > -50 then
+                                task.spawn(function()
+                                    runTemporalSequence(true)
+                                end)
+                            end
+                        end
                     end
                 end
             end)
