@@ -1063,6 +1063,13 @@ return function(C, R, UI)
                     if ln == "sacrifice totem" or ln2 == "sacrificetotem" then return true end
                     if ln:find("sacrifice", 1, true) and ln:find("totem", 1, true) then return true end
                 end
+                if selectedSet["Morsel"] and (ln == "morsel" or ln == "cooked morsel") then return true end
+                if selectedSet["Steak"] and (ln == "steak" or ln == "cooked steak") then return true end
+                if selectedSet["Pelts"] then
+                    if ln == "bunny foot" or ln == "wolf pelt" or ln == "alpha wolf pelt" or ln == "bear pelt" then
+                        return true
+                    end
+                end
                 return false
             end
 
@@ -1222,6 +1229,35 @@ return function(C, R, UI)
             local autoBurnConn = nil
             local autoBurnSeen = {}
 
+            local function burnAllExistingCultists()
+                task.spawn(function()
+                    pcall(function()
+                        local items = itemsFolder()
+                        if not items then return end
+                        local Remote = findLavaBurnRemote()
+                        local Lava = findLava()
+                        if not (Remote and Lava and Lava.Parent) then return end
+                        
+                        for _, inst in ipairs(items:GetChildren()) do
+                            if inst:IsA("Model") then
+                                local n = lower(inst.Name or "")
+                                if n:find("cultist", 1, true) and inst:FindFirstChildWhichIsA("Humanoid", true) then
+                                    autoBurnSeen[inst] = true
+                                    pcall(function()
+                                        if Remote:IsA("RemoteFunction") then
+                                            Remote:InvokeServer(inst, Lava)
+                                        else
+                                            Remote:FireServer(inst, Lava)
+                                        end
+                                    end)
+                                    task.wait(0.02)
+                                end
+                            end
+                        end
+                    end)
+                end)
+            end
+
             local function stopAutoBurn()
                 if autoBurnConn then
                     pcall(function() autoBurnConn:Disconnect() end)
@@ -1232,6 +1268,7 @@ return function(C, R, UI)
 
             local function startAutoBurn()
                 stopAutoBurn()
+                burnAllExistingCultists()
                 local items = itemsFolder()
                 if not items then return end
                 autoBurnConn = items.DescendantAdded:Connect(function(inst)
@@ -1274,6 +1311,301 @@ return function(C, R, UI)
 
             if C.State.Toggles.MoreAutoBurnCultist == true then
                 startAutoBurn()
+            end
+
+            C.State.MoreAutoBurnSelectedChoice = C.State.MoreAutoBurnSelectedChoice or {}
+            local autoBurnSelectedSet = setFromChoice(C.State.MoreAutoBurnSelectedChoice)
+
+            local autoBurnSelectedConn = nil
+            local autoBurnSelectedSeen = {}
+
+            local function burnAllExistingSelected()
+                task.spawn(function()
+                    pcall(function()
+                        if not autoBurnSelectedSet or next(autoBurnSelectedSet) == nil then return end
+                        local items = itemsFolder()
+                        if not items then return end
+                        local Remote = findLavaBurnRemote()
+                        local Lava = findLava()
+                        if not (Remote and Lava and Lava.Parent) then return end
+                        
+                        for _, inst in ipairs(items:GetChildren()) do
+                            if inst:IsA("Model") and isSelectedItem(inst, autoBurnSelectedSet) then
+                                autoBurnSelectedSeen[inst] = true
+                                pcall(function()
+                                    if Remote:IsA("RemoteFunction") then
+                                        Remote:InvokeServer(inst, Lava)
+                                    else
+                                        Remote:FireServer(inst, Lava)
+                                    end
+                                end)
+                                task.wait(0.02)
+                            end
+                        end
+                    end)
+                end)
+            end
+
+            local function stopAutoBurnSelected()
+                if autoBurnSelectedConn then
+                    pcall(function() autoBurnSelectedConn:Disconnect() end)
+                    autoBurnSelectedConn = nil
+                end
+                autoBurnSelectedSeen = {}
+            end
+
+            local function startAutoBurnSelected()
+                stopAutoBurnSelected()
+                burnAllExistingSelected()
+                local items = itemsFolder()
+                if not items then return end
+                autoBurnSelectedConn = items.DescendantAdded:Connect(function(inst)
+                    if not inst:IsA("Model") then return end
+                    if autoBurnSelectedSeen[inst] then return end
+                    if not isSelectedItem(inst, autoBurnSelectedSet) then return end
+                    autoBurnSelectedSeen[inst] = true
+                    task.spawn(function()
+                        task.wait(0.2)
+                        if not (inst and inst.Parent) then return end
+                        local Remote = findLavaBurnRemote()
+                        local Lava = findLava()
+                        if not (Remote and Lava and Lava.Parent) then return end
+                        pcall(function()
+                            if Remote:IsA("RemoteFunction") then
+                                Remote:InvokeServer(inst, Lava)
+                            else
+                                Remote:FireServer(inst, Lava)
+                            end
+                        end)
+                        task.delay(30, function() autoBurnSelectedSeen[inst] = nil end)
+                    end)
+                end)
+            end
+
+            if C.State.Toggles.MoreAutoBurnSelected == nil then
+                C.State.Toggles.MoreAutoBurnSelected = false
+            end
+
+            tab:Dropdown({
+                Title = "Auto Burn Targets",
+                Values = { "Morsel", "Steak", "Pelts", "Sapling" },
+                Multi = true,
+                AllowNone = true,
+                Callback = function(choice)
+                    local list = {}
+                    if type(choice) == "table" then
+                        for i=1,#choice do
+                            local v = choice[i]
+                            if v and v ~= "" then list[#list+1] = v end
+                        end
+                    elseif choice and choice ~= "" then
+                        list[1] = choice
+                    end
+                    C.State.MoreAutoBurnSelectedChoice = list
+                    autoBurnSelectedSet = setFromChoice(choice)
+                end
+            })
+
+            tab:Toggle({
+                Title = "Auto Burn",
+                Value = (C.State.Toggles.MoreAutoBurnSelected == true),
+                Callback = function(state)
+                    C.State.Toggles.MoreAutoBurnSelected = (state == true)
+                    if state then startAutoBurnSelected() else stopAutoBurnSelected() end
+                end
+            })
+
+            if C.State.Toggles.MoreAutoBurnSelected == true then
+                startAutoBurnSelected()
+            end
+
+            local manualBurnGui = nil
+            local manualBurnBtn = nil
+            local manualBurnUpdateConn = nil
+            local manualBurnHighlight = nil
+            local manualBurnHighlightedItem = nil
+
+            local function getNearestBurnableItem()
+                local items = itemsFolder()
+                if not items then return nil end
+                local char = lp.Character
+                if not char then return nil end
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if not root then return nil end
+
+                local nearest = nil
+                local nearestDist = math.huge
+
+                for _, item in ipairs(items:GetChildren()) do
+                    if item:IsA("Model") or item:IsA("BasePart") then
+                        local mp = mainPart(item)
+                        if mp then
+                            local dist = (mp.Position - root.Position).Magnitude
+                            if dist < nearestDist then
+                                nearestDist = dist
+                                nearest = item
+                            end
+                        end
+                    end
+                end
+
+                return nearest
+            end
+
+            local function clearManualBurnHighlight()
+                if manualBurnHighlight then
+                    pcall(function() manualBurnHighlight:Destroy() end)
+                    manualBurnHighlight = nil
+                end
+                manualBurnHighlightedItem = nil
+            end
+
+            local function highlightManualBurnItem(item)
+                clearManualBurnHighlight()
+                if not item then return end
+
+                manualBurnHighlightedItem = item
+                manualBurnHighlight = Instance.new("Highlight")
+                manualBurnHighlight.FillColor = Color3.fromRGB(255, 255, 0)
+                manualBurnHighlight.OutlineColor = Color3.fromRGB(255, 200, 0)
+                manualBurnHighlight.FillTransparency = 0.5
+                manualBurnHighlight.OutlineTransparency = 0
+                manualBurnHighlight.Adornee = item
+                manualBurnHighlight.Parent = item
+            end
+
+            local function updateManualBurnHighlight()
+                local nearest = getNearestBurnableItem()
+                if nearest ~= manualBurnHighlightedItem then
+                    highlightManualBurnItem(nearest)
+                end
+            end
+
+            local function stopManualBurn()
+                if manualBurnGui then
+                    pcall(function() manualBurnGui:Destroy() end)
+                    manualBurnGui = nil
+                    manualBurnBtn = nil
+                end
+                if manualBurnUpdateConn then
+                    pcall(function() manualBurnUpdateConn:Disconnect() end)
+                    manualBurnUpdateConn = nil
+                end
+                clearManualBurnHighlight()
+            end
+
+            local function startManualBurn()
+                stopManualBurn()
+
+                manualBurnGui = Instance.new("ScreenGui")
+                manualBurnGui.Name = "ManualBurnGui"
+                manualBurnGui.ResetOnSpawn = false
+                manualBurnGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+                manualBurnGui.Parent = playerGui
+
+                local frame = Instance.new("Frame")
+                frame.Name = "MainFrame"
+                frame.AnchorPoint = Vector2.new(0, 1)
+                frame.Position = UDim2.new(0, 10, 1, -10)
+                frame.Size = UDim2.new(0, 200, 0, 80)
+                frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+                frame.BorderSizePixel = 0
+                frame.Parent = manualBurnGui
+
+                local corner = Instance.new("UICorner")
+                corner.CornerRadius = UDim.new(0, 8)
+                corner.Parent = frame
+
+                frame.Active = true
+                frame.Draggable = true
+
+                local burnBtn = Instance.new("TextButton")
+                burnBtn.Name = "BurnButton"
+                burnBtn.Size = UDim2.new(1, -20, 0, 40)
+                burnBtn.Position = UDim2.new(0, 10, 0, 10)
+                burnBtn.Text = "Burn Highlighted Item"
+                burnBtn.TextSize = 14
+                burnBtn.Font = Enum.Font.GothamBold
+                burnBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+                burnBtn.TextColor3 = Color3.new(1, 1, 1)
+                burnBtn.BorderSizePixel = 0
+                burnBtn.Parent = frame
+                manualBurnBtn = burnBtn
+
+                local btnCorner = Instance.new("UICorner")
+                btnCorner.CornerRadius = UDim.new(0, 6)
+                btnCorner.Parent = burnBtn
+
+                local closeBtn = Instance.new("TextButton")
+                closeBtn.Name = "CloseButton"
+                closeBtn.Size = UDim2.new(0, 30, 0, 20)
+                closeBtn.Position = UDim2.new(1, -35, 1, -25)
+                closeBtn.Text = "X"
+                closeBtn.TextSize = 12
+                closeBtn.Font = Enum.Font.GothamBold
+                closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+                closeBtn.TextColor3 = Color3.new(1, 1, 1)
+                closeBtn.BorderSizePixel = 0
+                closeBtn.Parent = frame
+
+                local closeBtnCorner = Instance.new("UICorner")
+                closeBtnCorner.CornerRadius = UDim.new(0, 4)
+                closeBtnCorner.Parent = closeBtn
+
+                burnBtn.MouseButton1Click:Connect(function()
+                    if not manualBurnHighlightedItem then
+                        warn("No item highlighted")
+                        return
+                    end
+
+                    local remote = findLavaBurnRemote()
+                    local lava = findLava()
+
+                    if not (remote and lava and lava.Parent) then
+                        warn("Missing burn remote or lava")
+                        return
+                    end
+
+                    local item = manualBurnHighlightedItem
+                    if not (item and item.Parent) then
+                        warn("Highlighted item no longer exists")
+                        return
+                    end
+
+                    pcall(function()
+                        if remote:IsA("RemoteFunction") then
+                            remote:InvokeServer(item, lava)
+                        else
+                            remote:FireServer(item, lava)
+                        end
+                    end)
+                end)
+
+                closeBtn.MouseButton1Click:Connect(function()
+                    C.State.Toggles.MoreManualBurn = false
+                    stopManualBurn()
+                end)
+
+                manualBurnUpdateConn = Run.Heartbeat:Connect(function()
+                    updateManualBurnHighlight()
+                end)
+            end
+
+            if C.State.Toggles.MoreManualBurn == nil then
+                C.State.Toggles.MoreManualBurn = false
+            end
+
+            tab:Toggle({
+                Title = "Manual Burn",
+                Value = (C.State.Toggles.MoreManualBurn == true),
+                Callback = function(state)
+                    C.State.Toggles.MoreManualBurn = (state == true)
+                    if state then startManualBurn() else stopManualBurn() end
+                end
+            })
+
+            if C.State.Toggles.MoreManualBurn == true then
+                startManualBurn()
             end
 
             local SCRAP_BRING_INTERVAL = 120
@@ -1647,6 +1979,8 @@ return function(C, R, UI)
             Destroy = function()
                 stopTimer()
                 stopAutoBurn()
+                stopAutoBurnSelected()
+                stopManualBurn()
                 cultistGemBring.stop()
                 forestGemBring.stop()
                 stopAutoRecycle()
