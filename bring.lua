@@ -808,22 +808,35 @@ end
     end
 
     local function canPick(m, center, radius, selectedSet, jobId)
-        if not (m and m.Parent and m:IsA("Model")) then return false end
-        local itemsFolder = itemsRootOrNil()
-        if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
-        if isExcludedModel(m) then return false end
-        if isLogWallBlocked(m, selectedSet) then return false end
-        local tIn = tonumber(m:GetAttribute(INFLT_ATTR))
-        local jIn = m:GetAttribute(JOB_ATTR)
-        if tIn and jIn and tostring(jIn) ~= tostring(jobId) and (now() - tIn) < STUCK_TTL then
-            return false
+    if not (m and m.Parent and m:IsA("Model")) then return false end
+    local itemsFolder = itemsRootOrNil()
+    if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
+    if isExcludedModel(m) then return false end
+    if isLogWallBlocked(m, selectedSet) then return false end
+    
+    -- Skip if this model has a parent model between it and Items folder
+    if itemsFolder and m.Parent ~= itemsFolder then
+        local parent = m.Parent
+        while parent and parent ~= itemsFolder do
+            if parent:IsA("Model") then
+                -- This model is inside another model, skip it
+                return false
+            end
+            parent = parent.Parent
         end
-        if not nameMatches(selectedSet, m) then
-            return false
-        end
-        local mp = mainPart(m); if not mp then return false end
-        return (mp.Position - center).Magnitude <= radius
     end
+    
+    local tIn = tonumber(m:GetAttribute(INFLT_ATTR))
+    local jIn = m:GetAttribute(JOB_ATTR)
+    if tIn and jIn and tostring(jIn) ~= tostring(jobId) and (now() - tIn) < STUCK_TTL then
+        return false
+    end
+    if not nameMatches(selectedSet, m) then
+        return false
+    end
+    local mp = mainPart(m); if not mp then return false end
+    return (mp.Position - center).Magnitude <= radius
+end
 
     local function getCandidates(center, radius, selectedSet, jobId)
         local params = OverlapParams.new()
