@@ -1086,6 +1086,21 @@ return function(C, R, UI)
                 return lastModel
             end
 
+            local function isTopLevel(m)
+                local items = itemsFolder()
+                if not items then return true end
+                if m.Parent == items then return true end
+                
+                local parent = m.Parent
+                while parent and parent ~= items do
+                    if parent:IsA("Model") then
+                        return false
+                    end
+                    parent = parent.Parent
+                end
+                return true
+            end
+
             local function findLavaBurnRemote()
                 refreshRoots()
                 local remFolder = RootRS:FindFirstChild("RemoteEvents") or RootRS
@@ -1174,8 +1189,10 @@ return function(C, R, UI)
                     for _,p in ipairs(parts) do
                         local cand = candidateFromPart(p, items, burnSelectedSet)
                         if cand and not uniq[cand] then
-                            uniq[cand] = true
-                            targets[#targets+1] = cand
+                            if isTopLevel(cand) then
+                                uniq[cand] = true
+                                targets[#targets+1] = cand
+                            end
                         end
                     end
                     local okN, errN = 0, 0
@@ -1277,6 +1294,7 @@ return function(C, R, UI)
                     local n = lower(inst.Name or "")
                     if not n:find("cultist", 1, true) then return end
                     if not inst:FindFirstChildWhichIsA("Humanoid", true) then return end
+                    if not isTopLevel(inst) then return end
                     autoBurnSeen[inst] = true
                     task.spawn(function()
                         task.wait(0.2)
@@ -1363,6 +1381,7 @@ return function(C, R, UI)
                     if not inst:IsA("Model") then return end
                     if autoBurnSelectedSeen[inst] then return end
                     if not isSelectedItem(inst, autoBurnSelectedSet) then return end
+                    if not isTopLevel(inst) then return end
                     autoBurnSelectedSeen[inst] = true
                     task.spawn(function()
                         task.wait(0.2)
