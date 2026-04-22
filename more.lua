@@ -1321,6 +1321,8 @@ end
                 C.State.Toggles.MoreAutoBurnCultist = false
             end
 
+            tab:Section({ Title = "Auto Burn" })
+            
             tab:Toggle({
                 Title = "Auto Burn: Cultist",
                 Value = (C.State.Toggles.MoreAutoBurnCultist == true),
