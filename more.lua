@@ -981,29 +981,32 @@ return function(C, R, UI)
         end
 
         local function startTimer()
-            if timerOn then return end
-            timerOn = true
-            local lastPeriod = getPeriod(game:GetService("Lighting").ClockTime)
-            timerConn = game:GetService("Lighting"):GetPropertyChangedSignal("ClockTime"):Connect(function()
-                if not timerOn then return end
-                local period = getPeriod(game:GetService("Lighting").ClockTime)
-                if period ~= lastPeriod then
-                    lastPeriod = period
-                    if period == "NIGHT" then
-                        local root = hrp()
-                        local accel = WS:FindFirstChild("Temporal Accelerometer")
-                        if root and accel then
-                            local verticalDistance = root.Position.Y - accel.Position.Y
-                            if verticalDistance > -50 then
-                                task.spawn(function()
-                                    runTemporalSequence(true)
-                                end)
-                            end
+    if timerOn then return end
+    timerOn = true
+    local lastPeriod = getPeriod(game:GetService("Lighting").ClockTime)
+    timerConn = game:GetService("Lighting"):GetPropertyChangedSignal("ClockTime"):Connect(function()
+        if not timerOn then return end
+        local period = getPeriod(game:GetService("Lighting").ClockTime)
+        if period ~= lastPeriod then
+            lastPeriod = period
+            if period == "NIGHT" then
+                local root = hrp()
+                local accel = resolveAccelModel()
+                if root and accel then
+                    local mp = mainPart(accel)
+                    if mp then
+                        local verticalDistance = root.Position.Y - mp.Position.Y
+                        if verticalDistance > -50 then
+                            task.spawn(function()
+                                runTemporalSequence(true)
+                            end)
                         end
                     end
                 end
-            end)
+            end
         end
+    end)
+end
 
         tab:Toggle({
             Title = "Auto Temporal Cycle",
