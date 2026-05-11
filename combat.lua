@@ -293,6 +293,11 @@ return function(C, R, UI)
             { "Old Axe",           0.5 },
         }
 
+        local CHAR_WEAPON_SET = {}
+        for _, pair in ipairs(CHAR_WEAPON_PREF) do
+            CHAR_WEAPON_SET[pair[1]] = true
+        end
+
         local function char_findItem(name)
             if not (lp and name) then return nil end
             local inv = lp:FindFirstChild("Inventory")
@@ -487,11 +492,38 @@ return function(C, R, UI)
             return out
         end
 
+        local function char_hasHittableTarget(targets, toolName, cd)
+            for _, mdl in ipairs(targets) do
+                if mdl and mdl.Parent then
+                    local ok = char_canHitWithWeapon(mdl, toolName, cd)
+                    if ok then return true end
+                end
+            end
+            return false
+        end
+
         local function char_chopWave(targetModels)
             if not CharacterAura.running then return end
+
             local toolName, cd = char_bestAvailableWeapon()
             if not toolName then
                 task.wait(0.2)
+                return
+            end
+
+            if not char_hasHittableTarget(targetModels, toolName, cd) then
+                local soonest = math.huge
+                for _, mdl in ipairs(targetModels) do
+                    if mdl and mdl.Parent then
+                        local _, waitFor = char_canHitWithWeapon(mdl, toolName, cd)
+                        if waitFor and waitFor < soonest then soonest = waitFor end
+                    end
+                end
+                if soonest < math.huge then
+                    task.wait(math.max(0.02, soonest))
+                else
+                    task.wait(0.1)
+                end
                 return
             end
 
@@ -615,8 +647,8 @@ return function(C, R, UI)
             ["Brightwood Tree"] = true
         }
 
-        local TreeImpactCF = setmetatable({}, { __mode = "k" })
-        local TreeHitSeed  = setmetatable({}, { __mode = "k" })
+        local TreeImpactCF  = setmetatable({}, { __mode = "k" })
+        local TreeHitSeed   = setmetatable({}, { __mode = "k" })
         local TreeLastHitAt = setmetatable({}, { __mode = "k" })
 
         local function st_findItem(name)
@@ -836,12 +868,36 @@ return function(C, R, UI)
             return nil
         end
 
+        local function st_hasHittableTree(targets, swingDelay)
+            local now = os.clock()
+            for _, mdl in ipairs(targets) do
+                if mdl and mdl.Parent then
+                    local last = TreeLastHitAt[mdl] or 0
+                    if (now - last) >= swingDelay then return true end
+                end
+            end
+            return false
+        end
+
         local function st_chopWaveTrees(targetModels, swingDelay)
             swingDelay = tonumber(swingDelay) or 0.5
 
             local toolName = st_pickToolName()
             if not toolName then
                 task.wait(0.35)
+                return
+            end
+
+            if not st_hasHittableTree(targetModels, swingDelay) then
+                local now = os.clock()
+                local soonest = math.huge
+                for _, mdl in ipairs(targetModels) do
+                    if mdl and mdl.Parent then
+                        local remain = swingDelay - (now - (TreeLastHitAt[mdl] or 0))
+                        if remain > 0 and remain < soonest then soonest = remain end
+                    end
+                end
+                task.wait(soonest < math.huge and math.max(0.02, soonest) or 0.15)
                 return
             end
 
@@ -963,19 +1019,14 @@ return function(C, R, UI)
             TreeBig3 = true,
         }
 
-        local TreeImpactCF = setmetatable({}, { __mode = "k" })
-        local TreeHitSeed  = setmetatable({}, { __mode = "k" })
+        local TreeImpactCF  = setmetatable({}, { __mode = "k" })
+        local TreeHitSeed   = setmetatable({}, { __mode = "k" })
         local TreeLastHitAt = setmetatable({}, { __mode = "k" })
 
         local function bt_isBigTreeName(n)
             if BIG_TREE_NAMES[n] then return true end
             if type(n) ~= "string" then return false end
-
-            -- Match any name containing "TreeBig<digits>" anywhere in the string
-            -- Examples matched: "TreeBig1", "JungleTreeBig7", "CorruptedJungleTreeBig12"
             if n:find("TreeBig%d+") then return true end
-
-            -- Keep explicit variants (can match edge cases like "WebbedTreeBig" w/ no digits)
             return (n:match("^WebbedTreeBig%d*$") ~= nil)
                 or (n:match("^FairyTreeBig%d+$") ~= nil)
                 or (n:match("^Corrupted%s+TreeBig%d+$") ~= nil)
@@ -1006,18 +1057,10 @@ return function(C, R, UI)
             return nil
         end
 
-        local function bt_hasStrongAxe()
-            return bt_findItem("Strong Axe") ~= nil
-        end
-
-        local function bt_hasChainsaw()
-            return bt_findItem("Chainsaw") ~= nil
-        end
-
         local function bt_hasBigTreeTool()
             if bt_findItem("Admin Axe") then return "Admin Axe" end
-            if bt_hasStrongAxe() then return "Strong Axe" end
-            if bt_hasChainsaw() then return "Chainsaw" end
+            if bt_findItem("Strong Axe") then return "Strong Axe" end
+            if bt_findItem("Chainsaw") then return "Chainsaw" end
             return nil
         end
 
@@ -1195,12 +1238,36 @@ return function(C, R, UI)
             return out
         end
 
+        local function bt_hasHittableTree(targets, swingDelay)
+            local now = os.clock()
+            for _, mdl in ipairs(targets) do
+                if mdl and mdl.Parent then
+                    local last = TreeLastHitAt[mdl] or 0
+                    if (now - last) >= swingDelay then return true end
+                end
+            end
+            return false
+        end
+
         local function bt_chopWaveTrees(targetModels, swingDelay)
             swingDelay = tonumber(swingDelay) or 0.5
 
             local toolName = bt_hasBigTreeTool()
             if not toolName then
                 task.wait(0.5)
+                return
+            end
+
+            if not bt_hasHittableTree(targetModels, swingDelay) then
+                local now = os.clock()
+                local soonest = math.huge
+                for _, mdl in ipairs(targetModels) do
+                    if mdl and mdl.Parent then
+                        local remain = swingDelay - (now - (TreeLastHitAt[mdl] or 0))
+                        if remain > 0 and remain < soonest then soonest = remain end
+                    end
+                end
+                task.wait(soonest < math.huge and math.max(0.02, soonest) or 0.15)
                 return
             end
 
@@ -1350,23 +1417,23 @@ return function(C, R, UI)
         end
 
         local function ta_getAllBearTraps()
-    local now = os.clock()
-    if trapCache and (now - trapCacheAt) < 2.0 then
-        return trapCache
-    end
-    trapCacheAt = now
-    trapCache = {}
+            local now = os.clock()
+            if trapCache and (now - trapCacheAt) < 2.0 then
+                return trapCache
+            end
+            trapCacheAt = now
+            trapCache = {}
 
-    local root = ta_trapsRoot()
-    if not root then return trapCache end
+            local root = ta_trapsRoot()
+            if not root then return trapCache end
 
-    for _, d in ipairs(root:GetDescendants()) do
-        if d:IsA("Model") and (d.Name == "Bear Trap" or d.Name == "Volcanic Bear Trap") then
-            trapCache[#trapCache + 1] = d
+            for _, d in ipairs(root:GetDescendants()) do
+                if d:IsA("Model") and (d.Name == "Bear Trap" or d.Name == "Volcanic Bear Trap") then
+                    trapCache[#trapCache + 1] = d
+                end
+            end
+            return trapCache
         end
-    end
-    return trapCache
-end
 
         local function ta_moveTrapToCF(trap, cf, setNow)
             if not trap or not trap.Parent or not cf then return end
