@@ -981,32 +981,32 @@ return function(C, R, UI)
         end
 
         local function startTimer()
-    if timerOn then return end
-    timerOn = true
-    local lastPeriod = getPeriod(game:GetService("Lighting").ClockTime)
-    timerConn = game:GetService("Lighting"):GetPropertyChangedSignal("ClockTime"):Connect(function()
-        if not timerOn then return end
-        local period = getPeriod(game:GetService("Lighting").ClockTime)
-        if period ~= lastPeriod then
-            lastPeriod = period
-            if period == "NIGHT" then
-                local root = hrp()
-                local accel = resolveAccelModel()
-                if root and accel then
-                    local mp = mainPart(accel)
-                    if mp then
-                        local verticalDistance = root.Position.Y - mp.Position.Y
-                        if verticalDistance > -50 then
-                            task.spawn(function()
-                                runTemporalSequence(true)
-                            end)
+            if timerOn then return end
+            timerOn = true
+            local lastPeriod = getPeriod(game:GetService("Lighting").ClockTime)
+            timerConn = game:GetService("Lighting"):GetPropertyChangedSignal("ClockTime"):Connect(function()
+                if not timerOn then return end
+                local period = getPeriod(game:GetService("Lighting").ClockTime)
+                if period ~= lastPeriod then
+                    lastPeriod = period
+                    if period == "NIGHT" then
+                        local root = hrp()
+                        local accel = resolveAccelModel()
+                        if root and accel then
+                            local mp = mainPart(accel)
+                            if mp then
+                                local verticalDistance = root.Position.Y - mp.Position.Y
+                                if verticalDistance > -50 then
+                                    task.spawn(function()
+                                        runTemporalSequence(true)
+                                    end)
+                                end
+                            end
                         end
                     end
                 end
-            end
+            end)
         end
-    end)
-end
 
         tab:Toggle({
             Title = "Auto Temporal Cycle",
@@ -1044,6 +1044,23 @@ end
             local function isMyCharModel(m)
                 local c = lp.Character
                 return c and m == c
+            end
+
+            local function isDownedPlayerBody(m)
+                if not (m and m:IsA("Model")) then return false end
+                if isMyCharModel(m) then return false end
+                local nm = tostring(m.Name or "")
+                if not nm:match("%sBody$") then return false end
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= lp then
+                        local n1 = tostring(p.Name or "") .. " Body"
+                        local n2 = tostring(p.DisplayName or "") .. " Body"
+                        if nm == n1 or nm == n2 then
+                            return true
+                        end
+                    end
+                end
+                return false
             end
 
             local function isSelectedNPC(m, selectedSet)
@@ -1093,7 +1110,6 @@ end
                 local items = itemsFolder()
                 if not items then return true end
                 if m.Parent == items then return true end
-                
                 local parent = m.Parent
                 while parent and parent ~= items do
                     if parent:IsA("Model") then
@@ -1257,7 +1273,6 @@ end
                         local Remote = findLavaBurnRemote()
                         local Lava = findLava()
                         if not (Remote and Lava and Lava.Parent) then return end
-                        
                         for _, inst in ipairs(items:GetChildren()) do
                             if inst:IsA("Model") then
                                 local n = lower(inst.Name or "")
@@ -1322,7 +1337,7 @@ end
             end
 
             tab:Section({ Title = "Auto Burn" })
-            
+
             tab:Toggle({
                 Title = "Auto Burn: Cultist",
                 Value = (C.State.Toggles.MoreAutoBurnCultist == true),
@@ -1351,7 +1366,6 @@ end
                         local Remote = findLavaBurnRemote()
                         local Lava = findLava()
                         if not (Remote and Lava and Lava.Parent) then return end
-                        
                         for _, inst in ipairs(items:GetChildren()) do
                             if inst:IsA("Model") and isSelectedItem(inst, autoBurnSelectedSet) then
                                 autoBurnSelectedSeen[inst] = true
@@ -1443,6 +1457,10 @@ end
                 startAutoBurnSelected()
             end
 
+            --------------------------------------------------------------------
+            -- MANUAL BURN
+            --------------------------------------------------------------------
+
             local manualBurnGui = nil
             local manualBurnBtn = nil
             local manualBurnUpdateConn = nil
@@ -1450,8 +1468,6 @@ end
             local manualBurnHighlightedItem = nil
 
             local function getNearestBurnableItem()
-                local items = itemsFolder()
-                if not items then return nil end
                 local char = lp.Character
                 if not char then return nil end
                 local root = char:FindFirstChild("HumanoidRootPart")
@@ -1460,20 +1476,48 @@ end
                 local nearest = nil
                 local nearestDist = math.huge
 
-                for _, item in ipairs(items:GetChildren()) do
-                    if item:IsA("Model") or item:IsA("BasePart") then
-                        local mp = mainPart(item)
-                        if mp then
-                            local dist = (mp.Position - root.Position).Magnitude
-                            if dist < nearestDist then
-                                nearestDist = dist
-                                nearest = item
+                local items = itemsFolder()
+                if items then
+                    for _, item in ipairs(items:GetChildren()) do
+                        if item:IsA("Model") or item:IsA("BasePart") then
+                            local mp = mainPart(item)
+                            if mp then
+                                local dist = (mp.Position - root.Position).Magnitude
+                                if dist < nearestDist then
+                                    nearestDist = dist
+                                    nearest = item
+                                end
+                            end
+                        end
+                    end
+                end
+
+                local charsFolder = WS:FindFirstChild("Characters")
+                if charsFolder then
+                    for _, m in ipairs(charsFolder:GetChildren()) do
+                        if m:IsA("Model") and isDownedPlayerBody(m) then
+                            local mp = mainPart(m)
+                            if mp then
+                                local dist = (mp.Position - root.Position).Magnitude
+                                if dist < nearestDist then
+                                    nearestDist = dist
+                                    nearest = m
+                                end
                             end
                         end
                     end
                 end
 
                 return nearest
+            end
+
+            local function getHighlightLabel(item)
+                if not item then return "Burn Highlighted Item" end
+                if isDownedPlayerBody(item) then
+                    local nm = tostring(item.Name or "")
+                    return "Burn: " .. nm
+                end
+                return "Burn: " .. tostring(item.Name or "item")
             end
 
             local function clearManualBurnHighlight()
@@ -1490,8 +1534,15 @@ end
 
                 manualBurnHighlightedItem = item
                 manualBurnHighlight = Instance.new("Highlight")
-                manualBurnHighlight.FillColor = Color3.fromRGB(255, 255, 0)
-                manualBurnHighlight.OutlineColor = Color3.fromRGB(255, 200, 0)
+
+                if isDownedPlayerBody(item) then
+                    manualBurnHighlight.FillColor = Color3.fromRGB(255, 50, 50)
+                    manualBurnHighlight.OutlineColor = Color3.fromRGB(255, 0, 0)
+                else
+                    manualBurnHighlight.FillColor = Color3.fromRGB(255, 255, 0)
+                    manualBurnHighlight.OutlineColor = Color3.fromRGB(255, 200, 0)
+                end
+
                 manualBurnHighlight.FillTransparency = 0.5
                 manualBurnHighlight.OutlineTransparency = 0
                 manualBurnHighlight.Adornee = item
@@ -1502,6 +1553,9 @@ end
                 local nearest = getNearestBurnableItem()
                 if nearest ~= manualBurnHighlightedItem then
                     highlightManualBurnItem(nearest)
+                    if manualBurnBtn then
+                        manualBurnBtn.Text = getHighlightLabel(nearest)
+                    end
                 end
             end
 
@@ -1945,7 +1999,6 @@ end
 
             local function startAutoRecycle()
                 stopAutoRecycle()
-                
                 task.spawn(function()
                     pcall(function()
                         local remote = findRecycleMaterialRemote()
@@ -1955,7 +2008,6 @@ end
                         end
                     end)
                 end)
-                
                 recycleThread = task.spawn(function()
                     while true do
                         task.wait(RECYCLE_INTERVAL)
