@@ -315,7 +315,7 @@ return function(C, R, UI)
 
     tab:Slider({
         Title = "Fly Speed",
-        Value = { Min = 1, Max = 20, Default = 3 },
+        Value = { Min = 1, Max = 40, Default = 3 },
         Callback = function(v)
             flySpeed = tonumber(v) or flySpeed
         end
