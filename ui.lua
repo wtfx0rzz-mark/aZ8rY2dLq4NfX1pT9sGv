@@ -38,6 +38,7 @@ local Tabs = {
     Gather   = Window:Tab({ Title = "Gather",   Icon = "eye",   Desc = "Gather" }),
     Player   = Window:Tab({ Title = "Player",   Icon = "activity",   Desc = "Player options" }),
     Auto   = Window:Tab({ Title = "Auto",   Icon = "cpu",   Desc = "Automation" }),
+    AutoFeed = Window:Tab({ Title = "Auto Feed", Icon = "diamond", Desc = "Auto Feed" }),
     Visuals   = Window:Tab({ Title = "Visuals",   Icon = "eye",   Desc = "Visuals" }),
     TPBring   = Window:Tab({ Title = "TPBring",   Icon = "backpack",   Desc = "TP Bring" }),
     Debug   = Window:Tab({ Title = "Debug",   Icon = "ant",   Desc = "Debug" }),
@@ -49,9 +50,8 @@ local Tabs = {
     Extra   = Window:Tab({ Title = "Extra",   Icon = "brain",   Desc = "Extra" }),
     PlayerInspector   = Window:Tab({ Title = "Player Inspector",   Icon = "brain",   Desc = "Player Inspector" }),
     Diamonds = Window:Tab({ Title = "Diamonds", Icon = "diamond", Desc = "Diamonds" }),
-    More = Window:Tab({ Title = "More", Icon = "diamond", Desc = "More" }),
-    AutoFeed = Window:Tab({ Title = "Auto Feed", Icon = "diamond", Desc = "Auto Feed" })
-
+    More = Window:Tab({ Title = "More", Icon = "diamond", Desc = "More" })
+    
 }
 
 return {
