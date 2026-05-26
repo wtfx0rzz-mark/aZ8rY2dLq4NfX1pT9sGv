@@ -483,12 +483,9 @@ return function(C, R, UI)
         local function placementFromExistingModel(model)
             local ok, cf0 = pcall(function() return model:GetPivot() end)
             if not ok or not cf0 then return nil, nil, nil end
-            local fallbackY = hrp() and hrp().Position.Y or cf0.Position.Y
-            local gy = groundYAtSnap(Vector3.new(cf0.Position.X, cf0.Position.Y, cf0.Position.Z), fallbackY, model)
-            local pos = Vector3.new(cf0.Position.X, gy, cf0.Position.Z)
-            local yOff = cf0.Position.Y - gy
             local rot = yawRotationOnly(cf0)
-            local cf = CFrame.new(Vector3.new(pos.X, pos.Y + yOff, pos.Z)) * rot
+            local pos = Vector3.new(cf0.Position.X, cf0.Position.Y, cf0.Position.Z)
+            local cf = CFrame.new(pos) * rot
             local placement = { Valid = true, Position = pos, CFrame = cf }
             return placement, rot, true
         end
@@ -500,10 +497,10 @@ return function(C, R, UI)
             local fallbackY = hrp() and hrp().Position.Y or cf0.Position.Y
             local gy0 = groundYAtSnap(Vector3.new(cf0.Position.X, cf0.Position.Y, cf0.Position.Z), fallbackY, model)
             local yOff = cf0.Position.Y - gy0
-            local targetGroundY = groundYAtSnap(Vector3.new(orbPos.X, orbPos.Y, orbPos.Z), fallbackY, model)
-            local pos = Vector3.new(orbPos.X, targetGroundY, orbPos.Z)
+            local targetGroundY = groundYAtSnap(Vector3.new(orbPos.X, orbPos.Y, orbPos.Z), fallbackY, nil)
+            local pos = Vector3.new(orbPos.X, targetGroundY + yOff, orbPos.Z)
             local rot = yawRotationOnly(cf0)
-            local cf = CFrame.new(Vector3.new(pos.X, pos.Y + yOff, pos.Z)) * rot
+            local cf = CFrame.new(pos) * rot
             local placement = { Valid = true, Position = pos, CFrame = cf }
             return placement, rot, true
         end
@@ -573,6 +570,27 @@ return function(C, R, UI)
             return ok2
         end
 
+        local function waitForBlueprintGone(timeout)
+            local t0 = os.clock()
+            while os.clock() - t0 < (timeout or 8) do
+                if not findAccelBlueprintInstance() then return true end
+                task.wait(0.10)
+            end
+            return false
+        end
+
+        local function placeAccelConfirmed(placeRemote, bp, placement, rot)
+            if not (placeRemote and bp and placement and rot) then return false end
+            pcall(function() placeRemote:InvokeServer(bp, placement, rot, nil) end)
+            if waitForBlueprintGone(6) then return true end
+            bp = findAccelBlueprintInstance()
+            if bp and bp.Parent then
+                pcall(function() placeRemote:InvokeServer(bp, placement, rot, nil) end)
+                return waitForBlueprintGone(6)
+            end
+            return false
+        end
+
         local function fireAccelRemote(model)
             local r = getRemote("RequestActivateNightSkipMachine")
             if not (r and model) then return false end
@@ -591,30 +609,6 @@ return function(C, R, UI)
             Enum.KeyCode.Four,  Enum.KeyCode.Five,  Enum.KeyCode.Six,
             Enum.KeyCode.Seven, Enum.KeyCode.Eight, Enum.KeyCode.Nine,
         }
-
-        local function captureActiveSlot()
-            local char = lp.Character
-            if not char then return nil end
-            local tool = char:FindFirstChildOfClass("Tool")
-            if not tool then return nil end
-            local bp = lp.Backpack
-            local allTools = {}
-            if bp then
-                for _, t in ipairs(bp:GetChildren()) do
-                    if t:IsA("Tool") then allTools[#allTools+1] = t end
-                end
-            end
-            for _, t in ipairs(char:GetChildren()) do
-                if t:IsA("Tool") then allTools[#allTools+1] = t end
-            end
-            table.sort(allTools, function(a, b) return a.Name < b.Name end)
-            for i, t in ipairs(allTools) do
-                if t == tool then
-                    return SLOT_KEYS[i]
-                end
-            end
-            return Enum.KeyCode.One
-        end
 
         local function vimTapKey(keyCode)
             pcall(function()
@@ -848,7 +842,6 @@ return function(C, R, UI)
 
         local busy = false
         local temporalRunNonce = 0
-        local savedSlotKey = nil
 
         local function freshTemporalRunState()
             refreshRoots()
@@ -885,7 +878,6 @@ return function(C, R, UI)
             if busy then return end
             busy = true
 
-            savedSlotKey = captureActiveSlot()
             local runNonce = freshTemporalRunState()
             local root0 = hrp()
             local returnCF = root0 and root0.CFrame or nil
@@ -942,7 +934,7 @@ return function(C, R, UI)
                     local bp = findAccelBlueprintInstance()
                     if bp and bp.Parent and savedPlacement and savedRot then
                         warn("[More] runTemporalSequence: no place remote, attempting recovery place")
-                        placeAccelAtSnap(placeRemote, bp, savedPlacement, savedRot)
+                        placeAccelConfirmed(placeRemote, bp, savedPlacement, savedRot)
                     end
                     return
                 end
@@ -953,18 +945,10 @@ return function(C, R, UI)
                     return
                 end
 
-                local placed = placeAccelAtSnap(placeRemote, bp, savedPlacement, savedRot)
+                local placed = placeAccelConfirmed(placeRemote, bp, savedPlacement, savedRot)
                 if not placed then
-                    warn("[More] runTemporalSequence: place failed, retrying once")
-                    task.wait(0.5)
-                    bp = findAccelBlueprintInstance()
-                    if bp and bp.Parent then
-                        placed = placeAccelAtSnap(placeRemote, bp, savedPlacement, savedRot)
-                    end
-                    if not placed then
-                        warn("[More] runTemporalSequence: place failed after retry, machine stuck in inventory")
-                        return
-                    end
+                    warn("[More] runTemporalSequence: place failed after retry, machine stuck in inventory")
+                    return
                 end
 
                 task.wait(1.0)
@@ -985,7 +969,7 @@ return function(C, R, UI)
                     local placeRemote = findPlaceRemote()
                     if placeRemote then
                         task.wait(0.5)
-                        placeAccelAtSnap(placeRemote, bp, savedPlacement, savedRot)
+                        placeAccelConfirmed(placeRemote, bp, savedPlacement, savedRot)
                     end
                 end
             end
@@ -999,11 +983,6 @@ return function(C, R, UI)
 
             task.wait(3.0)
             vimTapKey(Enum.KeyCode.One)
-            if savedSlotKey and savedSlotKey ~= Enum.KeyCode.One then
-                task.wait(0.1)
-                vimTapKey(savedSlotKey)
-            end
-            savedSlotKey = nil
 
             busy = false
         end
@@ -1570,10 +1549,8 @@ return function(C, R, UI)
                 if not char then return nil end
                 local root = char:FindFirstChild("HumanoidRootPart")
                 if not root then return nil end
-
                 local nearest = nil
                 local nearestDist = math.huge
-
                 local items = itemsFolder()
                 if items then
                     for _, item in ipairs(items:GetChildren()) do
@@ -1589,7 +1566,6 @@ return function(C, R, UI)
                         end
                     end
                 end
-
                 local charsFolder = WS:FindFirstChild("Characters")
                 if charsFolder then
                     for _, m in ipairs(charsFolder:GetChildren()) do
@@ -1605,15 +1581,13 @@ return function(C, R, UI)
                         end
                     end
                 end
-
                 return nearest
             end
 
             local function getHighlightLabel(item)
                 if not item then return "Burn Highlighted Item" end
                 if isDownedPlayerBody(item) then
-                    local nm = tostring(item.Name or "")
-                    return "Burn: " .. nm
+                    return "Burn: " .. tostring(item.Name or "")
                 end
                 return "Burn: " .. tostring(item.Name or "item")
             end
@@ -1629,10 +1603,8 @@ return function(C, R, UI)
             local function highlightManualBurnItem(item)
                 clearManualBurnHighlight()
                 if not item then return end
-
                 manualBurnHighlightedItem = item
                 manualBurnHighlight = Instance.new("Highlight")
-
                 if isDownedPlayerBody(item) then
                     manualBurnHighlight.FillColor = Color3.fromRGB(255, 50, 50)
                     manualBurnHighlight.OutlineColor = Color3.fromRGB(255, 0, 0)
@@ -1640,7 +1612,6 @@ return function(C, R, UI)
                     manualBurnHighlight.FillColor = Color3.fromRGB(255, 255, 0)
                     manualBurnHighlight.OutlineColor = Color3.fromRGB(255, 200, 0)
                 end
-
                 manualBurnHighlight.FillTransparency = 0.5
                 manualBurnHighlight.OutlineTransparency = 0
                 manualBurnHighlight.Adornee = item
@@ -1672,13 +1643,11 @@ return function(C, R, UI)
 
             local function startManualBurn()
                 stopManualBurn()
-
                 manualBurnGui = Instance.new("ScreenGui")
                 manualBurnGui.Name = "ManualBurnGui"
                 manualBurnGui.ResetOnSpawn = false
                 manualBurnGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
                 manualBurnGui.Parent = playerGui
-
                 local frame = Instance.new("Frame")
                 frame.Name = "MainFrame"
                 frame.AnchorPoint = Vector2.new(0, 1)
@@ -1687,14 +1656,11 @@ return function(C, R, UI)
                 frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
                 frame.BorderSizePixel = 0
                 frame.Parent = manualBurnGui
-
                 local corner = Instance.new("UICorner")
                 corner.CornerRadius = UDim.new(0, 8)
                 corner.Parent = frame
-
                 frame.Active = true
                 frame.Draggable = true
-
                 local burnBtn = Instance.new("TextButton")
                 burnBtn.Name = "BurnButton"
                 burnBtn.Size = UDim2.new(1, -20, 0, 40)
@@ -1707,11 +1673,9 @@ return function(C, R, UI)
                 burnBtn.BorderSizePixel = 0
                 burnBtn.Parent = frame
                 manualBurnBtn = burnBtn
-
                 local btnCorner = Instance.new("UICorner")
                 btnCorner.CornerRadius = UDim.new(0, 6)
                 btnCorner.Parent = burnBtn
-
                 local closeBtn = Instance.new("TextButton")
                 closeBtn.Name = "CloseButton"
                 closeBtn.Size = UDim2.new(0, 30, 0, 20)
@@ -1723,31 +1687,25 @@ return function(C, R, UI)
                 closeBtn.TextColor3 = Color3.new(1, 1, 1)
                 closeBtn.BorderSizePixel = 0
                 closeBtn.Parent = frame
-
                 local closeBtnCorner = Instance.new("UICorner")
                 closeBtnCorner.CornerRadius = UDim.new(0, 4)
                 closeBtnCorner.Parent = closeBtn
-
                 burnBtn.MouseButton1Click:Connect(function()
                     if not manualBurnHighlightedItem then
                         warn("No item highlighted")
                         return
                     end
-
                     local remote = findLavaBurnRemote()
                     local lava = findLava()
-
                     if not (remote and lava and lava.Parent) then
                         warn("Missing burn remote or lava")
                         return
                     end
-
                     local item = manualBurnHighlightedItem
                     if not (item and item.Parent) then
                         warn("Highlighted item no longer exists")
                         return
                     end
-
                     pcall(function()
                         if remote:IsA("RemoteFunction") then
                             remote:InvokeServer(item, lava)
@@ -1756,12 +1714,10 @@ return function(C, R, UI)
                         end
                     end)
                 end)
-
                 closeBtn.MouseButton1Click:Connect(function()
                     C.State.Toggles.MoreManualBurn = false
                     stopManualBurn()
                 end)
-
                 manualBurnUpdateConn = Run.Heartbeat:Connect(function()
                     updateManualBurnHighlight()
                 end)
@@ -1985,7 +1941,6 @@ return function(C, R, UI)
                 local function start()
                     stop()
                     running = true
-
                     local items = itemsFolder()
                     if items then
                         descConn = items.DescendantAdded:Connect(function(inst)
@@ -2002,7 +1957,6 @@ return function(C, R, UI)
                             end)
                         end)
                     end
-
                     timerThread = task.spawn(function()
                         while running do
                             pcall(function() scrapRunPass(selectedSet) end)
@@ -2057,7 +2011,6 @@ return function(C, R, UI)
             if C.State.Toggles.MoreAutoScrapForestGem  == true then forestGemBring.start()  end
 
             local RECYCLE_INTERVAL = 123
-
             local recycleThread = nil
 
             local function findRecycleMaterialRemote()
