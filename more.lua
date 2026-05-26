@@ -232,11 +232,12 @@ return function(C, R, UI)
             return (hit and hit.Position) or pos
         end
 
-        local STICK_DURATION    = 0.35
-        local STICK_EXTRA_FR    = 2
-        local STICK_CLEAR_VEL   = true
-        local TELEPORT_UP_NUDGE = 0.05
-        local SAFE_DROP_UP      = 4.0
+        local STICK_DURATION       = 0.35
+        local STICK_EXTRA_FR       = 2
+        local STICK_CLEAR_VEL      = true
+        local TELEPORT_UP_NUDGE    = 0.05
+        local SAFE_DROP_UP         = 4.0
+        local CAMPFIRE_TP_UP_NUDGE = 2.0
 
         local function teleportSticky(cf, dropMode)
             local root = hrp()
@@ -382,7 +383,7 @@ return function(C, R, UI)
             local mp = mainPart(fire)
             local pos = mp and mp.Position or (fire:IsA("Model") and fire:GetPivot().Position)
             if not pos then return nil end
-            return CFrame.new(pos + Vector3.new(0, 6, 0))
+            return CFrame.new(pos + Vector3.new(0, 6 + CAMPFIRE_TP_UP_NUDGE, 0))
         end
 
         local function nightSkipTeleportCF(machine)
@@ -471,6 +472,14 @@ return function(C, R, UI)
             return y
         end
 
+        local function yawRotationOnly(cf0)
+            local lv = cf0.LookVector
+            local flat = Vector3.new(lv.X, 0, lv.Z)
+            if flat.Magnitude < 1e-6 then flat = Vector3.new(0, 0, -1) else flat = flat.Unit end
+            local origin = Vector3.new(0, 0, 0)
+            return CFrame.lookAt(origin, origin + flat, Vector3.new(0, 1, 0))
+        end
+
         local function placementFromExistingModel(model)
             local ok, cf0 = pcall(function() return model:GetPivot() end)
             if not ok or not cf0 then return nil, nil, nil end
@@ -478,7 +487,7 @@ return function(C, R, UI)
             local gy = groundYAtSnap(Vector3.new(cf0.Position.X, cf0.Position.Y, cf0.Position.Z), fallbackY, model)
             local pos = Vector3.new(cf0.Position.X, gy, cf0.Position.Z)
             local yOff = cf0.Position.Y - gy
-            local rot = cf0 - cf0.Position
+            local rot = yawRotationOnly(cf0)
             local cf = CFrame.new(Vector3.new(pos.X, pos.Y + yOff, pos.Z)) * rot
             local placement = { Valid = true, Position = pos, CFrame = cf }
             return placement, rot, true
@@ -493,7 +502,7 @@ return function(C, R, UI)
             local yOff = cf0.Position.Y - gy0
             local targetGroundY = groundYAtSnap(Vector3.new(orbPos.X, orbPos.Y, orbPos.Z), fallbackY, model)
             local pos = Vector3.new(orbPos.X, targetGroundY, orbPos.Z)
-            local rot = cf0 - cf0.Position
+            local rot = yawRotationOnly(cf0)
             local cf = CFrame.new(Vector3.new(pos.X, pos.Y + yOff, pos.Z)) * rot
             local placement = { Valid = true, Position = pos, CFrame = cf }
             return placement, rot, true
@@ -577,11 +586,41 @@ return function(C, R, UI)
             return ok
         end
 
-        local function vimTapKey1()
+        local SLOT_KEYS = {
+            Enum.KeyCode.One,   Enum.KeyCode.Two,   Enum.KeyCode.Three,
+            Enum.KeyCode.Four,  Enum.KeyCode.Five,  Enum.KeyCode.Six,
+            Enum.KeyCode.Seven, Enum.KeyCode.Eight, Enum.KeyCode.Nine,
+        }
+
+        local function captureActiveSlot()
+            local char = lp.Character
+            if not char then return nil end
+            local tool = char:FindFirstChildOfClass("Tool")
+            if not tool then return nil end
+            local bp = lp.Backpack
+            local allTools = {}
+            if bp then
+                for _, t in ipairs(bp:GetChildren()) do
+                    if t:IsA("Tool") then allTools[#allTools+1] = t end
+                end
+            end
+            for _, t in ipairs(char:GetChildren()) do
+                if t:IsA("Tool") then allTools[#allTools+1] = t end
+            end
+            table.sort(allTools, function(a, b) return a.Name < b.Name end)
+            for i, t in ipairs(allTools) do
+                if t == tool then
+                    return SLOT_KEYS[i]
+                end
+            end
+            return Enum.KeyCode.One
+        end
+
+        local function vimTapKey(keyCode)
             pcall(function()
-                VIM:SendKeyEvent(true, Enum.KeyCode.One, false, game)
+                VIM:SendKeyEvent(true, keyCode, false, game)
                 task.wait(0.05)
-                VIM:SendKeyEvent(false, Enum.KeyCode.One, false, game)
+                VIM:SendKeyEvent(false, keyCode, false, game)
             end)
         end
 
@@ -809,6 +848,7 @@ return function(C, R, UI)
 
         local busy = false
         local temporalRunNonce = 0
+        local savedSlotKey = nil
 
         local function freshTemporalRunState()
             refreshRoots()
@@ -845,6 +885,7 @@ return function(C, R, UI)
             if busy then return end
             busy = true
 
+            savedSlotKey = captureActiveSlot()
             local runNonce = freshTemporalRunState()
             local root0 = hrp()
             local returnCF = root0 and root0.CFrame or nil
@@ -957,7 +998,12 @@ return function(C, R, UI)
             end
 
             task.wait(3.0)
-            pcall(vimTapKey1)
+            vimTapKey(Enum.KeyCode.One)
+            if savedSlotKey and savedSlotKey ~= Enum.KeyCode.One then
+                task.wait(0.1)
+                vimTapKey(savedSlotKey)
+            end
+            savedSlotKey = nil
 
             busy = false
         end
