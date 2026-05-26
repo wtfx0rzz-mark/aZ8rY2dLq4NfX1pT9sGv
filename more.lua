@@ -1,5 +1,3 @@
--- more.lua
-
 return function(C, R, UI)
     local function run()
         C  = C  or _G.C
@@ -1063,6 +1061,14 @@ return function(C, R, UI)
                 return false
             end
 
+            local SCRAP_NAMES = {
+                "Tyre", "Bolt", "Broken Fan", "Broken Microwave", "Sheet Metal",
+                "Old Radio", "Washing Machine", "Old Car Engine", "Metal Chair",
+                "Cultist Prototype", "Cultist Experiment", "UFO Junk", "UFO Component", "Gears"
+            }
+            local scrapNameSet = {}
+            for _, n in ipairs(SCRAP_NAMES) do scrapNameSet[n] = true end
+
             local function isSelectedNPC(m, selectedSet)
                 if not (m and m:IsA("Model")) then return false end
                 if isMyCharModel(m) then return false end
@@ -1079,6 +1085,8 @@ return function(C, R, UI)
                 ln = ln:gsub("%s+", " ")
                 local ln2 = (lower(inst.Name or "")):gsub("%s+", "")
                 if selectedSet["Sapling"] and ln == "sapling" then return true end
+                if selectedSet["Log"] and inst.Name == "Log" then return true end
+                if selectedSet["Scrap"] and scrapNameSet[inst.Name] then return true end
                 if selectedSet["Sacrifice Totem"] then
                     if ln == "sacrifice totem" or ln2 == "sacrificetotem" then return true end
                     if ln:find("sacrifice", 1, true) and ln:find("totem", 1, true) then return true end
@@ -1239,7 +1247,7 @@ return function(C, R, UI)
 
             tab:Dropdown({
                 Title = "Targets",
-                Values = { "Cultist", "Alien", "Sacrifice Totem", "Sapling" },
+                Values = { "Cultist", "Alien", "Sacrifice Totem", "Sapling", "Log", "Scrap" },
                 Multi = true,
                 AllowNone = true,
                 Callback = function(choice)
@@ -1456,10 +1464,6 @@ return function(C, R, UI)
             if C.State.Toggles.MoreAutoBurnSelected == true then
                 startAutoBurnSelected()
             end
-
-            --------------------------------------------------------------------
-            -- MANUAL BURN
-            --------------------------------------------------------------------
 
             local manualBurnGui = nil
             local manualBurnBtn = nil
