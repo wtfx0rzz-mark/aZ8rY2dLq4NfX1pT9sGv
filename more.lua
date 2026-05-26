@@ -7,6 +7,7 @@ return function(C, R, UI)
         local RS       = (C and C.Services and C.Services.RS)       or game:GetService("ReplicatedStorage")
         local WS       = (C and C.Services and C.Services.WS)       or game:GetService("Workspace")
         local Run      = (C and C.Services and C.Services.Run)      or game:GetService("RunService")
+        local VIM      = game:GetService("VirtualInputManager")
 
         local lp = Players.LocalPlayer
         local Tabs = (UI and UI.Tabs) or {}
@@ -368,6 +369,22 @@ return function(C, R, UI)
             return nil
         end
 
+        local function findCampfire()
+            refreshRoots()
+            local map = (RootWS and RootWS:FindFirstChild("Map")) or WS:FindFirstChild("Map")
+            local camp = map and map:FindFirstChild("Campground")
+            return camp and camp:FindFirstChild("MainFire")
+        end
+
+        local function campfireTeleportCF()
+            local fire = findCampfire()
+            if not fire then return nil end
+            local mp = mainPart(fire)
+            local pos = mp and mp.Position or (fire:IsA("Model") and fire:GetPivot().Position)
+            if not pos then return nil end
+            return CFrame.new(pos + Vector3.new(0, 6, 0))
+        end
+
         local function nightSkipTeleportCF(machine)
             if not machine then return nil end
             local mp = mainPart(machine) or machine.PrimaryPart
@@ -460,11 +477,10 @@ return function(C, R, UI)
             local fallbackY = hrp() and hrp().Position.Y or cf0.Position.Y
             local gy = groundYAtSnap(Vector3.new(cf0.Position.X, cf0.Position.Y, cf0.Position.Z), fallbackY, model)
             local pos = Vector3.new(cf0.Position.X, gy, cf0.Position.Z)
-            local yOff = (cf0.Position.Y - gy)
-            local fwd = cf0.LookVector
-            local cf = yawOnly(Vector3.new(pos.X, pos.Y + yOff, pos.Z), fwd)
+            local yOff = cf0.Position.Y - gy
+            local rot = cf0 - cf0.Position
+            local cf = CFrame.new(Vector3.new(pos.X, pos.Y + yOff, pos.Z)) * rot
             local placement = { Valid = true, Position = pos, CFrame = cf }
-            local rot = (cf - cf.Position)
             return placement, rot, true
         end
 
@@ -474,11 +490,12 @@ return function(C, R, UI)
             if not ok or not cf0 then return nil, nil, nil end
             local fallbackY = hrp() and hrp().Position.Y or cf0.Position.Y
             local gy0 = groundYAtSnap(Vector3.new(cf0.Position.X, cf0.Position.Y, cf0.Position.Z), fallbackY, model)
-            local yOff = (cf0.Position.Y - gy0)
-            local pos = Vector3.new(orbPos.X, orbPos.Y, orbPos.Z)
-            local cf = yawOnly(Vector3.new(pos.X, pos.Y + yOff, pos.Z), cf0.LookVector)
+            local yOff = cf0.Position.Y - gy0
+            local targetGroundY = groundYAtSnap(Vector3.new(orbPos.X, orbPos.Y, orbPos.Z), fallbackY, model)
+            local pos = Vector3.new(orbPos.X, targetGroundY, orbPos.Z)
+            local rot = cf0 - cf0.Position
+            local cf = CFrame.new(Vector3.new(pos.X, pos.Y + yOff, pos.Z)) * rot
             local placement = { Valid = true, Position = pos, CFrame = cf }
-            local rot = (cf - cf.Position)
             return placement, rot, true
         end
 
@@ -522,15 +539,6 @@ return function(C, R, UI)
             return doPickupStructure(nearest)
         end
 
-        local function waitForModelGone(model, timeout)
-            local t0 = os.clock()
-            while os.clock() - t0 < (timeout or 4) do
-                if not (model and model.Parent) then return true end
-                task.wait(0.10)
-            end
-            return false
-        end
-
         local function findPlaceRemote()
             refreshRoots()
             local re = RootRS:FindFirstChild("RemoteEvents")
@@ -567,6 +575,14 @@ return function(C, R, UI)
                 end
             end)
             return ok
+        end
+
+        local function vimTapKey1()
+            pcall(function()
+                VIM:SendKeyEvent(true, Enum.KeyCode.One, false, game)
+                task.wait(0.05)
+                VIM:SendKeyEvent(false, Enum.KeyCode.One, false, game)
+            end)
         end
 
         local playerGui = lp:FindFirstChildOfClass("PlayerGui") or lp:WaitForChild("PlayerGui")
@@ -700,6 +716,22 @@ return function(C, R, UI)
             if on then orb.Transparency = 0.05 else orb.Transparency = 1 end
         end
 
+        local function groundPosForOrb(pos)
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            local ex = { lp.Character }
+            local items = (RootWS and RootWS:FindFirstChild("Items")) or WS:FindFirstChild("Items")
+            local chars = (RootWS and RootWS:FindFirstChild("Characters")) or WS:FindFirstChild("Characters")
+            if items then table.insert(ex, items) end
+            if chars then table.insert(ex, chars) end
+            params.FilterDescendantsInstances = ex
+            local origin = pos + Vector3.new(0, 5, 0)
+            local hit = WS:Raycast(origin, Vector3.new(0, -1000, 0), params)
+            if hit then return hit.Position end
+            hit = WS:Raycast(pos + Vector3.new(0, 200, 0), Vector3.new(0, -1000, 0), params)
+            return (hit and hit.Position) or pos
+        end
+
         local function ensureOrbsFromState()
             if C.State.MoreTemporalPlacePos and typeof(C.State.MoreTemporalPlacePos) == "Vector3" then
                 if not (temporalOrb and temporalOrb.Parent) then
@@ -739,6 +771,10 @@ return function(C, R, UI)
             applySetupVisibility()
         end
 
+        local function isTemporalSetupConfigured()
+            return C.State.MoreTemporalPlacePos ~= nil and typeof(C.State.MoreTemporalPlacePos) == "Vector3"
+        end
+
         local setupConns = {}
 
         setupConns[#setupConns+1] = btnSetPlace.MouseButton1Click:Connect(function()
@@ -746,8 +782,8 @@ return function(C, R, UI)
             if not root then return end
             local fwd = safeFlatForwardUnit(root.CFrame)
             local desired = root.Position + fwd * 10
-            local g = groundBelow(desired)
-            local placePos = Vector3.new(desired.X, g.Y, desired.Z)
+            local g = groundPosForOrb(desired)
+            local placePos = Vector3.new(g.X, g.Y, g.Z)
             C.State.MoreTemporalPlacePos = placePos
             if temporalOrb then pcall(function() temporalOrb:Destroy() end) end
             temporalOrb = makeOrb("__cg_temporal_place_orb__", placePos + Vector3.new(0, 0.8, 0), Color3.fromRGB(0, 200, 255))
@@ -813,13 +849,22 @@ return function(C, R, UI)
             local root0 = hrp()
             local returnCF = root0 and root0.CFrame or nil
             local savedPlacement, savedRot = nil, nil
+            local setupConfigured = isTemporalSetupConfigured()
 
             local ok, err = pcall(function()
                 if fromTimer == true then
-                    local tp = C.State.MoreTemporalTeleportCF
-                    if typeof(tp) == "CFrame" then
-                        teleportSticky(tp, true)
-                        task.wait(0.75)
+                    if setupConfigured then
+                        local tp = C.State.MoreTemporalTeleportCF
+                        if typeof(tp) == "CFrame" then
+                            teleportSticky(tp, true)
+                            task.wait(0.75)
+                        end
+                    else
+                        local campCF = campfireTeleportCF()
+                        if campCF then
+                            teleportSticky(campCF, true)
+                            task.wait(1.5)
+                        end
                     end
                 end
 
@@ -831,7 +876,7 @@ return function(C, R, UI)
                 local destCF = nightSkipTeleportCF(machine)
                 if not destCF then return end
 
-                if C.State.MoreTemporalPlacePos and typeof(C.State.MoreTemporalPlacePos) == "Vector3" then
+                if setupConfigured then
                     savedPlacement, savedRot = placementFromOrb(machine, C.State.MoreTemporalPlacePos)
                 else
                     savedPlacement, savedRot = placementFromExistingModel(machine)
@@ -910,6 +955,9 @@ return function(C, R, UI)
                     teleportSticky(returnCF, true)
                 end)
             end
+
+            task.wait(3.0)
+            pcall(vimTapKey1)
 
             busy = false
         end
