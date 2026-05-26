@@ -243,7 +243,7 @@ return function(C, R, UI)
     tab:Section({ Title = "Generator Auto Feed" })
 
     tab:Toggle({
-        Title    = "Auto Feed",
+        Title    = "Auto Feed For Ammo",
         Default  = C.State.AutoFeedEnabled and true or false,
         Callback = function(state)
             C.State.AutoFeedEnabled = state and true or false
