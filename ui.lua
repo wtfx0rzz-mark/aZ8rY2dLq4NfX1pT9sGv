@@ -49,7 +49,8 @@ local Tabs = {
     Extra   = Window:Tab({ Title = "Extra",   Icon = "brain",   Desc = "Extra" }),
     PlayerInspector   = Window:Tab({ Title = "Player Inspector",   Icon = "brain",   Desc = "Player Inspector" }),
     Diamonds = Window:Tab({ Title = "Diamonds", Icon = "diamond", Desc = "Diamonds" }),
-    More = Window:Tab({ Title = "More", Icon = "diamond", Desc = "More" })
+    More = Window:Tab({ Title = "More", Icon = "diamond", Desc = "More" }),
+    AutoFeed = Window:Tab({ Title = "Auto Feed", Icon = "diamond", Desc = "Auto Feed" })
 
 }
 
