@@ -234,18 +234,21 @@ return function(C, R, UI)
                     local mp = mainPart(m)
                     if mp then mp.CFrame = CFrame.new(stackPos) end
                 end
-                setCollide(m, true, snap)
+                setCollide(m, true, snap)  -- restore collision FIRST
+
                 for _, p in ipairs(getAllParts(m)) do
                     p.Anchored = false
-                    p.AssemblyLinearVelocity  = Vector3.new()
+                    p.AssemblyLinearVelocity  = Vector3.new(0, -20, 0)  -- downward velocity
                     p.AssemblyAngularVelocity = Vector3.new()
                 end
+
+                task.wait(0.15)  -- let physics register with collision on before releasing drag
+
                 if started and r.StopDrag then
                     pcall(function() r.StopDrag:FireServer(m) end)
-                    task.wait(0.03)
+                    task.wait(0.05)
                     pcall(function() r.StopDrag:FireServer(m) end)
                 end
-                task.wait(0.05)
             end
         end
     end
