@@ -689,7 +689,7 @@ return function(C, R, UI)
 
                             local deadline = now() + 20
                             while active > 0 and running and now() < deadline do
-                                Run.Heartbeat:Wait()
+                                task.wait(0.05)
                             end
 
                             local latestFuel = readFuel(ext, bar2)
