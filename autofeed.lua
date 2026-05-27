@@ -816,55 +816,56 @@ return function(C, R, UI)
     -- CAMPFIRE FEED
     -- ============================================================
 
-    local CF_REFILL_INTERVAL    = 1.5
-    local CF_FEED_THRESHOLD     = 875
-    local CF_FEED_TARGET        = 3150
-    local CF_FEED_SPEED         = 80
-    local CF_ORB_OFFSET_Y       = 20
-    local CF_VERTICAL_MULT      = 1.35
-    local CF_STEP_WAIT          = 0.03
-    local CF_CONSUME_WAIT       = 2.5
-    local CF_JOB_TIMEOUT        = 45
-    local CF_DEST_RADIUS        = 1.0
-    local CF_FINAL_DROP_HEIGHT  = 6.0
-    local CF_SPAWN_STAGGER      = 0.15
+    local CF_REFILL_INTERVAL      = 1.5
+    local CF_FEED_THRESHOLD       = 875
+    local CF_FEED_TARGET          = 3150
+    local CF_FEED_SPEED           = 80
+    local CF_ORB_OFFSET_Y         = 20
+    local CF_VERTICAL_MULT        = 1.35
+    local CF_STEP_WAIT            = 0.03
+    local CF_CONSUME_WAIT         = 2.5
+    local CF_JOB_TIMEOUT          = 45
+    local CF_DEST_RADIUS          = 1.0
+    local CF_FINAL_DROP_HEIGHT    = 6.0
+    local CF_SPAWN_STAGGER        = 0.15
+    local CF_FEED_NOW_LIMIT       = 50
 
-    local CF_PROCESSOR_BATCH    = 50
-    local CF_BIOFUEL_BATCH      = 50
+    local CF_PROCESSOR_BATCH      = 50
+    local CF_BIOFUEL_BATCH        = 50
 
     local CF_PER_ITEM_LIMIT = {
-        ["Coal"]         = 8,
-        ["Biofuel"]      = CF_BIOFUEL_BATCH,
+        ["Coal"]          = 8,
+        ["Biofuel"]       = CF_BIOFUEL_BATCH,
         ["Fuel Canister"] = 3,
-        ["Oil Barrel"]   = 1,
-        ["Log"]          = CF_PROCESSOR_BATCH,
-        ["Morsel"]       = CF_PROCESSOR_BATCH,
+        ["Oil Barrel"]    = 1,
+        ["Log"]           = CF_PROCESSOR_BATCH,
+        ["Morsel"]        = CF_PROCESSOR_BATCH,
         ["Cooked Morsel"] = CF_PROCESSOR_BATCH,
-        ["Steak"]        = CF_PROCESSOR_BATCH,
-        ["Cooked Steak"] = CF_PROCESSOR_BATCH,
-        ["Carrot"]       = CF_PROCESSOR_BATCH,
-        ["Corn"]         = CF_PROCESSOR_BATCH,
-        ["Pumpkin"]      = CF_PROCESSOR_BATCH,
-        ["Strawberry"]   = CF_PROCESSOR_BATCH,
+        ["Steak"]         = CF_PROCESSOR_BATCH,
+        ["Cooked Steak"]  = CF_PROCESSOR_BATCH,
+        ["Carrot"]        = CF_PROCESSOR_BATCH,
+        ["Corn"]          = CF_PROCESSOR_BATCH,
+        ["Pumpkin"]       = CF_PROCESSOR_BATCH,
+        ["Strawberry"]    = CF_PROCESSOR_BATCH,
     }
 
     local CF_DIRECT_FIRE_ITEMS = {
-        ["Coal"]         = true,
-        ["Biofuel"]      = true,
+        ["Coal"]          = true,
+        ["Biofuel"]       = true,
         ["Fuel Canister"] = true,
-        ["Oil Barrel"]   = true,
+        ["Oil Barrel"]    = true,
     }
 
     local CF_PROCESSOR_ITEMS = {
-        ["Log"]          = true,
-        ["Morsel"]       = true,
+        ["Log"]           = true,
+        ["Morsel"]        = true,
         ["Cooked Morsel"] = true,
-        ["Steak"]        = true,
-        ["Cooked Steak"] = true,
-        ["Carrot"]       = true,
-        ["Corn"]         = true,
-        ["Pumpkin"]      = true,
-        ["Strawberry"]   = true,
+        ["Steak"]         = true,
+        ["Cooked Steak"]  = true,
+        ["Carrot"]        = true,
+        ["Corn"]          = true,
+        ["Pumpkin"]       = true,
+        ["Strawberry"]    = true,
     }
 
     local CF_ALL_ITEMS = {}
@@ -873,24 +874,15 @@ return function(C, R, UI)
 
     local CF_PRIORITY = {
         "Biofuel",
-        "Log",
-        "Morsel",
-        "Cooked Morsel",
-        "Steak",
-        "Cooked Steak",
-        "Carrot",
-        "Corn",
-        "Pumpkin",
-        "Strawberry",
-        "Coal",
-        "Fuel Canister",
-        "Oil Barrel",
+        "Log", "Morsel", "Cooked Morsel", "Steak", "Cooked Steak",
+        "Carrot", "Corn", "Pumpkin", "Strawberry",
+        "Coal", "Fuel Canister", "Oil Barrel",
     }
 
-    local cfRunning     = false
-    local cfThread      = nil
-    local cfFireCenter  = nil
-    local cfScanRadius  = nil
+    local cfRunning      = false
+    local cfThread       = nil
+    local cfFireCenter   = nil
+    local cfScanRadius   = nil
     local cfIgnoreRadius = nil
     local cfActiveDrags  = {}
     local cfReserved     = setmetatable({}, { __mode = "k" })
@@ -967,13 +959,10 @@ return function(C, R, UI)
         local seen = {}
         for _, d in ipairs(WS:GetDescendants()) do
             if cfIsItem(d) and cfIsWhitelisted(d) and not seen[d] and not cfActiveDrags[d] and not cfReserved[d] and cfIsNearFire(d) then
-                if d.Name == "Biofuel" and cfIsInsideIgnore(d) then
-                    -- skip biofuel already inside inner touch zone
-                else
-                    seen[d] = true
-                    if foundByName[d.Name] then
-                        foundByName[d.Name][#foundByName[d.Name] + 1] = d
-                    end
+                if d.Name == "Biofuel" and cfIsInsideIgnore(d) then continue end
+                seen[d] = true
+                if foundByName[d.Name] then
+                    foundByName[d.Name][#foundByName[d.Name] + 1] = d
                 end
             end
         end
@@ -1007,23 +996,37 @@ return function(C, R, UI)
         cfActiveDrags[model] = nil
     end
 
-    local function cfStopActiveItem(model, rec)
-        if not model then return end
+    local function cfDropInPlace(model, rec)
+        if not model or not model.Parent then return end
         local r = rec and rec.r or getRemotes()
         pcall(function() stopDragHard(r, model) end)
-        if model and model.Parent then
-            if rec and rec.snap then
-                pcall(function() setCollide(model, true, rec.snap) end)
-            end
-            for _, p in ipairs(getAllParts(model)) do
-                pcall(function() p.Anchored = false end)
-            end
-            pcall(function() restoreNetworkOwner(model) end)
-            pcall(function() refreshPrompts(model) end)
+        if rec and rec.snap then
+            pcall(function() setCollide(model, true, rec.snap) end)
         end
+        for _, p in ipairs(getAllParts(model)) do
+            pcall(function()
+                p.Anchored = false
+                p.AssemblyLinearVelocity  = Vector3.new(0, -18, 0)
+                p.AssemblyAngularVelocity = Vector3.new()
+            end)
+        end
+        pcall(function() restoreNetworkOwner(model) end)
+        pcall(function() refreshPrompts(model) end)
     end
 
-    local function cfMoveToTarget(model, targetPos, speed, r, isProcessorItem)
+    local function cfStopAllDrags()
+        local copy = {}
+        for model, rec in pairs(cfActiveDrags) do
+            copy[model] = rec
+        end
+        cfActiveDrags = {}
+        for model, rec in pairs(copy) do
+            cfDropInPlace(model, rec)
+        end
+        cfReserved = setmetatable({}, { __mode = "k" })
+    end
+
+    local function cfMoveToTarget(model, targetPos, speed, r)
         if not cfRunning then return false end
         if not model or not model.Parent then return false end
 
@@ -1032,11 +1035,10 @@ return function(C, R, UI)
         local mp = mainPart(model)
         if not mp then return false end
 
-        local started = safeStartDrag(r, model)
-
-        local riseY = targetPos.Y + CF_ORB_OFFSET_Y
-        local H = bboxHeight(model)
-        local riserY = riseY - 1.0 + math.clamp(H * 0.45, 0.8, 3.0)
+        local started  = safeStartDrag(r, model)
+        local riseY    = targetPos.Y + CF_ORB_OFFSET_Y
+        local H        = bboxHeight(model)
+        local riserY   = riseY - 1.0 + math.clamp(H * 0.45, 0.8, 3.0)
 
         local lookDir = Vector3.new(targetPos.X, mp.Position.Y, targetPos.Z) - mp.Position
         lookDir = lookDir.Magnitude > 0.001 and lookDir.Unit or Vector3.zAxis
@@ -1068,6 +1070,12 @@ return function(C, R, UI)
             task.wait(CF_STEP_WAIT)
         end
 
+        if not cfRunning then
+            cfDropInPlace(model, cfActiveDrags[model])
+            cfClearActive(model)
+            return false
+        end
+
         while cfRunning and model and model.Parent do
             if cfNow() - t0 > CF_JOB_TIMEOUT then break end
             if isConsumed(model) then
@@ -1088,6 +1096,12 @@ return function(C, R, UI)
             zeroAssembly(model)
             Run.Heartbeat:Wait()
             task.wait(CF_STEP_WAIT)
+        end
+
+        if not cfRunning then
+            cfDropInPlace(model, cfActiveDrags[model])
+            cfClearActive(model)
+            return false
         end
 
         local finalPos = targetPos + Vector3.new(0, CF_FINAL_DROP_HEIGHT, 0)
@@ -1114,12 +1128,18 @@ return function(C, R, UI)
             task.wait(CF_STEP_WAIT)
         end
 
+        if not cfRunning then
+            cfDropInPlace(model, cfActiveDrags[model])
+            cfClearActive(model)
+            return false
+        end
+
         if model and model.Parent then
             setCollide(model, true, snapOrig)
             setPivot(model, CFrame.new(finalPos))
             for _, p in ipairs(getAllParts(model)) do
                 p.Anchored = false
-                p.AssemblyLinearVelocity = Vector3.new(0, -18, 0)
+                p.AssemblyLinearVelocity  = Vector3.new(0, -18, 0)
                 p.AssemblyAngularVelocity = Vector3.new()
             end
         end
@@ -1137,26 +1157,94 @@ return function(C, R, UI)
         end
 
         if started then stopDragHard(r, model) end
-
         if model and model.Parent then
             restoreNetworkOwner(model)
             refreshPrompts(model)
         end
-
         cfClearActive(model)
         return true
     end
 
-    local function cfStopAllDrags()
-        local copy = {}
-        for model, rec in pairs(cfActiveDrags) do
-            copy[model] = rec
+    local function cfRunOneCycle(feedNowCap)
+        local fire = findCampfire()
+        if not fire then return end
+
+        local processor     = findBiofuelProcessor()
+        local processorPart = processor and mainPart(processor)
+        local r             = getRemotes()
+
+        if not r.StartDrag or not r.StopDrag then return end
+
+        requestMoreStreamingAround({
+            cfFireCenter,
+            processorPart and processorPart.Position or nil
+        })
+
+        local totalDispatched = 0
+        local cap = feedNowCap or math.huge
+
+        for _, priorityName in ipairs(CF_PRIORITY) do
+            if not cfRunning then break end
+            if totalDispatched >= cap then break end
+
+            local isProcessorItem = CF_PROCESSOR_ITEMS[priorityName] == true
+            local targetPos
+
+            if isProcessorItem then
+                if not processorPart then continue end
+                targetPos = processorPart.Position
+            else
+                targetPos = cfFireCenter
+            end
+
+            local items = cfGetItemsByPriority()
+
+            local active     = 0
+            local activeLimit = math.min(CF_PER_ITEM_LIMIT[priorityName] or 1, cap - totalDispatched)
+
+            for _, item in ipairs(items) do
+                if not cfRunning then break end
+                if totalDispatched >= cap then break end
+
+                if item and item.Parent and item.Name == priorityName and cfIsWhitelisted(item) and cfIsNearFire(item) and not cfActiveDrags[item] and not cfReserved[item] then
+                    if item.Name == "Biofuel" and cfIsInsideIgnore(item) then continue end
+
+                    while active >= activeLimit and cfRunning do
+                        task.wait(0.05)
+                    end
+
+                    cfReserved[item] = true
+                    active += 1
+                    totalDispatched += 1
+
+                    task.spawn(function()
+                        cfMoveToTarget(item, targetPos, CF_FEED_SPEED, r)
+                        cfReserved[item] = nil
+                        active -= 1
+                    end)
+
+                    task.wait(CF_SPAWN_STAGGER)
+                end
+            end
+
+            local deadline = cfNow() + 30
+            while active > 0 and cfRunning and cfNow() < deadline do
+                task.wait(0.05)
+            end
         end
-        cfActiveDrags = {}
-        for model, rec in pairs(copy) do
-            cfStopActiveItem(model, rec)
+    end
+
+    local function cfFeedWorker()
+        while cfRunning do
+            local fire = findCampfire()
+            if fire and cfShouldFeed(fire) then
+                local fuel = readCampfireFuel(fire)
+                if fuel and fuel < CF_FEED_TARGET then
+                    cfRunOneCycle(nil)
+                end
+            end
+            task.wait(CF_REFILL_INTERVAL)
         end
-        cfReserved = setmetatable({}, { __mode = "k" })
     end
 
     local function cfStopLoop()
@@ -1166,85 +1254,6 @@ return function(C, R, UI)
             cfThread = nil
         end
         cfStopAllDrags()
-    end
-
-    local function cfFeedWorker()
-        while cfRunning do
-            local fire = findCampfire()
-            if fire and cfShouldFeed(fire) then
-                local fuel = readCampfireFuel(fire)
-                if fuel and fuel < CF_FEED_TARGET then
-                    local processor = findBiofuelProcessor()
-                    local processorPart = processor and mainPart(processor)
-                    local r = getRemotes()
-
-                    if r.StartDrag and r.StopDrag then
-                        requestMoreStreamingAround({
-                            cfFireCenter,
-                            processorPart and processorPart.Position or nil
-                        })
-
-                        local items = cfGetItemsByPriority()
-
-                        for _, priorityName in ipairs(CF_PRIORITY) do
-                            if not cfRunning then break end
-
-                            local latestFuel = readCampfireFuel(fire)
-                            if latestFuel and latestFuel >= CF_FEED_TARGET then break end
-
-                            local isProcessorItem = CF_PROCESSOR_ITEMS[priorityName] == true
-                            local targetPos
-
-                            if isProcessorItem then
-                                if not processorPart then continue end
-                                targetPos = processorPart.Position
-                            else
-                                targetPos = cfFireCenter
-                            end
-
-                            local active = 0
-                            local activeLimit = CF_PER_ITEM_LIMIT[priorityName] or 1
-
-                            for _, item in ipairs(items) do
-                                if not cfRunning then break end
-
-                                local latestFuel2 = readCampfireFuel(fire)
-                                if latestFuel2 and latestFuel2 >= CF_FEED_TARGET then break end
-
-                                if item and item.Parent and item.Name == priorityName and cfIsWhitelisted(item) and cfIsNearFire(item) and not cfActiveDrags[item] and not cfReserved[item] then
-                                    if item.Name == "Biofuel" and cfIsInsideIgnore(item) then continue end
-
-                                    while active >= activeLimit and cfRunning do
-                                        task.wait(0.05)
-                                    end
-
-                                    cfReserved[item] = true
-                                    active += 1
-
-                                    task.spawn(function()
-                                        cfMoveToTarget(item, targetPos, CF_FEED_SPEED, r, isProcessorItem)
-                                        cfReserved[item] = nil
-                                        active -= 1
-                                    end)
-
-                                    task.wait(CF_SPAWN_STAGGER)
-                                end
-                            end
-
-                            local deadline = cfNow() + 30
-                            while active > 0 and cfRunning and cfNow() < deadline do
-                                task.wait(0.05)
-                            end
-
-                            local latestFuel3 = readCampfireFuel(fire)
-                            if latestFuel3 and latestFuel3 >= CF_FEED_TARGET then break end
-                        end
-                    end
-                end
-            end
-
-            task.wait(CF_REFILL_INTERVAL)
-        end
     end
 
     local function cfStartLoop()
@@ -1271,7 +1280,7 @@ return function(C, R, UI)
         cfReserved     = setmetatable({}, { __mode = "k" })
         cfRunning      = true
 
-        local processor = findBiofuelProcessor()
+        local processor     = findBiofuelProcessor()
         local processorPart = processor and mainPart(processor)
 
         requestMoreStreamingAround({
@@ -1287,24 +1296,14 @@ return function(C, R, UI)
     })
 
     tab:Dropdown({
-        Title   = "Feed Items",
-        Values  = {
-            "Log",
-            "Coal",
-            "Fuel Canister",
-            "Oil Barrel",
-            "Biofuel",
-            "Morsel",
-            "Cooked Morsel",
-            "Steak",
-            "Cooked Steak",
-            "Carrot",
-            "Corn",
-            "Pumpkin",
-            "Strawberry",
+        Title    = "Feed Items",
+        Values   = {
+            "Log", "Coal", "Fuel Canister", "Oil Barrel", "Biofuel",
+            "Morsel", "Cooked Morsel", "Steak", "Cooked Steak",
+            "Carrot", "Corn", "Pumpkin", "Strawberry",
         },
-        Multi   = true,
-        Default = {},
+        Multi    = true,
+        Default  = {},
         Callback = function(selection)
             cfWhitelist = {}
             if type(selection) == "table" then
@@ -1316,8 +1315,8 @@ return function(C, R, UI)
     })
 
     tab:Toggle({
-        Title   = "Auto Feed Campfire",
-        Default = C.State.CampfireFeedEnabled and true or false,
+        Title    = "Auto Feed Campfire",
+        Default  = C.State.CampfireFeedEnabled and true or false,
         Callback = function(state)
             C.State.CampfireFeedEnabled = state and true or false
             if state then
@@ -1325,6 +1324,41 @@ return function(C, R, UI)
             else
                 cfStopLoop()
             end
+        end
+    })
+
+    tab:Button({
+        Title    = "Feed Now (50)",
+        Callback = function()
+            local fire = findCampfire()
+            if not fire then
+                warn("[CampfireFeed] MainFire not found")
+                return
+            end
+
+            local center = getCampfireCenter(fire)
+            if not center then
+                warn("[CampfireFeed] Center part not found")
+                return
+            end
+
+            local ignoreR, scanR = getCampfireTouchRadii(fire)
+            cfFireCenter   = center
+            cfIgnoreRadius = ignoreR
+            cfScanRadius   = scanR
+
+            if cfRunning then return end
+
+            cfActiveDrags = {}
+            cfReserved    = setmetatable({}, { __mode = "k" })
+            cfRunning     = true
+
+            task.spawn(function()
+                cfRunOneCycle(CF_FEED_NOW_LIMIT)
+                if not C.State.CampfireFeedEnabled then
+                    cfRunning = false
+                end
+            end)
         end
     })
 
