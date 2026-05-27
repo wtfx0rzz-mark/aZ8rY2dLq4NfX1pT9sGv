@@ -235,7 +235,7 @@ return function(C, R, UI)
         local STICK_DURATION       = 0.35
         local STICK_EXTRA_FR       = 2
         local STICK_CLEAR_VEL      = true
-        local TELEPORT_UP_NUDGE    = 0.05
+        local TELEPORT_UP_NUDGE    = 1.00
         local SAFE_DROP_UP         = 4.0
         local CAMPFIRE_TP_UP_NUDGE = 2.0
 
