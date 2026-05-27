@@ -12,13 +12,16 @@ return function(C, R, UI)
     C.State = C.State or {}
 
     local QUEUE_SIZE      = 20
-    local HOLD_HEIGHT     = 2.0
-    local HOLD_FRAMES     = 8
+    local ABOVE_HEIGHT    = 6
+    local SPACING         = 0.6
     local REFILL_INTERVAL = 2
     local DRAG_SETTLE     = 0.04
     local FEED_THRESHOLD  = 200
     local FEED_TARGET     = 350
     local FUEL_MAX        = 674
+
+    local BAR2_MIN = 0.484
+    local BAR2_MAX = 7.100
 
     local FUEL_ITEMS = {
         ["Log"] = true, ["Coal"] = true, ["Fuel Canister"] = true,
@@ -27,6 +30,7 @@ return function(C, R, UI)
 
     local running    = false
     local loopThread = nil
+    local slotIndex  = 1
 
     local function getRemotes()
         local re = RS:FindFirstChild("RemoteEvents")
@@ -119,102 +123,100 @@ return function(C, R, UI)
         return bars and bars:FindFirstChild("Bar2")
     end
 
-    local function getFuelRemaining(ext)
-        return ext:GetAttribute("FuelRemaining")
-    end
-
-    local function getFuelFromBar(bar2)
-        if not (bar2 and bar2.Parent) then return nil end
-        local BAR_MIN = 0.484
-        local BAR_MAX = 7.100
-        local x = bar2.Size.X
-        local pct = math.clamp((x - BAR_MIN) / (BAR_MAX - BAR_MIN), 0, 1)
-        return math.floor(pct * FUEL_MAX)
+    local function findPartParticle(ext)
+        return ext:FindFirstChild("PartParticle", true)
     end
 
     local function readFuel(ext, bar2)
-        local attr = getFuelRemaining(ext)
-        if attr and attr > 0 then return attr end
-        return getFuelFromBar(bar2) or 0
+        local attr = ext:GetAttribute("FuelRemaining")
+        if attr ~= nil and attr > 0 then return attr end
+        if bar2 and bar2.Parent then
+            local x = bar2.Size.X
+            local pct = math.clamp((x - BAR2_MIN) / (BAR2_MAX - BAR2_MIN), 0, 1)
+            return math.floor(pct * FUEL_MAX)
+        end
+        return 0
     end
 
-    local function findFuelItem()
+    local function getDropPos(furnace2, partParticle)
+        local f2pos = furnace2.Position
+        local pppos = partParticle and partParticle.Position or f2pos
+        return Vector3.new(
+            (f2pos.X + pppos.X) / 2,
+            math.max(f2pos.Y, pppos.Y) + 0.5,
+            (f2pos.Z + pppos.Z) / 2
+        )
+    end
+
+    local function findFuelItems(count)
+        local found = {}
+        local seen  = {}
         local itemsFolder = WS:FindFirstChild("Items")
         if itemsFolder then
             for _, d in ipairs(itemsFolder:GetChildren()) do
-                if d:IsA("Model") and FUEL_ITEMS[d.Name] and mainPart(d) then
-                    return d
+                if d:IsA("Model") and FUEL_ITEMS[d.Name] and mainPart(d) and not seen[d] then
+                    seen[d] = true
+                    found[#found+1] = d
+                    if #found >= count then return found end
                 end
             end
         end
         for _, d in ipairs(WS:GetDescendants()) do
-            if d:IsA("Model") and FUEL_ITEMS[d.Name] and mainPart(d) then
-                return d
+            if d:IsA("Model") and FUEL_ITEMS[d.Name] and mainPart(d) and not seen[d] then
+                seen[d] = true
+                found[#found+1] = d
+                if #found >= count then return found end
             end
         end
-        return nil
+        return found
     end
 
-    local function dropIntoBowl(model, dropPos, r)
-        if not (model and model.Parent) then return false end
-        severeExternalWelds(model)
-
-        local started = false
-        if r.StartDrag then
-            started = pcall(function() r.StartDrag:FireServer(model) end)
+    local function countQueueItems(dropPos)
+        local count = 0
+        for _, d in ipairs(WS:GetDescendants()) do
+            if d:IsA("Model") and FUEL_ITEMS[d.Name] then
+                local mp = mainPart(d)
+                if mp then
+                    local rel = mp.Position - dropPos
+                    local dxz = Vector2.new(rel.X, rel.Z).Magnitude
+                    local dy  = rel.Y
+                    if dxz <= (QUEUE_SIZE * SPACING) and dy >= 0 and dy <= (ABOVE_HEIGHT + 3) then
+                        count += 1
+                    end
+                end
+            end
         end
+        return count
+    end
 
-        Run.Heartbeat:Wait()
-        task.wait(DRAG_SETTLE)
+    local function placeAboveBowl(model, dropPos, slot)
+        if not (model and model.Parent) then return end
+        severeExternalWelds(model)
 
         local snap = setCollide(model, false)
         zeroAssembly(model)
 
-        local holdPos = dropPos + Vector3.new(0, HOLD_HEIGHT, 0)
-        if model:IsA("Model") then
-            model:PivotTo(CFrame.new(holdPos))
-        else
-            local mp = mainPart(model)
-            if mp then mp.CFrame = CFrame.new(holdPos) end
-        end
-
-        for _ = 1, HOLD_FRAMES do
-            if not (model and model.Parent) then break end
-            if model:IsA("Model") then
-                model:PivotTo(CFrame.new(holdPos))
-            else
-                local mp = mainPart(model)
-                if mp then mp.CFrame = CFrame.new(holdPos) end
-            end
-            zeroAssembly(model)
-            Run.Heartbeat:Wait()
-        end
+        local offset = (slot - 1) * SPACING
+        local abovePos = Vector3.new(
+            dropPos.X + offset,
+            dropPos.Y + ABOVE_HEIGHT,
+            dropPos.Z
+        )
 
         if model:IsA("Model") then
-            model:PivotTo(CFrame.new(dropPos))
+            model:PivotTo(CFrame.new(abovePos))
         else
             local mp = mainPart(model)
-            if mp then mp.CFrame = CFrame.new(dropPos) end
+            if mp then mp.CFrame = CFrame.new(abovePos) end
         end
-        zeroAssembly(model)
 
         setCollide(model, true, snap)
 
         for _, p in ipairs(getAllParts(model)) do
             p.Anchored = false
-            p.AssemblyLinearVelocity  = Vector3.new(0, -10, 0)
+            p.AssemblyLinearVelocity  = Vector3.new()
             p.AssemblyAngularVelocity = Vector3.new()
         end
-
-        task.wait(0.3)
-
-        if started and r.StopDrag then
-            pcall(function() r.StopDrag:FireServer(model) end)
-            task.wait(0.05)
-            pcall(function() r.StopDrag:FireServer(model) end)
-        end
-
-        return true
     end
 
     local function stopLoop()
@@ -222,6 +224,34 @@ return function(C, R, UI)
         if loopThread then
             pcall(function() task.cancel(loopThread) end)
             loopThread = nil
+        end
+    end
+
+    local function doFeedPass(ext, furnace2, partParticle, bar2, r)
+        local dropPos = getDropPos(furnace2, partParticle)
+        local inQueue = countQueueItems(dropPos)
+        local needed  = QUEUE_SIZE - inQueue
+        if needed <= 0 then return end
+
+        local items = findFuelItems(needed)
+        for _, m in ipairs(items) do
+            if not running then break end
+            if m and m.Parent then
+                local started = false
+                if r.StartDrag then
+                    started = pcall(function() r.StartDrag:FireServer(m) end)
+                end
+                Run.Heartbeat:Wait()
+                task.wait(DRAG_SETTLE)
+                placeAboveBowl(m, dropPos, slotIndex)
+                slotIndex = (slotIndex % QUEUE_SIZE) + 1
+                if started and r.StopDrag then
+                    pcall(function() r.StopDrag:FireServer(m) end)
+                    task.wait(0.03)
+                    pcall(function() r.StopDrag:FireServer(m) end)
+                end
+                task.wait(0.05)
+            end
         end
     end
 
@@ -240,33 +270,24 @@ return function(C, R, UI)
             return
         end
 
-        local bar2 = findBar2(ext)
+        local partParticle = findPartParticle(ext)
+        local bar2         = findBar2(ext)
 
-        running = true
+        running   = true
+        slotIndex = 1
 
         loopThread = task.spawn(function()
             local r = getRemotes()
 
             while running do
                 local fuel = readFuel(ext, bar2)
-                local pct  = math.floor((fuel / FUEL_MAX) * 100)
 
                 if fuel <= FEED_THRESHOLD then
-                    local fed = 0
                     while running do
                         local currentFuel = readFuel(ext, bar2)
                         if currentFuel >= FEED_TARGET then break end
-
-                        local dropPos = furnace2.Position
-                        local m = findFuelItem()
-                        if not m then
-                            task.wait(1)
-                            break
-                        end
-
-                        dropIntoBowl(m, dropPos, r)
-                        fed += 1
-                        task.wait(0.5)
+                        doFeedPass(ext, furnace2, partParticle, bar2, r)
+                        task.wait(1.0)
                     end
                 end
 
@@ -297,21 +318,10 @@ return function(C, R, UI)
             if not ext then return end
             local furnace2 = findFurnace2(ext)
             if not furnace2 then return end
+            local partParticle = findPartParticle(ext)
             local bar2 = findBar2(ext)
-            local fuel = readFuel(ext, bar2)
-            local needed = FEED_TARGET - fuel
-            if needed <= 0 then return end
             local r = getRemotes()
-            local count = 0
-            while count < QUEUE_SIZE do
-                local currentFuel = readFuel(ext, bar2)
-                if currentFuel >= FEED_TARGET then break end
-                local m = findFuelItem()
-                if not m then break end
-                dropIntoBowl(m, furnace2.Position, r)
-                count += 1
-                task.wait(0.5)
-            end
+            doFeedPass(ext, furnace2, partParticle, bar2, r)
         end
     })
 
