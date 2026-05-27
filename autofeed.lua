@@ -6,6 +6,24 @@ return function(C, R, UI)
 
     local lp = Players.LocalPlayer
     local Tabs = UI and UI.Tabs or {}
+    
+    print("[DEBUG] UI:", UI)
+    print("[DEBUG] Tabs:", Tabs)
+    print("[DEBUG] Available tab keys:", next(Tabs) and table.concat(next(Tabs) ~= nil and pairs(Tabs) and {} or {}, ", ") or "NONE")
+    
+    local tab  = Tabs.AutoFeed
+    print("[DEBUG] AutoFeed tab:", tab)
+    if not tab then 
+        warn("[AutoFeed] Tab not found - returning early")
+        return 
+    end
+    local Players = C.Services.Players
+    local WS      = C.Services.WS
+    local RS      = C.Services.RS
+    local Run     = C.Services.Run or game:GetService("RunService")
+
+    local lp = Players.LocalPlayer
+    local Tabs = UI and UI.Tabs or {}
     local tab  = Tabs.AutoFeed
     if not tab then return end
 
