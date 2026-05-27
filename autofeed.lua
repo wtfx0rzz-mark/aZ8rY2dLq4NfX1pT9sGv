@@ -1,22 +1,18 @@
 return function(C, R, UI)
-    local Players = C.Services.Players
-    local WS      = C.Services.WS
-    local RS      = C.Services.RS
-    local Run     = C.Services.Run or game:GetService("RunService")
+print("[DEBUG] UI:", UI)
+print("[DEBUG] Tabs:", Tabs)
+print("[DEBUG] Tabs type:", type(Tabs))
 
-    local lp = Players.LocalPlayer
-    local Tabs = UI and UI.Tabs or {}
-    
-    print("[DEBUG] UI:", UI)
-    print("[DEBUG] Tabs:", Tabs)
-    print("[DEBUG] Available tab keys:", next(Tabs) and table.concat(next(Tabs) ~= nil and pairs(Tabs) and {} or {}, ", ") or "NONE")
-    
-    local tab  = Tabs.AutoFeed
-    print("[DEBUG] AutoFeed tab:", tab)
-    if not tab then 
-        warn("[AutoFeed] Tab not found - returning early")
-        return 
-    end
+-- Print all keys in Tabs
+local tabKeys = {}
+for k, v in pairs(Tabs) do
+    table.insert(tabKeys, tostring(k))
+end
+print("[DEBUG] Available tab keys:", table.concat(tabKeys, ", ") or "NONE")
+
+-- Check AutoFeed specifically
+print("[DEBUG] AutoFeed tab:", Tabs.AutoFeed)
+print("[DEBUG] AutoFeed type:", type(Tabs.AutoFeed))
     local Players = C.Services.Players
     local WS      = C.Services.WS
     local RS      = C.Services.RS
