@@ -1,4 +1,19 @@
 return function(C, R, UI)
+    local ok, err = pcall(function()
+
+    local Players = C.Services.Players
+    local WS      = C.Services.WS
+    local RS      = C.Services.RS
+    local Run     = C.Services.Run or game:GetService("RunService")
+
+    local lp = Players.LocalPlayer
+    local Tabs = UI and UI.Tabs or {}
+    local tab  = Tabs.AutoFeed
+    if not tab then return end
+
+    end)
+    if not ok then warn("[AutoFeed] load error: " .. tostring(err)) end
+end
     local Players = C.Services.Players
     local WS      = C.Services.WS
     local RS      = C.Services.RS
