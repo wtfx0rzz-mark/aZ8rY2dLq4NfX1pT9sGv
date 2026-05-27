@@ -7,12 +7,6 @@ return function(C, R, UI)
     local lp = Players.LocalPlayer
     local Tabs = UI and UI.Tabs or {}
 
-    -- Print all keys in Tabs
-    local tabKeys = {}
-    for k, v in pairs(Tabs) do
-        table.insert(tabKeys, tostring(k))
-    end
-    
     local tab  = Tabs.AutoFeed
     if not tab then return end
 
@@ -42,7 +36,7 @@ return function(C, R, UI)
     local loopThread = nil
 
     local function getRemotes()
-        local re = RS:FindFirstChild("RemoteEvents")
+        local re = game:GetService("ReplicatedStorage"):FindFirstChild("RemoteEvents")
         return {
             StartDrag = re and re:FindFirstChild("RequestStartDraggingItem"),
             StopDrag  = re and re:FindFirstChild("StopDraggingItem"),
@@ -200,7 +194,6 @@ return function(C, R, UI)
     local function burnItem(item, ext, furnace2, r)
         if not (item and item.Parent and ext and furnace2 and r) then return false end
         
-        -- 1. Start dragging
         local started = false
         if r.StartDrag then
             started = pcall(function() r.StartDrag:FireServer(item) end)
@@ -209,7 +202,6 @@ return function(C, R, UI)
         Run.Heartbeat:Wait()
         task.wait(0.04)
         
-        -- 2. Move item to furnace position
         local bowlPos = getBowlPos(furnace2)
         local stackPos = Vector3.new(bowlPos.X, bowlPos.Y + ABOVE_HEIGHT, bowlPos.Z)
         
@@ -226,15 +218,13 @@ return function(C, R, UI)
         setCollide(item, true, snap)
         task.wait(0.1)
         
-        -- 3. Fire the burn remote
         local burned = false
         if r.BurnItem then
-            burned = pcall(function() r.BurnItem:FireServer(ext, item) end)
+            burned = pcall(function() r.BurnItem:FireServer(ext, Instance.new("Model")) end)
         end
         
         task.wait(0.1)
         
-        -- 4. Stop dragging
         if started and r.StopDrag then
             pcall(function() r.StopDrag:FireServer(item) end)
             task.wait(0.05)
