@@ -1,18 +1,4 @@
 return function(C, R, UI)
-print("[DEBUG] UI:", UI)
-print("[DEBUG] Tabs:", Tabs)
-print("[DEBUG] Tabs type:", type(Tabs))
-
--- Print all keys in Tabs
-local tabKeys = {}
-for k, v in pairs(Tabs) do
-    table.insert(tabKeys, tostring(k))
-end
-print("[DEBUG] Available tab keys:", table.concat(tabKeys, ", ") or "NONE")
-
--- Check AutoFeed specifically
-print("[DEBUG] AutoFeed tab:", Tabs.AutoFeed)
-print("[DEBUG] AutoFeed type:", type(Tabs.AutoFeed))
     local Players = C.Services.Players
     local WS      = C.Services.WS
     local RS      = C.Services.RS
@@ -20,6 +6,23 @@ print("[DEBUG] AutoFeed type:", type(Tabs.AutoFeed))
 
     local lp = Players.LocalPlayer
     local Tabs = UI and UI.Tabs or {}
+    
+    -- DEBUG CODE HERE (after Tabs is defined)
+    print("[DEBUG] UI:", UI)
+    print("[DEBUG] Tabs:", Tabs)
+    print("[DEBUG] Tabs type:", type(Tabs))
+
+    -- Print all keys in Tabs
+    local tabKeys = {}
+    for k, v in pairs(Tabs) do
+        table.insert(tabKeys, tostring(k))
+    end
+    print("[DEBUG] Available tab keys:", table.concat(tabKeys, ", ") or "NONE")
+
+    -- Check AutoFeed specifically
+    print("[DEBUG] AutoFeed tab:", Tabs.AutoFeed)
+    print("[DEBUG] AutoFeed type:", type(Tabs.AutoFeed))
+    
     local tab  = Tabs.AutoFeed
     if not tab then return end
 
