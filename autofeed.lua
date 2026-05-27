@@ -6,7 +6,6 @@ return function(C, R, UI)
 
     local lp = Players.LocalPlayer
     local Tabs = UI and UI.Tabs or {}
-
     local tab = Tabs.AutoFeed
     if not tab then return end
 
@@ -16,13 +15,14 @@ return function(C, R, UI)
     local FEED_THRESHOLD  = 200
     local FEED_TARGET     = 350
     local FUEL_MAX        = 674
-
     local BAR2_MIN = 0.484
     local BAR2_MAX = 7.100
 
     local PILE_TARGET_COUNT = 40
+    local PILE_SCAN_RADIUS  = 50
+
     local GATHER_SPEED = 420
-    local FEED_SPEED = 80
+    local FEED_SPEED   = 80
 
     local ORB_OFFSET_Y = 30
     local VERTICAL_MULT = 1.35
@@ -33,7 +33,9 @@ return function(C, R, UI)
     local MAX_FEED_ACTIVE = 4
     local DEST_RADIUS = 1.0
     local FINAL_DROP_HEIGHT = 4.0
-    local PILE_DROP_HEIGHT = 5.0
+
+    local PILE_DROP_HEIGHT = 4.0
+    local PILE_GROUND_HEIGHT = 1.0
     local PILE_RING_MIN = 0.75
     local PILE_RING_STEP = 0.12
     local PILE_RING_MAX = 6.0
@@ -53,12 +55,13 @@ return function(C, R, UI)
     }
 
     local running = false
-    local loopThread = nil
+    local gatherThread = nil
+    local feedThread = nil
     local pilePos = nil
     local pileCounter = 0
 
     local ActiveDrags = {}
-    local PiledItems = {}
+    local ReservedItems = setmetatable({}, { __mode = "k" })
 
     local function now()
         return os.clock()
@@ -94,7 +97,6 @@ return function(C, R, UI)
     local function getAllParts(target)
         local t = {}
         if not target then return t end
-
         if target:IsA("BasePart") then
             t[1] = target
         elseif target:IsA("Model") then
@@ -104,7 +106,6 @@ return function(C, R, UI)
                 end
             end
         end
-
         return t
     end
 
@@ -117,7 +118,6 @@ return function(C, R, UI)
 
     local function setCollide(model, on, snapshot)
         local parts = getAllParts(model)
-
         if on and snapshot then
             for part, can in pairs(snapshot) do
                 if part and part.Parent then
@@ -126,19 +126,16 @@ return function(C, R, UI)
             end
             return
         end
-
         local snap = {}
         for _, p in ipairs(parts) do
             snap[p] = p.CanCollide
             p.CanCollide = false
         end
-
         return snap
     end
 
     local function severeExternalWelds(model)
         if not model or not model.Parent then return end
-
         for _, d in ipairs(model:GetDescendants()) do
             if d:IsA("WeldConstraint") then
                 local p0 = d.Part0
@@ -149,14 +146,12 @@ return function(C, R, UI)
                     end)
                 end
             end
-
             if d:IsA("BasePart") and d.Anchored then
                 pcall(function()
                     d.Anchored = false
                 end)
             end
         end
-
         if model:IsA("BasePart") and model.Anchored then
             pcall(function()
                 model.Anchored = false
@@ -167,12 +162,10 @@ return function(C, R, UI)
     local function getRemote(...)
         local re = RS:FindFirstChild("RemoteEvents")
         if not re then return nil end
-
         for _, n in ipairs({...}) do
             local x = re:FindFirstChild(n)
             if x then return x end
         end
-
         return nil
     end
 
@@ -208,11 +201,9 @@ return function(C, R, UI)
         pcall(safeStopDrag, r, model)
         Run.Heartbeat:Wait()
         pcall(safeStopDrag, r, model)
-
         task.delay(0.05, function()
             pcall(safeStopDrag, r, model)
         end)
-
         task.delay(0.20, function()
             pcall(safeStopDrag, r, model)
         end)
@@ -231,7 +222,6 @@ return function(C, R, UI)
             pcall(function()
                 p:SetNetworkOwner(nil)
             end)
-
             pcall(function()
                 if p.SetNetworkOwnershipAuto then
                     p:SetNetworkOwnershipAuto()
@@ -242,7 +232,6 @@ return function(C, R, UI)
 
     local function refreshPrompts(model)
         if not model then return end
-
         for _, d in ipairs(model:GetDescendants()) do
             if d:IsA("ProximityPrompt") then
                 local was = d.Enabled
@@ -267,7 +256,6 @@ return function(C, R, UI)
 
     local function setPivot(model, cf)
         if not model or not model.Parent then return end
-
         if model:IsA("Model") then
             model:PivotTo(cf)
         else
@@ -280,11 +268,9 @@ return function(C, R, UI)
 
     local function getPivot(model)
         if not model or not model.Parent then return nil end
-
         if model:IsA("Model") then
             return model:GetPivot()
         end
-
         local p = mainPart(model)
         return p and p.CFrame or nil
     end
@@ -353,9 +339,17 @@ return function(C, R, UI)
         return 0
     end
 
+    local function currentFuel()
+        local ext = findGenerator()
+        if not ext then return nil, nil, nil, nil end
+        local furnace2 = findFurnace2(ext)
+        if not furnace2 then return nil, ext, nil, nil end
+        local bar2 = findBar2(ext)
+        return readFuel(ext, bar2), ext, furnace2, bar2
+    end
+
     local function requestMoreStreamingAround(posList)
         if not WS.StreamingEnabled then return end
-
         local seen = {}
         for _, pos in ipairs(posList) do
             if typeof(pos) == "Vector3" then
@@ -368,24 +362,28 @@ return function(C, R, UI)
                 end
             end
         end
-
         task.wait(0.12)
     end
 
-    local function cleanupPiledItems()
-        for item, _ in pairs(PiledItems) do
-            if not item or not item.Parent or not item:IsDescendantOf(WS) or not FUEL_ITEMS[item.Name] or not mainPart(item) then
-                PiledItems[item] = nil
-            end
-        end
+    local function isFuelItem(m)
+        return m and m:IsA("Model") and FUEL_ITEMS[m.Name] and mainPart(m) ~= nil
+    end
+
+    local function isNearPile(item)
+        if not pilePos then return false end
+        local mp = mainPart(item)
+        if not mp then return false end
+        return (mp.Position - pilePos).Magnitude <= PILE_SCAN_RADIUS
     end
 
     local function pileCount()
-        cleanupPiledItems()
-
+        if not pilePos then return 0 end
         local n = 0
-        for item, _ in pairs(PiledItems) do
-            if item and item.Parent then
+        local seen = {}
+
+        for _, d in ipairs(WS:GetDescendants()) do
+            if isFuelItem(d) and not seen[d] and not ActiveDrags[d] and not ReservedItems[d] and isNearPile(d) then
+                seen[d] = true
                 n += 1
             end
         end
@@ -401,18 +399,12 @@ return function(C, R, UI)
             foundByName[name] = {}
         end
 
-        local function scan(root)
-            if not root then return end
-
-            for _, d in ipairs(root:GetDescendants()) do
-                if d:IsA("Model") and FUEL_ITEMS[d.Name] and mainPart(d) and not seen[d] and not ActiveDrags[d] and not PiledItems[d] then
-                    seen[d] = true
-                    foundByName[d.Name][#foundByName[d.Name] + 1] = d
-                end
+        for _, d in ipairs(WS:GetDescendants()) do
+            if isFuelItem(d) and not seen[d] and not ActiveDrags[d] and not ReservedItems[d] and not isNearPile(d) then
+                seen[d] = true
+                foundByName[d.Name][#foundByName[d.Name] + 1] = d
             end
         end
-
-        scan(WS)
 
         if pilePos then
             for _, name in ipairs(FUEL_PRIORITY) do
@@ -436,17 +428,18 @@ return function(C, R, UI)
         return out
     end
 
-    local function getPiledItemsByPriority()
-        cleanupPiledItems()
-
+    local function getPileItemsByPriority()
         local foundByName = {}
+        local seen = {}
+
         for _, name in ipairs(FUEL_PRIORITY) do
             foundByName[name] = {}
         end
 
-        for item, _ in pairs(PiledItems) do
-            if item and item.Parent and FUEL_ITEMS[item.Name] and mainPart(item) then
-                foundByName[item.Name][#foundByName[item.Name] + 1] = item
+        for _, d in ipairs(WS:GetDescendants()) do
+            if isFuelItem(d) and not seen[d] and not ActiveDrags[d] and not ReservedItems[d] and isNearPile(d) then
+                seen[d] = true
+                foundByName[d.Name][#foundByName[d.Name] + 1] = d
             end
         end
 
@@ -474,11 +467,9 @@ return function(C, R, UI)
 
     local function nextPileOffset()
         pileCounter += 1
-
         local i = pileCounter
         local a = i * 2.399963229728653
         local r = math.min(PILE_RING_MIN + PILE_RING_STEP * (i - 1), PILE_RING_MAX)
-
         return Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
     end
 
@@ -494,7 +485,7 @@ return function(C, R, UI)
         return pilePos + Vector3.new(0, ORB_OFFSET_Y, 0)
     end
 
-    local function getPileTargetPos()
+    local function getPileFinalPos()
         return pilePos + nextPileOffset() + Vector3.new(0, PILE_DROP_HEIGHT, 0)
     end
 
@@ -550,7 +541,7 @@ return function(C, R, UI)
         end
     end
 
-    local function moveConveyor(model, orbPos, finalPos, speed, r, ext, burnAtEnd, markPiledAtEnd)
+    local function moveVisibleConveyor(model, orbPos, finalPos, speed, r, ext, burnAtEnd)
         if not running then return false end
         if not model or not model.Parent then return false end
 
@@ -577,13 +568,9 @@ return function(C, R, UI)
 
         while running and model and model.Parent do
             if now() - t0 > JOB_TIMEOUT then break end
-
             if isConsumed(model) then
-                if started then
-                    stopDragHard(r, model)
-                end
+                if started then stopDragHard(r, model) end
                 clearActive(model)
-                PiledItems[model] = nil
                 restoreNetworkOwner(model)
                 return true
             end
@@ -607,13 +594,9 @@ return function(C, R, UI)
 
         while running and model and model.Parent do
             if now() - t0 > JOB_TIMEOUT then break end
-
             if isConsumed(model) then
-                if started then
-                    stopDragHard(r, model)
-                end
+                if started then stopDragHard(r, model) end
                 clearActive(model)
-                PiledItems[model] = nil
                 restoreNetworkOwner(model)
                 return true
             end
@@ -639,13 +622,9 @@ return function(C, R, UI)
 
         while running and model and model.Parent do
             if now() - t0 > JOB_TIMEOUT then break end
-
             if isConsumed(model) then
-                if started then
-                    stopDragHard(r, model)
-                end
+                if started then stopDragHard(r, model) end
                 clearActive(model)
-                PiledItems[model] = nil
                 restoreNetworkOwner(model)
                 return true
             end
@@ -669,17 +648,6 @@ return function(C, R, UI)
             task.wait(STEP_WAIT)
         end
 
-        if not running then
-            clearActive(model)
-            if model and model.Parent then
-                if snapOrig then
-                    setCollide(model, true, snapOrig)
-                end
-                restoreNetworkOwner(model)
-            end
-            return false
-        end
-
         if model and model.Parent then
             setCollide(model, true, snapOrig)
             setPivot(model, CFrame.new(finalPos))
@@ -701,7 +669,6 @@ return function(C, R, UI)
                         stopDragHard(r, model)
                     end
                     clearActive(model)
-                    PiledItems[model] = nil
                     restoreNetworkOwner(model)
                     return true
                 end
@@ -718,134 +685,129 @@ return function(C, R, UI)
         if model and model.Parent then
             restoreNetworkOwner(model)
             refreshPrompts(model)
+            pcall(function()
+                model:SetAttribute("AmmoFeedInFlightAt", nil)
+                model:SetAttribute("AmmoFeedJob", nil)
+            end)
         end
 
         clearActive(model)
 
-        if markPiledAtEnd and model and model.Parent and FUEL_ITEMS[model.Name] then
-            PiledItems[model] = true
-        end
-
         return true
     end
 
-    local function gatherPile()
-        if not running then return 0 end
-        if not pilePos then return 0 end
-
-        cleanupPiledItems()
-
-        local needed = PILE_TARGET_COUNT - pileCount()
-        if needed <= 0 then return 0 end
-
-        local r = getRemotes()
-        if not r.StartDrag or not r.StopDrag then return 0 end
-
-        local candidates = scanFuelItemsByPriority()
-        if #candidates == 0 then return 0 end
-
-        local orbPos = getPileOrbPos()
-        local moved = 0
-        local active = 0
-        local index = 1
-
-        while running and moved < needed and index <= #candidates do
-            while active >= MAX_GATHER_ACTIVE and running do
-                Run.Heartbeat:Wait()
-            end
-
-            local item = candidates[index]
-            index += 1
-
-            if item and item.Parent and FUEL_ITEMS[item.Name] and mainPart(item) and not PiledItems[item] and not ActiveDrags[item] then
-                local finalPos = getPileTargetPos()
-
-                active += 1
-
-                task.spawn(function()
-                    local ok = moveConveyor(item, orbPos, finalPos, GATHER_SPEED, r, nil, false, true)
-                    if ok then
-                        moved += 1
-                    end
-                    active -= 1
-                end)
-
-                task.wait(0.04)
-            end
-        end
-
-        local deadline = now() + 15
-        while active > 0 and running and now() < deadline do
-            Run.Heartbeat:Wait()
-        end
-
-        return moved
+    local function shouldMoveItems()
+        local fuel = currentFuel()
+        return fuel ~= nil and fuel <= FEED_THRESHOLD
     end
 
-    local function feedFromPile(ext, furnace2, bar2)
-        if not running then return 0 end
-
-        local furnacePart = mainPart(furnace2)
-        if not furnacePart then return 0 end
-
-        local r = getRemotes()
-        if not r.StartDrag or not r.StopDrag then return 0 end
-
-        local orbPos = getAmmoOrbCF(furnacePart).Position
-        local finalPos = getFinalTargetPos(furnacePart)
-        local fed = 0
-
+    local function gatherWorker()
         while running do
-            local currentFuel = readFuel(ext, bar2)
-            if currentFuel >= FEED_TARGET then break end
+            if pilePos and shouldMoveItems() then
+                local currentPile = pileCount()
 
-            cleanupPiledItems()
-            local pileItems = getPiledItemsByPriority()
-            if #pileItems == 0 then break end
+                if currentPile < PILE_TARGET_COUNT then
+                    local needed = PILE_TARGET_COUNT - currentPile
+                    local r = getRemotes()
 
-            local active = 0
-            local movedThisPass = 0
+                    if r.StartDrag and r.StopDrag then
+                        local candidates = scanFuelItemsByPriority()
+                        local active = 0
+                        local moved = 0
+                        local index = 1
 
-            for _, item in ipairs(pileItems) do
-                if not running then break end
+                        while running and shouldMoveItems() and moved < needed and index <= #candidates do
+                            while active >= MAX_GATHER_ACTIVE and running do
+                                Run.Heartbeat:Wait()
+                            end
 
-                currentFuel = readFuel(ext, bar2)
-                if currentFuel >= FEED_TARGET then break end
+                            local item = candidates[index]
+                            index += 1
 
-                while active >= MAX_FEED_ACTIVE and running do
-                    Run.Heartbeat:Wait()
-                end
+                            if item and item.Parent and isFuelItem(item) and not isNearPile(item) and not ActiveDrags[item] and not ReservedItems[item] then
+                                ReservedItems[item] = true
+                                active += 1
 
-                if item and item.Parent and FUEL_ITEMS[item.Name] and mainPart(item) and not ActiveDrags[item] then
-                    PiledItems[item] = nil
-                    active += 1
+                                task.spawn(function()
+                                    local ok = moveVisibleConveyor(item, getPileOrbPos(), getPileFinalPos(), GATHER_SPEED, r, nil, false)
+                                    ReservedItems[item] = nil
+                                    if ok then
+                                        moved += 1
+                                    end
+                                    active -= 1
+                                end)
 
-                    task.spawn(function()
-                        local ok = moveConveyor(item, orbPos, finalPos, FEED_SPEED, r, ext, true, false)
-                        if ok then
-                            fed += 1
-                            movedThisPass += 1
+                                task.wait(0.04)
+                            end
                         end
-                        active -= 1
-                    end)
 
-                    task.wait(0.35)
+                        local deadline = now() + 15
+                        while active > 0 and running and now() < deadline do
+                            Run.Heartbeat:Wait()
+                        end
+                    end
                 end
             end
 
-            local deadline = now() + 20
-            while active > 0 and running and now() < deadline do
-                Run.Heartbeat:Wait()
-            end
-
-            if movedThisPass == 0 then
-                break
-            end
-
-            task.wait(0.2)
+            task.wait(0.35)
         end
+    end
 
-        return fed
+    local function feedWorker()
+        while running do
+            if pilePos and shouldMoveItems() then
+                local fuel, ext, furnace2, bar2 = currentFuel()
+
+                if fuel and ext and furnace2 and bar2 and fuel < FEED_TARGET then
+                    local furnacePart = mainPart(furnace2)
+                    local r = getRemotes()
+
+                    if furnacePart and r.StartDrag and r.StopDrag then
+                        requestMoreStreamingAround({
+                            pilePos,
+                            furnacePart.Position
+                        })
+
+                        local orbPos = getAmmoOrbCF(furnacePart).Position
+                        local finalPos = getFinalTargetPos(furnacePart)
+                        local pileItems = getPileItemsByPriority()
+                        local active = 0
+
+                        for _, item in ipairs(pileItems) do
+                            if not running then break end
+                            if not shouldMoveItems() then break end
+
+                            local latestFuel = readFuel(ext, bar2)
+                            if latestFuel >= FEED_TARGET then break end
+
+                            while active >= MAX_FEED_ACTIVE and running do
+                                Run.Heartbeat:Wait()
+                            end
+
+                            if item and item.Parent and isFuelItem(item) and isNearPile(item) and not ActiveDrags[item] and not ReservedItems[item] then
+                                ReservedItems[item] = true
+                                active += 1
+
+                                task.spawn(function()
+                                    moveVisibleConveyor(item, orbPos, finalPos, FEED_SPEED, r, ext, true)
+                                    ReservedItems[item] = nil
+                                    active -= 1
+                                end)
+
+                                task.wait(0.35)
+                            end
+                        end
+
+                        local deadline = now() + 20
+                        while active > 0 and running and now() < deadline do
+                            Run.Heartbeat:Wait()
+                        end
+                    end
+                end
+            end
+
+            task.wait(0.25)
+        end
     end
 
     local function stopAllOutstandingDrags()
@@ -860,57 +822,28 @@ return function(C, R, UI)
         for model, rec in pairs(copy) do
             stopActiveItem(model, rec)
         end
+
+        ReservedItems = setmetatable({}, { __mode = "k" })
     end
 
     local function stopLoop()
         running = false
 
-        if loopThread then
+        if gatherThread then
             pcall(function()
-                task.cancel(loopThread)
+                task.cancel(gatherThread)
             end)
-            loopThread = nil
+            gatherThread = nil
+        end
+
+        if feedThread then
+            pcall(function()
+                task.cancel(feedThread)
+            end)
+            feedThread = nil
         end
 
         stopAllOutstandingDrags()
-    end
-
-    local function runFeedCycle()
-        local ext = findGenerator()
-        if not ext then
-            warn("[AutoFeed] GeneratorExtension not found")
-            return
-        end
-
-        local furnace2 = findFurnace2(ext)
-        if not furnace2 then
-            warn("[AutoFeed] Furnace2 not found")
-            return
-        end
-
-        local bar2 = findBar2(ext)
-        local currentFuel = readFuel(ext, bar2)
-
-        if currentFuel > FEED_THRESHOLD then
-            return
-        end
-
-        local root = hrp()
-        local furnacePart = mainPart(furnace2)
-        requestMoreStreamingAround({
-            root and root.Position or nil,
-            pilePos,
-            furnacePart and furnacePart.Position or nil
-        })
-
-        gatherPile()
-
-        currentFuel = readFuel(ext, bar2)
-        if currentFuel >= FEED_TARGET then
-            return
-        end
-
-        feedFromPile(ext, furnace2, bar2)
     end
 
     local function startLoop()
@@ -922,11 +855,6 @@ return function(C, R, UI)
             return
         end
 
-        pilePos = root.Position
-        pileCounter = 0
-        PiledItems = {}
-        ActiveDrags = {}
-
         local ext = findGenerator()
         if not ext then
             warn("[AutoFeed] GeneratorExtension not found")
@@ -939,14 +867,20 @@ return function(C, R, UI)
             return
         end
 
+        pilePos = root.Position
+        pileCounter = 0
+        ActiveDrags = {}
+        ReservedItems = setmetatable({}, { __mode = "k" })
         running = true
 
-        loopThread = task.spawn(function()
-            while running do
-                runFeedCycle()
-                task.wait(REFILL_INTERVAL)
-            end
-        end)
+        local furnacePart = mainPart(furnace2)
+        requestMoreStreamingAround({
+            pilePos,
+            furnacePart and furnacePart.Position or nil
+        })
+
+        gatherThread = task.spawn(gatherWorker)
+        feedThread = task.spawn(feedWorker)
     end
 
     tab:Section({
@@ -970,22 +904,25 @@ return function(C, R, UI)
     tab:Button({
         Title = "Feed Now",
         Callback = function()
-            if not running then
-                local root = hrp()
-                if not root then return end
-                pilePos = root.Position
-                pileCounter = 0
-                PiledItems = {}
-                ActiveDrags = {}
-                running = true
-                runFeedCycle()
-                running = false
-                stopAllOutstandingDrags()
-            else
-                task.spawn(function()
-                    runFeedCycle()
-                end)
-            end
+            if running then return end
+
+            local root = hrp()
+            if not root then return end
+
+            pilePos = root.Position
+            pileCounter = 0
+            ActiveDrags = {}
+            ReservedItems = setmetatable({}, { __mode = "k" })
+            running = true
+
+            gatherThread = task.spawn(gatherWorker)
+            feedThread = task.spawn(feedWorker)
+
+            task.delay(20, function()
+                if running and not C.State.AutoFeedEnabled then
+                    stopLoop()
+                end
+            end)
         end
     })
 
