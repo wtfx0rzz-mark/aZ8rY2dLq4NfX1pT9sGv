@@ -19,9 +19,7 @@ return function(C, R, UI)
     C.State = C.State or {}
 
     local ABOVE_HEIGHT    = 3.0
-    local Y_STACK_SPACING = 0.8
     local REFILL_INTERVAL = 2
-    local DRAG_SETTLE     = 0.04
     local FEED_THRESHOLD  = 200
     local FEED_TARGET     = 350
     local FUEL_MAX        = 674
@@ -48,6 +46,7 @@ return function(C, R, UI)
         return {
             StartDrag = re and re:FindFirstChild("RequestStartDraggingItem"),
             StopDrag  = re and re:FindFirstChild("StopDraggingItem"),
+            BurnItem  = re and re:FindFirstChild("RequestAmmoFurnaceBurnItem"),
         }
     end
 
@@ -128,12 +127,6 @@ return function(C, R, UI)
         return furnace and furnace:FindFirstChild("Furnace2")
     end
 
-    local function findPartParticle(ext)
-        local extraBits = ext:FindFirstChild("ExtraBits")
-        local furnace = extraBits and extraBits:FindFirstChild("Furnace")
-        return furnace and furnace:FindFirstChild("PartParticle")
-    end
-
     local function findBar2(ext)
         local extraBits = ext:FindFirstChild("ExtraBits")
         local bars = extraBits and extraBits:FindFirstChild("Bars")
@@ -151,14 +144,8 @@ return function(C, R, UI)
         return 0
     end
 
-    local function getBowlPos(furnace2, partParticle)
-        local f2 = furnace2.Position
-        local pp = partParticle and partParticle.Position or f2
-        return Vector3.new(
-            (f2.X + pp.X) / 2,
-            math.max(f2.Y, pp.Y),
-            (f2.Z + pp.Z) / 2
-        )
+    local function getBowlPos(furnace2)
+        return furnace2.Position
     end
 
     local function scanFuelItems()
@@ -210,45 +197,59 @@ return function(C, R, UI)
         return batches
     end
 
-    local function dropBatch(batch, bowlPos, r)
-        local dropY = bowlPos.Y + ABOVE_HEIGHT
-        for i, m in ipairs(batch) do
-            if m and m.Parent then
-                severeExternalWelds(m)
-                local started = false
-                if r.StartDrag then
-                    started = pcall(function() r.StartDrag:FireServer(m) end)
-                end
-                Run.Heartbeat:Wait()
-                task.wait(DRAG_SETTLE)
-                local stackPos = Vector3.new(
-                    bowlPos.X,
-                    dropY + (i - 1) * Y_STACK_SPACING,
-                    bowlPos.Z
-                )
-                local snap = setCollide(m, false)
-                zeroAssembly(m)
-                if m:IsA("Model") then
-                    m:PivotTo(CFrame.new(stackPos))
-                else
-                    local mp = mainPart(m)
-                    if mp then mp.CFrame = CFrame.new(stackPos) end
-                end
-                setCollide(m, true, snap)  -- restore collision FIRST
+    local function burnItem(item, ext, furnace2, r)
+        if not (item and item.Parent and ext and furnace2 and r) then return false end
+        
+        -- 1. Start dragging
+        local started = false
+        if r.StartDrag then
+            started = pcall(function() r.StartDrag:FireServer(item) end)
+        end
+        
+        Run.Heartbeat:Wait()
+        task.wait(0.04)
+        
+        -- 2. Move item to furnace position
+        local bowlPos = getBowlPos(furnace2)
+        local stackPos = Vector3.new(bowlPos.X, bowlPos.Y + ABOVE_HEIGHT, bowlPos.Z)
+        
+        local snap = setCollide(item, false)
+        zeroAssembly(item)
+        
+        if item:IsA("Model") then
+            item:PivotTo(CFrame.new(stackPos))
+        else
+            local mp = mainPart(item)
+            if mp then mp.CFrame = CFrame.new(stackPos) end
+        end
+        
+        setCollide(item, true, snap)
+        task.wait(0.1)
+        
+        -- 3. Fire the burn remote
+        local burned = false
+        if r.BurnItem then
+            burned = pcall(function() r.BurnItem:FireServer(ext, item) end)
+        end
+        
+        task.wait(0.1)
+        
+        -- 4. Stop dragging
+        if started and r.StopDrag then
+            pcall(function() r.StopDrag:FireServer(item) end)
+            task.wait(0.05)
+            pcall(function() r.StopDrag:FireServer(item) end)
+        end
+        
+        return burned
+    end
 
-                for _, p in ipairs(getAllParts(m)) do
-                    p.Anchored = false
-                    p.AssemblyLinearVelocity  = Vector3.new(0, -20, 0)  -- downward velocity
-                    p.AssemblyAngularVelocity = Vector3.new()
-                end
-
-                task.wait(0.15)  -- let physics register with collision on before releasing drag
-
-                if started and r.StopDrag then
-                    pcall(function() r.StopDrag:FireServer(m) end)
-                    task.wait(0.05)
-                    pcall(function() r.StopDrag:FireServer(m) end)
-                end
+    local function dropBatch(batch, ext, furnace2, r)
+        for _, item in ipairs(batch) do
+            if item and item.Parent then
+                severeExternalWelds(item)
+                burnItem(item, ext, furnace2, r)
+                task.wait(0.3)
             end
         end
     end
@@ -276,8 +277,7 @@ return function(C, R, UI)
             return
         end
 
-        local partParticle = findPartParticle(ext)
-        local bar2         = findBar2(ext)
+        local bar2 = findBar2(ext)
 
         running = true
 
@@ -288,7 +288,6 @@ return function(C, R, UI)
                 local fuel = readFuel(ext, bar2)
 
                 if fuel <= FEED_THRESHOLD then
-                    local bowlPos = getBowlPos(furnace2, partParticle)
                     local items   = scanFuelItems()
                     local batches = buildBatches(items)
 
@@ -296,8 +295,7 @@ return function(C, R, UI)
                         if not running then break end
                         local currentFuel = readFuel(ext, bar2)
                         if currentFuel >= FEED_TARGET then break end
-                        dropBatch(batch, bowlPos, r)
-                        task.wait(1.5)
+                        dropBatch(batch, ext, furnace2, r)
                     end
                 end
 
@@ -328,17 +326,14 @@ return function(C, R, UI)
             if not ext then return end
             local furnace2 = findFurnace2(ext)
             if not furnace2 then return end
-            local partParticle = findPartParticle(ext)
             local bar2 = findBar2(ext)
             local r = getRemotes()
-            local bowlPos = getBowlPos(furnace2, partParticle)
             local items = scanFuelItems()
             local batches = buildBatches(items)
             for _, batch in ipairs(batches) do
                 local currentFuel = readFuel(ext, bar2)
                 if currentFuel >= FEED_TARGET then break end
-                dropBatch(batch, bowlPos, r)
-                task.wait(1.5)
+                dropBatch(batch, ext, furnace2, r)
             end
         end
     })
