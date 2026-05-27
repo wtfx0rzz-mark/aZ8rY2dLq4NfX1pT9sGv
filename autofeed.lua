@@ -12,7 +12,6 @@ return function(C, R, UI)
 
     C.State = C.State or {}
 
-    local ABOVE_HEIGHT    = 3.0
     local REFILL_INTERVAL = 2
     local FEED_THRESHOLD  = 200
     local FEED_TARGET     = 350
@@ -21,27 +20,38 @@ return function(C, R, UI)
     local BAR2_MIN = 0.484
     local BAR2_MAX = 7.100
 
-    local SMALL_FUEL = {
-        ["Log"] = true, ["Coal"] = true, ["Biofuel"] = true, ["Chair"] = true
-    }
+    local FALLBACK_UP     = 4
+    local DRAG_SETTLE     = 0.06
+    local ACTION_HOLD     = 0.12
+    local CONSUME_WAIT    = 1.0
+    local COLLIDE_OFF_SEC = 0.22
 
-    local LARGE_FUEL = {
-        ["Fuel Canister"] = true, ["Oil Barrel"] = true
+    local SMALL_FUEL = {
+        ["Coal"] = true,
+        ["Biofuel"] = true
     }
 
     local FUEL_ITEMS = {
-        ["Log"] = true, ["Coal"] = true, ["Fuel Canister"] = true,
-        ["Oil Barrel"] = true, ["Biofuel"] = true, ["Chair"] = true
+        ["Coal"] = true,
+        ["Fuel Canister"] = true,
+        ["Oil Barrel"] = true,
+        ["Biofuel"] = true
     }
 
     local running    = false
     local loopThread = nil
 
+    local DragStarted = setmetatable({}, { __mode = "k" })
+
+    local function now()
+        return os.clock()
+    end
+
     local function getRemotes()
         local re = game:GetService("ReplicatedStorage"):FindFirstChild("RemoteEvents")
         return {
             StartDrag = re and re:FindFirstChild("RequestStartDraggingItem"),
-            StopDrag  = re and re:FindFirstChild("StopDraggingItem"),
+            StopDrag  = re and (re:FindFirstChild("StopDraggingItem") or re:FindFirstChild("RequestStopDraggingItem")),
             BurnItem  = re and re:FindFirstChild("RequestAmmoFurnaceBurnItem"),
         }
     end
@@ -51,6 +61,8 @@ return function(C, R, UI)
         if obj:IsA("BasePart") then return obj end
         if obj:IsA("Model") then
             if obj.PrimaryPart then return obj.PrimaryPart end
+            local main = obj:FindFirstChild("Main", true)
+            if main and main:IsA("BasePart") then return main end
             return obj:FindFirstChildWhichIsA("BasePart", true)
         end
         return nil
@@ -63,9 +75,11 @@ return function(C, R, UI)
             t[1] = m
             return t
         end
-        for _, d in ipairs(m:GetDescendants()) do
-            if d:IsA("BasePart") then
-                t[#t + 1] = d
+        if m:IsA("Model") then
+            for _, d in ipairs(m:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    t[#t + 1] = d
+                end
             end
         end
         return t
@@ -79,6 +93,8 @@ return function(C, R, UI)
     end
 
     local function setCollide(m, on, snapshot)
+        local parts = getAllParts(m)
+
         if on and snapshot then
             for part, can in pairs(snapshot) do
                 if part and part.Parent then
@@ -89,19 +105,20 @@ return function(C, R, UI)
         end
 
         local snap = {}
-        for _, p in ipairs(getAllParts(m)) do
+        for _, p in ipairs(parts) do
             snap[p] = p.CanCollide
             p.CanCollide = false
         end
         return snap
     end
 
-    local function severExternalWelds(m)
+    local function severeExternalWelds(m)
         if not (m and m.Parent) then return end
 
         for _, d in ipairs(m:GetDescendants()) do
             if d:IsA("WeldConstraint") then
-                local p0, p1 = d.Part0, d.Part1
+                local p0 = d.Part0
+                local p1 = d.Part1
                 if (p0 and not p0:IsDescendantOf(m)) or (p1 and not p1:IsDescendantOf(m)) then
                     pcall(function()
                         d:Destroy()
@@ -115,6 +132,156 @@ return function(C, R, UI)
                 end)
             end
         end
+
+        if m:IsA("BasePart") and m.Anchored then
+            pcall(function()
+                m.Anchored = false
+            end)
+        end
+    end
+
+    local function refreshPrompts(model)
+        if not model then return end
+
+        for _, d in ipairs(model:GetDescendants()) do
+            if d:IsA("ProximityPrompt") then
+                local was = d.Enabled
+                d.Enabled = false
+                task.defer(function()
+                    if d and d.Parent then
+                        d.Enabled = was ~= false
+                    end
+                end)
+            end
+        end
+    end
+
+    local function safeStartDrag(r, model)
+        if r and r.StartDrag and model and model.Parent then
+            local ok = pcall(function()
+                r.StartDrag:FireServer(model)
+            end)
+            return ok
+        end
+        return false
+    end
+
+    local function safeStopDrag(r, model)
+        if r and r.StopDrag and model and model.Parent then
+            local ok = pcall(function()
+                r.StopDrag:FireServer(model)
+            end)
+            return ok
+        end
+        return false
+    end
+
+    local function finallyStopDrag(r, model)
+        task.delay(0.05, function()
+            pcall(safeStopDrag, r, model)
+        end)
+        task.delay(0.20, function()
+            pcall(safeStopDrag, r, model)
+        end)
+    end
+
+    local function finallyStopDragTwice(r, model)
+        pcall(safeStopDrag, r, model)
+        Run.Heartbeat:Wait()
+        pcall(safeStopDrag, r, model)
+
+        task.delay(0.05, function()
+            pcall(safeStopDrag, r, model)
+        end)
+
+        task.delay(0.20, function()
+            pcall(safeStopDrag, r, model)
+        end)
+    end
+
+    local function markDragStarted(model)
+        if not (model and model.Parent) then return end
+        DragStarted[model] = true
+        pcall(function()
+            model:SetAttribute("AutoFeedDragStarted", true)
+        end)
+    end
+
+    local function clearDragStarted(model)
+        if not model then return end
+        DragStarted[model] = nil
+        pcall(function()
+            if model and model.Parent then
+                model:SetAttribute("AutoFeedDragStarted", nil)
+            end
+        end)
+    end
+
+    local function stopIfDragging(r, model)
+        if not model then return end
+        if DragStarted[model] then
+            finallyStopDrag(r, model)
+            clearDragStarted(model)
+        end
+    end
+
+    local function stopAllOutstandingDrags()
+        local r = getRemotes()
+        for model, _ in pairs(DragStarted) do
+            if model and model.Parent then
+                finallyStopDragTwice(r, model)
+                clearDragStarted(model)
+            else
+                DragStarted[model] = nil
+            end
+        end
+    end
+
+    local function awaitConsumedOrMoved(model, timeout)
+        local t0 = now()
+        local p0 = model and model.Parent or nil
+
+        while now() - t0 < (timeout or 1) do
+            if not model or not model.Parent then return true end
+            if model.Parent ~= p0 then return true end
+            if model:GetAttribute("Consumed") == true then return true end
+            Run.Heartbeat:Wait()
+        end
+
+        return false
+    end
+
+    local function pivotOverTarget(model, target)
+        local mp = mainPart(target)
+        if not mp then return false end
+
+        local above = mp.CFrame + Vector3.new(0, FALLBACK_UP, 0)
+        local snap = setCollide(model, false)
+
+        zeroAssembly(model)
+
+        if model:IsA("Model") then
+            model:PivotTo(above)
+        else
+            local p = mainPart(model)
+            if p then
+                p.CFrame = above
+            end
+        end
+
+        for _, p in ipairs(getAllParts(model)) do
+            p.Anchored = false
+            p.AssemblyLinearVelocity = Vector3.new(0, -8, 0)
+            p.AssemblyAngularVelocity = Vector3.new()
+        end
+
+        task.delay(COLLIDE_OFF_SEC, function()
+            if model and model.Parent then
+                setCollide(model, true, snap)
+            end
+        end)
+
+        return true
     end
 
     local function findGenerator()
@@ -134,19 +301,19 @@ return function(C, R, UI)
     end
 
     local function findFurnace2(ext)
-        local extraBits = ext:FindFirstChild("ExtraBits")
+        local extraBits = ext and ext:FindFirstChild("ExtraBits")
         local furnace = extraBits and extraBits:FindFirstChild("Furnace")
         return furnace and furnace:FindFirstChild("Furnace2")
     end
 
     local function findBar2(ext)
-        local extraBits = ext:FindFirstChild("ExtraBits")
+        local extraBits = ext and ext:FindFirstChild("ExtraBits")
         local bars = extraBits and extraBits:FindFirstChild("Bars")
         return bars and bars:FindFirstChild("Bar2")
     end
 
     local function readFuel(ext, bar2)
-        local attr = ext:GetAttribute("FuelRemaining")
+        local attr = ext and ext:GetAttribute("FuelRemaining")
         if attr ~= nil and attr > 0 then
             return attr
         end
@@ -158,10 +325,6 @@ return function(C, R, UI)
         end
 
         return 0
-    end
-
-    local function getBowlPos(furnace2)
-        return furnace2.Position
     end
 
     local function scanFuelItems()
@@ -224,76 +387,41 @@ return function(C, R, UI)
     local function burnItem(item, ext, furnace2, r)
         if not (item and item.Parent and ext and furnace2 and r) then return false end
 
-        local started = false
-        if r.StartDrag then
-            started = pcall(function()
-                r.StartDrag:FireServer(item)
-            end)
+        severeExternalWelds(item)
+
+        local started = safeStartDrag(r, item)
+        if started then
+            markDragStarted(item)
         end
 
         Run.Heartbeat:Wait()
-        task.wait(0.04)
+        task.wait(DRAG_SETTLE)
 
-        local bowlPos = getBowlPos(furnace2)
-        local stackPos = Vector3.new(bowlPos.X, bowlPos.Y + ABOVE_HEIGHT, bowlPos.Z)
+        local moved = pivotOverTarget(item, furnace2)
 
-        local snap = setCollide(item, false)
-        zeroAssembly(item)
-
-        if item:IsA("Model") then
-            item:PivotTo(CFrame.new(stackPos))
-        else
-            local mp = mainPart(item)
-            if mp then
-                mp.CFrame = CFrame.new(stackPos)
-            end
-        end
-
-        zeroAssembly(item)
-        task.wait(0.05)
-
-        if started and r.StopDrag then
-            pcall(function()
-                r.StopDrag:FireServer(item)
-            end)
-            task.wait(0.05)
-            pcall(function()
-                r.StopDrag:FireServer(item)
-            end)
-        end
-
-        setCollide(item, true, snap)
-
-        local mp = mainPart(item)
-        if mp then
-            pcall(function()
-                mp.AssemblyLinearVelocity = Vector3.new(0, -12, 0)
-                mp.AssemblyAngularVelocity = Vector3.new()
-            end)
-        end
-
-        task.wait(0.65)
+        task.wait(ACTION_HOLD)
 
         local burned = false
         if r.BurnItem then
             burned = pcall(function()
-                r.BurnItem:FireServer(ext, item)
+                r.BurnItem:FireServer(ext, Instance.new("Model"))
             end)
-
-            if not burned then
-                burned = pcall(function()
-                    r.BurnItem:FireServer(ext, Instance.new("Model"))
-                end)
-            end
         end
 
-        return burned
+        awaitConsumedOrMoved(item, CONSUME_WAIT)
+
+        if started then
+            stopIfDragging(r, item)
+        end
+
+        refreshPrompts(item)
+
+        return moved and burned
     end
 
     local function dropBatch(batch, ext, furnace2, r)
         for _, item in ipairs(batch) do
             if item and item.Parent then
-                severExternalWelds(item)
                 burnItem(item, ext, furnace2, r)
                 task.wait(0.3)
             end
@@ -309,6 +437,8 @@ return function(C, R, UI)
             end)
             loopThread = nil
         end
+
+        stopAllOutstandingDrags()
     end
 
     local function startLoop()
