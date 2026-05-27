@@ -483,9 +483,16 @@ return function(C, R, UI)
         local function placementFromExistingModel(model)
             local ok, cf0 = pcall(function() return model:GetPivot() end)
             if not ok or not cf0 then return nil, nil, nil end
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = { model, chr(), cam }
+            local origin = cf0.Position + Vector3.new(0, 200, 0)
+            local hit = WS:Raycast(origin, Vector3.new(0, -1200, 0), params)
+            local groundY = hit and hit.Position.Y or cf0.Position.Y
+            local yOff = cf0.Position.Y - groundY
             local rot = yawRotationOnly(cf0)
-            local pos = Vector3.new(cf0.Position.X, cf0.Position.Y, cf0.Position.Z)
-            local cf = CFrame.new(pos) * rot
+            local pos = Vector3.new(cf0.Position.X, groundY, cf0.Position.Z)
+            local cf = CFrame.new(Vector3.new(pos.X, pos.Y + yOff, pos.Z)) * rot
             local placement = { Valid = true, Position = pos, CFrame = cf }
             return placement, rot, true
         end
@@ -558,18 +565,6 @@ return function(C, R, UI)
             return nil
         end
 
-        local function placeAccelAtSnap(placeRemote, bp, placement, rot)
-            if not (placeRemote and bp and placement and rot) then return false end
-            local ok1, r1 = pcall(function()
-                return placeRemote:InvokeServer(bp, placement, rot, nil)
-            end)
-            if ok1 and r1 ~= nil then return true end
-            local ok2 = pcall(function()
-                placeRemote:InvokeServer(bp, placement, rot, true)
-            end)
-            return ok2
-        end
-
         local function waitForBlueprintGone(timeout)
             local t0 = os.clock()
             while os.clock() - t0 < (timeout or 8) do
@@ -603,12 +598,6 @@ return function(C, R, UI)
             end)
             return ok
         end
-
-        local SLOT_KEYS = {
-            Enum.KeyCode.One,   Enum.KeyCode.Two,   Enum.KeyCode.Three,
-            Enum.KeyCode.Four,  Enum.KeyCode.Five,  Enum.KeyCode.Six,
-            Enum.KeyCode.Seven, Enum.KeyCode.Eight, Enum.KeyCode.Nine,
-        }
 
         local function vimTapKey(keyCode)
             pcall(function()
@@ -856,18 +845,13 @@ return function(C, R, UI)
             local preBlueprint = findAccelBlueprintInstance()
             local okPickup = doPickupStructure(targetModel)
             if not okPickup then return false end
-
             local t0 = os.clock()
             while os.clock() - t0 < 5 do
                 local bp = findAccelBlueprintInstance()
-                if bp and bp.Parent and bp ~= preBlueprint then
-                    return true
-                end
+                if bp and bp.Parent and bp ~= preBlueprint then return true end
                 if not (targetModel and targetModel.Parent) then
                     local bp2 = findAccelBlueprintInstance()
-                    if bp2 and bp2.Parent then
-                        return true
-                    end
+                    if bp2 and bp2.Parent then return true end
                 end
                 task.wait(0.10)
             end
@@ -1084,11 +1068,7 @@ return function(C, R, UI)
             Value = (C.State.Toggles.MoreTemporalTimer == true),
             Callback = function(state)
                 C.State.Toggles.MoreTemporalTimer = (state == true)
-                if state then
-                    startTimer()
-                else
-                    stopTimer()
-                end
+                if state then startTimer() else stopTimer() end
             end
         })
 
@@ -1126,9 +1106,7 @@ return function(C, R, UI)
                     if p ~= lp then
                         local n1 = tostring(p.Name or "") .. " Body"
                         local n2 = tostring(p.DisplayName or "") .. " Body"
-                        if nm == n1 or nm == n2 then
-                            return true
-                        end
+                        if nm == n1 or nm == n2 then return true end
                     end
                 end
                 return false
@@ -1181,9 +1159,7 @@ return function(C, R, UI)
                     if cur:IsA("Model") then lastModel = cur end
                     cur = cur.Parent
                 end
-                if lastModel and items and lastModel:IsDescendantOf(items) then
-                    return lastModel
-                end
+                if lastModel and items and lastModel:IsDescendantOf(items) then return lastModel end
                 return lastModel
             end
 
@@ -1193,9 +1169,7 @@ return function(C, R, UI)
                 if m.Parent == items then return true end
                 local parent = m.Parent
                 while parent and parent ~= items do
-                    if parent:IsA("Model") then
-                        return false
-                    end
+                    if parent:IsA("Model") then return false end
                     parent = parent.Parent
                 end
                 return true
@@ -1428,9 +1402,7 @@ return function(C, R, UI)
                 end
             })
 
-            if C.State.Toggles.MoreAutoBurnCultist == true then
-                startAutoBurn()
-            end
+            if C.State.Toggles.MoreAutoBurnCultist == true then startAutoBurn() end
 
             C.State.MoreAutoBurnSelectedChoice = C.State.MoreAutoBurnSelectedChoice or {}
             local autoBurnSelectedSet = setFromChoice(C.State.MoreAutoBurnSelectedChoice)
@@ -1534,9 +1506,7 @@ return function(C, R, UI)
                 end
             })
 
-            if C.State.Toggles.MoreAutoBurnSelected == true then
-                startAutoBurnSelected()
-            end
+            if C.State.Toggles.MoreAutoBurnSelected == true then startAutoBurnSelected() end
 
             local manualBurnGui = nil
             local manualBurnBtn = nil
@@ -1549,8 +1519,7 @@ return function(C, R, UI)
                 if not char then return nil end
                 local root = char:FindFirstChild("HumanoidRootPart")
                 if not root then return nil end
-                local nearest = nil
-                local nearestDist = math.huge
+                local nearest, nearestDist = nil, math.huge
                 local items = itemsFolder()
                 if items then
                     for _, item in ipairs(items:GetChildren()) do
@@ -1558,10 +1527,7 @@ return function(C, R, UI)
                             local mp = mainPart(item)
                             if mp then
                                 local dist = (mp.Position - root.Position).Magnitude
-                                if dist < nearestDist then
-                                    nearestDist = dist
-                                    nearest = item
-                                end
+                                if dist < nearestDist then nearestDist = dist; nearest = item end
                             end
                         end
                     end
@@ -1573,10 +1539,7 @@ return function(C, R, UI)
                             local mp = mainPart(m)
                             if mp then
                                 local dist = (mp.Position - root.Position).Magnitude
-                                if dist < nearestDist then
-                                    nearestDist = dist
-                                    nearest = m
-                                end
+                                if dist < nearestDist then nearestDist = dist; nearest = m end
                             end
                         end
                     end
@@ -1586,9 +1549,7 @@ return function(C, R, UI)
 
             local function getHighlightLabel(item)
                 if not item then return "Burn Highlighted Item" end
-                if isDownedPlayerBody(item) then
-                    return "Burn: " .. tostring(item.Name or "")
-                end
+                if isDownedPlayerBody(item) then return "Burn: " .. tostring(item.Name or "") end
                 return "Burn: " .. tostring(item.Name or "item")
             end
 
@@ -1622,9 +1583,7 @@ return function(C, R, UI)
                 local nearest = getNearestBurnableItem()
                 if nearest ~= manualBurnHighlightedItem then
                     highlightManualBurnItem(nearest)
-                    if manualBurnBtn then
-                        manualBurnBtn.Text = getHighlightLabel(nearest)
-                    end
+                    if manualBurnBtn then manualBurnBtn.Text = getHighlightLabel(nearest) end
                 end
             end
 
@@ -1691,21 +1650,12 @@ return function(C, R, UI)
                 closeBtnCorner.CornerRadius = UDim.new(0, 4)
                 closeBtnCorner.Parent = closeBtn
                 burnBtn.MouseButton1Click:Connect(function()
-                    if not manualBurnHighlightedItem then
-                        warn("No item highlighted")
-                        return
-                    end
+                    if not manualBurnHighlightedItem then warn("No item highlighted") return end
                     local remote = findLavaBurnRemote()
                     local lava = findLava()
-                    if not (remote and lava and lava.Parent) then
-                        warn("Missing burn remote or lava")
-                        return
-                    end
+                    if not (remote and lava and lava.Parent) then warn("Missing burn remote or lava") return end
                     local item = manualBurnHighlightedItem
-                    if not (item and item.Parent) then
-                        warn("Highlighted item no longer exists")
-                        return
-                    end
+                    if not (item and item.Parent) then warn("Highlighted item no longer exists") return end
                     pcall(function()
                         if remote:IsA("RemoteFunction") then
                             remote:InvokeServer(item, lava)
@@ -1723,9 +1673,7 @@ return function(C, R, UI)
                 end)
             end
 
-            if C.State.Toggles.MoreManualBurn == nil then
-                C.State.Toggles.MoreManualBurn = false
-            end
+            if C.State.Toggles.MoreManualBurn == nil then C.State.Toggles.MoreManualBurn = false end
 
             tab:Toggle({
                 Title = "Manual Burn",
@@ -1736,9 +1684,7 @@ return function(C, R, UI)
                 end
             })
 
-            if C.State.Toggles.MoreManualBurn == true then
-                startManualBurn()
-            end
+            if C.State.Toggles.MoreManualBurn == true then startManualBurn() end
 
             local SCRAP_BRING_INTERVAL = 120
             local DRAG_SETTLE          = 0.06
@@ -1867,10 +1813,7 @@ return function(C, R, UI)
                 Run.Heartbeat:Wait()
                 task.wait(DRAG_SETTLE)
                 local destCF = useFragmentOffset and scrapperFragmentDropCF() or scrapperDropCF()
-                if not destCF then
-                    scrapStopIfDragging(r, m)
-                    return false
-                end
+                if not destCF then scrapStopIfDragging(r, m); return false end
                 local snap = scrapSetCollide(m, false)
                 scrapZeroAssembly(m)
                 if m:IsA("Model") then
@@ -1914,9 +1857,7 @@ return function(C, R, UI)
                     task.wait(0.5)
                 end
                 local deadline = os.clock() + math.max(5, 0.5 * #queue + 5)
-                while active > 0 and os.clock() < deadline do
-                    Run.Heartbeat:Wait()
-                end
+                while active > 0 and os.clock() < deadline do Run.Heartbeat:Wait() end
             end
 
             local function makeScrapBringToggle(selectedSet)
@@ -1927,14 +1868,8 @@ return function(C, R, UI)
 
                 local function stop()
                     running = false
-                    if timerThread then
-                        pcall(function() task.cancel(timerThread) end)
-                        timerThread = nil
-                    end
-                    if descConn then
-                        pcall(function() descConn:Disconnect() end)
-                        descConn = nil
-                    end
+                    if timerThread then pcall(function() task.cancel(timerThread) end); timerThread = nil end
+                    if descConn then pcall(function() descConn:Disconnect() end); descConn = nil end
                     descSeen = setmetatable({}, { __mode = "k" })
                 end
 
@@ -1961,9 +1896,7 @@ return function(C, R, UI)
                         while running do
                             pcall(function() scrapRunPass(selectedSet) end)
                             local t0 = os.clock()
-                            while running and (os.clock() - t0) < SCRAP_BRING_INTERVAL do
-                                task.wait(1)
-                            end
+                            while running and (os.clock() - t0) < SCRAP_BRING_INTERVAL do task.wait(1) end
                         end
                     end)
                 end
@@ -1972,20 +1905,13 @@ return function(C, R, UI)
             end
 
             local CULTIST_GEM_SET = { ["Cultist Gem"] = true }
-            local FOREST_GEM_SET  = {
-                ["Gem of the Forest Fragment"] = true,
-                ["Gem of the Forest"]          = true,
-            }
+            local FOREST_GEM_SET  = { ["Gem of the Forest Fragment"] = true, ["Gem of the Forest"] = true }
 
             local cultistGemBring = makeScrapBringToggle(CULTIST_GEM_SET)
             local forestGemBring  = makeScrapBringToggle(FOREST_GEM_SET)
 
-            if C.State.Toggles.MoreAutoScrapCultistGem == nil then
-                C.State.Toggles.MoreAutoScrapCultistGem = false
-            end
-            if C.State.Toggles.MoreAutoScrapForestGem == nil then
-                C.State.Toggles.MoreAutoScrapForestGem = false
-            end
+            if C.State.Toggles.MoreAutoScrapCultistGem == nil then C.State.Toggles.MoreAutoScrapCultistGem = false end
+            if C.State.Toggles.MoreAutoScrapForestGem == nil then C.State.Toggles.MoreAutoScrapForestGem = false end
 
             tab:Section({ Title = "Auto Scrap" })
 
@@ -2019,9 +1945,7 @@ return function(C, R, UI)
                 local r = re and re:FindFirstChild("RequestRecycleMaterial")
                 if r and r:IsA("RemoteEvent") then return r end
                 for _, d in ipairs(RootRS:GetDescendants()) do
-                    if d.Name == "RequestRecycleMaterial" and d:IsA("RemoteEvent") then
-                        return d
-                    end
+                    if d.Name == "RequestRecycleMaterial" and d:IsA("RemoteEvent") then return d end
                 end
                 return nil
             end
@@ -2034,18 +1958,13 @@ return function(C, R, UI)
                     if r and r:IsA("Model") then return r end
                 end
                 for _, d in ipairs((RootWS or WS):GetDescendants()) do
-                    if d.Name == "Recycler" and d:IsA("Model") then
-                        return d
-                    end
+                    if d.Name == "Recycler" and d:IsA("Model") then return d end
                 end
                 return nil
             end
 
             local function stopAutoRecycle()
-                if recycleThread then
-                    pcall(function() task.cancel(recycleThread) end)
-                    recycleThread = nil
-                end
+                if recycleThread then pcall(function() task.cancel(recycleThread) end); recycleThread = nil end
             end
 
             local function startAutoRecycle()
@@ -2054,9 +1973,7 @@ return function(C, R, UI)
                     pcall(function()
                         local remote = findRecycleMaterialRemote()
                         local recycler = findRecycler()
-                        if remote and recycler then
-                            remote:FireServer(recycler, "TotalGreenGems")
-                        end
+                        if remote and recycler then remote:FireServer(recycler, "TotalGreenGems") end
                     end)
                 end)
                 recycleThread = task.spawn(function()
@@ -2065,17 +1982,13 @@ return function(C, R, UI)
                         pcall(function()
                             local remote = findRecycleMaterialRemote()
                             local recycler = findRecycler()
-                            if remote and recycler then
-                                remote:FireServer(recycler, "TotalGreenGems")
-                            end
+                            if remote and recycler then remote:FireServer(recycler, "TotalGreenGems") end
                         end)
                     end
                 end)
             end
 
-            if C.State.Toggles.MoreAutoRecycle == nil then
-                C.State.Toggles.MoreAutoRecycle = false
-            end
+            if C.State.Toggles.MoreAutoRecycle == nil then C.State.Toggles.MoreAutoRecycle = false end
 
             tab:Section({ Title = "Auto Recycle" })
 
@@ -2113,13 +2026,13 @@ return function(C, R, UI)
                 stopAutoRecycle()
                 busy = false
                 stopRollbackWatch()
-                if edgeConn then pcall(function() edgeConn:Disconnect() end) edgeConn = nil end
-                if charConn then pcall(function() charConn:Disconnect() end) charConn = nil end
-                if camConn then pcall(function() camConn:Disconnect() end) camConn = nil end
+                if edgeConn then pcall(function() edgeConn:Disconnect() end); edgeConn = nil end
+                if charConn then pcall(function() charConn:Disconnect() end); charConn = nil end
+                if camConn then pcall(function() camConn:Disconnect() end); camConn = nil end
                 for i=1,#setupConns do pcall(function() setupConns[i]:Disconnect() end) end
                 setupConns = {}
-                if temporalOrb then pcall(function() temporalOrb:Destroy() end) temporalOrb = nil end
-                if teleportOrb then pcall(function() teleportOrb:Destroy() end) teleportOrb = nil end
+                if temporalOrb then pcall(function() temporalOrb:Destroy() end); temporalOrb = nil end
+                if teleportOrb then pcall(function() teleportOrb:Destroy() end); teleportOrb = nil end
                 if setupMenu and setupMenu.Parent then pcall(function() setupMenu:Destroy() end) end
                 if edgeBtn and edgeBtn.Parent then pcall(function() edgeBtn:Destroy() end) end
                 if DUMMY_MODEL then pcall(function() DUMMY_MODEL:Destroy() end) end
