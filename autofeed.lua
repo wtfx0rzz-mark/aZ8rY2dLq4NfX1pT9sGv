@@ -138,21 +138,15 @@ return function(C, R, UI)
                 local p0 = d.Part0
                 local p1 = d.Part1
                 if (p0 and not p0:IsDescendantOf(model)) or (p1 and not p1:IsDescendantOf(model)) then
-                    pcall(function()
-                        d:Destroy()
-                    end)
+                    pcall(function() d:Destroy() end)
                 end
             end
             if d:IsA("BasePart") and d.Anchored then
-                pcall(function()
-                    d.Anchored = false
-                end)
+                pcall(function() d.Anchored = false end)
             end
         end
         if model:IsA("BasePart") and model.Anchored then
-            pcall(function()
-                model.Anchored = false
-            end)
+            pcall(function() model.Anchored = false end)
         end
     end
 
@@ -176,9 +170,7 @@ return function(C, R, UI)
 
     local function safeStartDrag(r, model)
         if r and r.StartDrag and model and model.Parent then
-            local ok = pcall(function()
-                r.StartDrag:FireServer(model)
-            end)
+            local ok = pcall(function() r.StartDrag:FireServer(model) end)
             return ok
         end
         return false
@@ -186,9 +178,7 @@ return function(C, R, UI)
 
     local function safeStopDrag(r, model)
         if r and r.StopDrag and model then
-            local ok = pcall(function()
-                r.StopDrag:FireServer(model)
-            end)
+            local ok = pcall(function() r.StopDrag:FireServer(model) end)
             return ok
         end
         return false
@@ -198,27 +188,19 @@ return function(C, R, UI)
         pcall(safeStopDrag, r, model)
         Run.Heartbeat:Wait()
         pcall(safeStopDrag, r, model)
-        task.delay(0.05, function()
-            pcall(safeStopDrag, r, model)
-        end)
-        task.delay(0.20, function()
-            pcall(safeStopDrag, r, model)
-        end)
+        task.delay(0.05, function() pcall(safeStopDrag, r, model) end)
+        task.delay(0.20, function() pcall(safeStopDrag, r, model) end)
     end
 
     local function setNetworkOwnerLocal(model)
         for _, p in ipairs(getAllParts(model)) do
-            pcall(function()
-                p:SetNetworkOwner(lp)
-            end)
+            pcall(function() p:SetNetworkOwner(lp) end)
         end
     end
 
     local function restoreNetworkOwner(model)
         for _, p in ipairs(getAllParts(model)) do
-            pcall(function()
-                p:SetNetworkOwner(nil)
-            end)
+            pcall(function() p:SetNetworkOwner(nil) end)
             pcall(function()
                 if p.SetNetworkOwnershipAuto then
                     p:SetNetworkOwnershipAuto()
@@ -234,9 +216,7 @@ return function(C, R, UI)
                 local was = d.Enabled
                 d.Enabled = false
                 task.defer(function()
-                    if d and d.Parent then
-                        d.Enabled = was ~= false
-                    end
+                    if d and d.Parent then d.Enabled = was ~= false end
                 end)
             end
         end
@@ -257,27 +237,20 @@ return function(C, R, UI)
             model:PivotTo(cf)
         else
             local p = mainPart(model)
-            if p then
-                p.CFrame = cf
-            end
+            if p then p.CFrame = cf end
         end
     end
 
     local function getPivot(model)
         if not model or not model.Parent then return nil end
-        if model:IsA("Model") then
-            return model:GetPivot()
-        end
+        if model:IsA("Model") then return model:GetPivot() end
         local p = mainPart(model)
         return p and p.CFrame or nil
     end
 
     local function bboxHeight(model)
         local rp = physicalRootPart(model)
-        if rp then
-            return math.max(0.5, rp.Size.Y)
-        end
-
+        if rp then return math.max(0.5, rp.Size.Y) end
         local minY, maxY = nil, nil
         for _, p in ipairs(getAllParts(model)) do
             local y0 = p.Position.Y - p.Size.Y * 0.5
@@ -285,11 +258,7 @@ return function(C, R, UI)
             if not minY or y0 < minY then minY = y0 end
             if not maxY or y1 > maxY then maxY = y1 end
         end
-
-        if minY and maxY then
-            return math.max(0.5, maxY - minY)
-        end
-
+        if minY and maxY then return math.max(0.5, maxY - minY) end
         return 2
     end
 
@@ -297,7 +266,6 @@ return function(C, R, UI)
         local map = WS:FindFirstChild("Map")
         local landmarks = map and map:FindFirstChild("Landmarks")
         if not landmarks then return nil end
-
         for _, child in ipairs(landmarks:GetChildren()) do
             local nl = child.Name:lower()
             if nl:find("cultist", 1, true) and (nl:find("generator", 1, true) or nl:find("base", 1, true)) then
@@ -305,7 +273,6 @@ return function(C, R, UI)
                 if ext then return ext end
             end
         end
-
         return nil
     end
 
@@ -323,16 +290,12 @@ return function(C, R, UI)
 
     local function readFuel(ext, bar2)
         local attr = ext and ext:GetAttribute("FuelRemaining")
-        if attr ~= nil and attr > 0 then
-            return attr
-        end
-
+        if attr ~= nil and attr > 0 then return attr end
         if bar2 and bar2.Parent then
             local x = bar2.Size.X
             local pct = math.clamp((x - BAR2_MIN) / (BAR2_MAX - BAR2_MIN), 0, 1)
             return math.floor(pct * FUEL_MAX)
         end
-
         return 0
     end
 
@@ -353,9 +316,7 @@ return function(C, R, UI)
                 local key = math.floor(pos.X / 64) .. "|" .. math.floor(pos.Z / 64)
                 if not seen[key] then
                     seen[key] = true
-                    pcall(function()
-                        WS:RequestStreamAroundAsync(pos)
-                    end)
+                    pcall(function() WS:RequestStreamAroundAsync(pos) end)
                 end
             end
         end
@@ -375,19 +336,16 @@ return function(C, R, UI)
 
     local function getPileItemsByPriority()
         local foundByName = {}
-        local seen = {}
-
         for _, name in ipairs(FUEL_PRIORITY) do
             foundByName[name] = {}
         end
-
+        local seen = {}
         for _, d in ipairs(WS:GetDescendants()) do
             if isFuelItem(d) and not seen[d] and not ActiveDrags[d] and not ReservedItems[d] and isNearPile(d) then
                 seen[d] = true
                 foundByName[d.Name][#foundByName[d.Name] + 1] = d
             end
         end
-
         if pilePos then
             for _, name in ipairs(FUEL_PRIORITY) do
                 table.sort(foundByName[name], function(a, b)
@@ -399,14 +357,12 @@ return function(C, R, UI)
                 end)
             end
         end
-
         local out = {}
         for _, name in ipairs(FUEL_PRIORITY) do
             for _, item in ipairs(foundByName[name]) do
                 out[#out + 1] = item
             end
         end
-
         return out
     end
 
@@ -420,18 +376,12 @@ return function(C, R, UI)
 
     local function fireAmmoBurnRemote(r, ext)
         if r and r.BurnItem and ext then
-            pcall(function()
-                r.BurnItem:FireServer(ext, Instance.new("Model"))
-            end)
+            pcall(function() r.BurnItem:FireServer(ext, Instance.new("Model")) end)
         end
     end
 
     local function markActive(model, r, snap, started)
-        ActiveDrags[model] = {
-            r = r,
-            snap = snap,
-            started = started
-        }
+        ActiveDrags[model] = { r = r, snap = snap, started = started }
     end
 
     local function clearActive(model)
@@ -440,33 +390,17 @@ return function(C, R, UI)
 
     local function stopActiveItem(model, rec)
         if not model then return end
-
         local r = rec and rec.r or getRemotes()
-
-        pcall(function()
-            stopDragHard(r, model)
-        end)
-
+        pcall(function() stopDragHard(r, model) end)
         if model and model.Parent then
             if rec and rec.snap then
-                pcall(function()
-                    setCollide(model, true, rec.snap)
-                end)
+                pcall(function() setCollide(model, true, rec.snap) end)
             end
-
             for _, p in ipairs(getAllParts(model)) do
-                pcall(function()
-                    p.Anchored = false
-                end)
+                pcall(function() p.Anchored = false end)
             end
-
-            pcall(function()
-                restoreNetworkOwner(model)
-            end)
-
-            pcall(function()
-                refreshPrompts(model)
-            end)
+            pcall(function() restoreNetworkOwner(model) end)
+            pcall(function() refreshPrompts(model) end)
         end
     end
 
@@ -480,16 +414,13 @@ return function(C, R, UI)
         if not mp then return false end
 
         local started = safeStartDrag(r, model)
-
         local H = bboxHeight(model)
         local riserY = orbPos.Y - 1.0 + math.clamp(H * 0.45, 0.8, 3.0)
         local lookDir = Vector3.new(orbPos.X, mp.Position.Y, orbPos.Z) - mp.Position
         lookDir = lookDir.Magnitude > 0.001 and lookDir.Unit or Vector3.zAxis
 
         local snapOrig = setCollide(model, false)
-
         markActive(model, r, snapOrig, started)
-
         zeroAssembly(model)
         setNetworkOwnerLocal(model)
 
@@ -503,20 +434,15 @@ return function(C, R, UI)
                 restoreNetworkOwner(model)
                 return true
             end
-
             local pivot = getPivot(model)
             if not pivot then break end
-
             local pos = pivot.Position
             local dy = riserY - pos.Y
             if math.abs(dy) <= 0.4 then break end
-
             local stepY = math.sign(dy) * math.min(speed * VERTICAL_MULT * STEP_WAIT, math.abs(dy))
             local newPos = Vector3.new(pos.X, pos.Y + stepY, pos.Z)
-
             setPivot(model, CFrame.new(newPos, newPos + lookDir))
             zeroAssembly(model)
-
             Run.Heartbeat:Wait()
             task.wait(STEP_WAIT)
         end
@@ -529,22 +455,17 @@ return function(C, R, UI)
                 restoreNetworkOwner(model)
                 return true
             end
-
             local pivot = getPivot(model)
             if not pivot then break end
-
             local pos = pivot.Position
             local delta = Vector3.new(orbPos.X - pos.X, 0, orbPos.Z - pos.Z)
             local dist = delta.Magnitude
             if dist <= DEST_RADIUS then break end
-
             local step = math.min(speed * STEP_WAIT, dist)
             local dir = delta.Unit
             local newPos = Vector3.new(pos.X, riserY, pos.Z) + dir * step
-
             setPivot(model, CFrame.new(newPos, newPos + dir))
             zeroAssembly(model)
-
             Run.Heartbeat:Wait()
             task.wait(STEP_WAIT)
         end
@@ -557,22 +478,17 @@ return function(C, R, UI)
                 restoreNetworkOwner(model)
                 return true
             end
-
             local pivot = getPivot(model)
             if not pivot then break end
-
             local pos = pivot.Position
             local delta = finalPos - pos
             local dist = delta.Magnitude
             if dist <= 0.55 then break end
-
             local step = math.min(speed * VERTICAL_MULT * STEP_WAIT, dist)
             local dir = delta.Unit
             local newPos = pos + dir * step
-
             setPivot(model, CFrame.new(newPos, finalPos))
             zeroAssembly(model)
-
             Run.Heartbeat:Wait()
             task.wait(STEP_WAIT)
         end
@@ -580,7 +496,6 @@ return function(C, R, UI)
         if model and model.Parent then
             setCollide(model, true, snapOrig)
             setPivot(model, CFrame.new(finalPos))
-
             for _, p in ipairs(getAllParts(model)) do
                 p.Anchored = false
                 p.AssemblyLinearVelocity = Vector3.new(0, -18, 0)
@@ -593,22 +508,16 @@ return function(C, R, UI)
         local waitStart = now()
         while running and model and model.Parent and now() - waitStart < CONSUME_WAIT do
             if isConsumed(model) then
-                if started then
-                    stopDragHard(r, model)
-                end
+                if started then stopDragHard(r, model) end
                 clearActive(model)
                 restoreNetworkOwner(model)
                 return true
             end
-
             Run.Heartbeat:Wait()
             task.wait(STEP_WAIT)
         end
 
-        if started then
-            stopDragHard(r, model)
-        end
-
+        if started then stopDragHard(r, model) end
         if model and model.Parent then
             restoreNetworkOwner(model)
             refreshPrompts(model)
@@ -617,9 +526,7 @@ return function(C, R, UI)
                 model:SetAttribute("AmmoFeedJob", nil)
             end)
         end
-
         clearActive(model)
-
         return true
     end
 
@@ -639,17 +546,11 @@ return function(C, R, UI)
         while running do
             if pilePos and shouldMoveItems() then
                 local fuel, ext, furnace2, bar2 = currentFuel()
-
                 if fuel and ext and furnace2 and bar2 and fuel < FEED_TARGET then
                     local furnacePart = mainPart(furnace2)
                     local r = getRemotes()
-
                     if furnacePart and r.StartDrag and r.StopDrag then
-                        requestMoreStreamingAround({
-                            pilePos,
-                            furnacePart.Position
-                        })
-
+                        requestMoreStreamingAround({ pilePos, furnacePart.Position })
                         local orbPos = getAmmoOrbCF(furnacePart).Position
                         local finalPos = getFinalTargetPos(furnacePart)
                         local pileItems = getPileItemsByPriority()
@@ -657,32 +558,29 @@ return function(C, R, UI)
                         for _, priorityName in ipairs(FUEL_PRIORITY) do
                             if not running then break end
                             if not shouldMoveItems() then break end
+                            local latestFuel = readFuel(ext, bar2)
+                            if latestFuel >= FEED_TARGET then break end
 
                             local active = 0
 
                             for _, item in ipairs(pileItems) do
                                 if not running then break end
                                 if not shouldMoveItems() then break end
-
-                                local latestFuel = readFuel(ext, bar2)
+                                latestFuel = readFuel(ext, bar2)
                                 if latestFuel >= FEED_TARGET then break end
 
                                 if item and item.Parent and item.Name == priorityName and isFuelItem(item) and isNearPile(item) and not ActiveDrags[item] and not ReservedItems[item] then
                                     local activeLimit = getActiveLimitForItem(item)
-
                                     while active >= activeLimit and running do
                                         Run.Heartbeat:Wait()
                                     end
-
                                     ReservedItems[item] = true
-                                    active += 1
-
+                                    active = active + 1
                                     task.spawn(function()
                                         moveVisibleConveyor(item, orbPos, finalPos, FEED_SPEED, r, ext)
                                         ReservedItems[item] = nil
-                                        active -= 1
+                                        active = active - 1
                                     end)
-
                                     task.wait(0.35)
                                 end
                             end
@@ -692,96 +590,71 @@ return function(C, R, UI)
                                 task.wait(0.05)
                             end
 
-                            local latestFuel = readFuel(ext, bar2)
+                            latestFuel = readFuel(ext, bar2)
                             if latestFuel >= FEED_TARGET then break end
                         end
                     end
                 end
             end
-
             task.wait(REFILL_INTERVAL)
         end
     end
 
     local function stopAllOutstandingDrags()
         local copy = {}
-
         for model, rec in pairs(ActiveDrags) do
             copy[model] = rec
         end
-
         ActiveDrags = {}
-
         for model, rec in pairs(copy) do
             stopActiveItem(model, rec)
         end
-
         ReservedItems = setmetatable({}, { __mode = "k" })
     end
 
     local function stopLoop()
         running = false
-
         if feedThread then
-            pcall(function()
-                task.cancel(feedThread)
-            end)
+            pcall(function() task.cancel(feedThread) end)
             feedThread = nil
         end
-
         stopAllOutstandingDrags()
     end
 
     local function startLoop()
         if running then return end
-
         local root = hrp()
         if not root then
             warn("[AutoFeed] HumanoidRootPart not found")
             return
         end
-
         local ext = findGenerator()
         if not ext then
             warn("[AutoFeed] GeneratorExtension not found")
             return
         end
-
         local furnace2 = findFurnace2(ext)
         if not furnace2 then
             warn("[AutoFeed] Furnace2 not found")
             return
         end
-
         pilePos = root.Position
         ActiveDrags = {}
         ReservedItems = setmetatable({}, { __mode = "k" })
         running = true
-
         local furnacePart = mainPart(furnace2)
-        requestMoreStreamingAround({
-            pilePos,
-            furnacePart and furnacePart.Position or nil
-        })
-
+        requestMoreStreamingAround({ pilePos, furnacePart and furnacePart.Position or nil })
         feedThread = task.spawn(feedWorker)
     end
 
-    tab:Section({
-        Title = "Generator Auto Feed"
-    })
+    tab:Section({ Title = "Generator Auto Feed" })
 
     tab:Toggle({
         Title   = "Auto Feed For Ammo",
         Default = C.State.AutoFeedEnabled and true or false,
         Callback = function(state)
             C.State.AutoFeedEnabled = state and true or false
-
-            if state then
-                startLoop()
-            else
-                stopLoop()
-            end
+            if state then startLoop() else stopLoop() end
         end
     })
 
@@ -789,17 +662,13 @@ return function(C, R, UI)
         Title = "Feed Now",
         Callback = function()
             if running then return end
-
             local root = hrp()
             if not root then return end
-
             pilePos = root.Position
             ActiveDrags = {}
             ReservedItems = setmetatable({}, { __mode = "k" })
             running = true
-
             feedThread = task.spawn(feedWorker)
-
             task.delay(20, function()
                 if running and not C.State.AutoFeedEnabled then
                     stopLoop()
@@ -816,9 +685,11 @@ return function(C, R, UI)
     -- CAMPFIRE FEED
     -- ============================================================
 
+    local CF_FUEL_MAX        = 3500
+    local CF_FEED_THRESHOLD  = CF_FUEL_MAX * 0.50
+    local CF_FEED_TARGET     = CF_FUEL_MAX * 0.90
+
     local CF_REFILL_INTERVAL      = 1.5
-    local CF_FEED_THRESHOLD       = 875
-    local CF_FEED_TARGET          = 3150
     local CF_FEED_SPEED           = 80
     local CF_ORB_OFFSET_Y         = 20
     local CF_VERTICAL_MULT        = 1.35
@@ -955,18 +826,18 @@ return function(C, R, UI)
         for _, name in ipairs(CF_PRIORITY) do
             foundByName[name] = {}
         end
-
         local seen = {}
         for _, d in ipairs(WS:GetDescendants()) do
             if cfIsItem(d) and cfIsWhitelisted(d) and not seen[d] and not cfActiveDrags[d] and not cfReserved[d] and cfIsNearFire(d) then
-                if d.Name == "Biofuel" and cfIsInsideIgnore(d) then continue end
-                seen[d] = true
-                if foundByName[d.Name] then
-                    foundByName[d.Name][#foundByName[d.Name] + 1] = d
+                if d.Name == "Biofuel" and cfIsInsideIgnore(d) then
+                else
+                    seen[d] = true
+                    if foundByName[d.Name] then
+                        foundByName[d.Name][#foundByName[d.Name] + 1] = d
+                    end
                 end
             end
         end
-
         if cfFireCenter then
             for _, name in ipairs(CF_PRIORITY) do
                 table.sort(foundByName[name], function(a, b)
@@ -978,7 +849,6 @@ return function(C, R, UI)
                 end)
             end
         end
-
         local out = {}
         for _, name in ipairs(CF_PRIORITY) do
             for _, item in ipairs(foundByName[name]) do
@@ -1064,7 +934,8 @@ return function(C, R, UI)
             local dy = riserY - pos.Y
             if math.abs(dy) <= 0.4 then break end
             local stepY = math.sign(dy) * math.min(speed * CF_VERTICAL_MULT * CF_STEP_WAIT, math.abs(dy))
-            setPivot(model, CFrame.new(Vector3.new(pos.X, pos.Y + stepY, pos.Z), Vector3.new(pos.X, pos.Y + stepY, pos.Z) + lookDir))
+            local np = Vector3.new(pos.X, pos.Y + stepY, pos.Z)
+            setPivot(model, CFrame.new(np, np + lookDir))
             zeroAssembly(model)
             Run.Heartbeat:Wait()
             task.wait(CF_STEP_WAIT)
@@ -1092,7 +963,8 @@ return function(C, R, UI)
             if dist <= CF_DEST_RADIUS then break end
             local step = math.min(speed * CF_STEP_WAIT, dist)
             local dir = delta.Unit
-            setPivot(model, CFrame.new(Vector3.new(pos.X, riserY, pos.Z) + dir * step, Vector3.new(pos.X, riserY, pos.Z) + dir * step + dir))
+            local np = Vector3.new(pos.X, riserY, pos.Z) + dir * step
+            setPivot(model, CFrame.new(np, np + dir))
             zeroAssembly(model)
             Run.Heartbeat:Wait()
             task.wait(CF_STEP_WAIT)
@@ -1187,49 +1059,61 @@ return function(C, R, UI)
             if not cfRunning then break end
             if totalDispatched >= cap then break end
 
+            local fireMidCheck = findCampfire()
+            local fuelMid = fireMidCheck and readCampfireFuel(fireMidCheck)
+            if fuelMid and fuelMid >= CF_FEED_TARGET then break end
+
             local isProcessorItem = CF_PROCESSOR_ITEMS[priorityName] == true
             local targetPos
 
             if isProcessorItem then
-                if not processorPart then continue end
-                targetPos = processorPart.Position
+                if not processorPart then
+                else
+                    targetPos = processorPart.Position
+                end
             else
                 targetPos = cfFireCenter
             end
 
-            local items = cfGetItemsByPriority()
+            if not targetPos then
+            else
+                local items = cfGetItemsByPriority()
+                local active      = 0
+                local activeLimit = math.min(CF_PER_ITEM_LIMIT[priorityName] or 1, cap - totalDispatched)
 
-            local active     = 0
-            local activeLimit = math.min(CF_PER_ITEM_LIMIT[priorityName] or 1, cap - totalDispatched)
+                for _, item in ipairs(items) do
+                    if not cfRunning then break end
+                    if totalDispatched >= cap then break end
 
-            for _, item in ipairs(items) do
-                if not cfRunning then break end
-                if totalDispatched >= cap then break end
+                    local fireInnerCheck = findCampfire()
+                    local fuelInner = fireInnerCheck and readCampfireFuel(fireInnerCheck)
+                    if fuelInner and fuelInner >= CF_FEED_TARGET then break end
 
-                if item and item.Parent and item.Name == priorityName and cfIsWhitelisted(item) and cfIsNearFire(item) and not cfActiveDrags[item] and not cfReserved[item] then
-                    if item.Name == "Biofuel" and cfIsInsideIgnore(item) then continue end
+                    if item and item.Parent and item.Name == priorityName and cfIsWhitelisted(item) and cfIsNearFire(item) and not cfActiveDrags[item] and not cfReserved[item] then
+                        if not (item.Name == "Biofuel" and cfIsInsideIgnore(item)) then
+                            while active >= activeLimit and cfRunning do
+                                task.wait(0.05)
+                            end
 
-                    while active >= activeLimit and cfRunning do
-                        task.wait(0.05)
+                            cfReserved[item] = true
+                            active = active + 1
+                            totalDispatched = totalDispatched + 1
+
+                            task.spawn(function()
+                                cfMoveToTarget(item, targetPos, CF_FEED_SPEED, r)
+                                cfReserved[item] = nil
+                                active = active - 1
+                            end)
+
+                            task.wait(CF_SPAWN_STAGGER)
+                        end
                     end
-
-                    cfReserved[item] = true
-                    active += 1
-                    totalDispatched += 1
-
-                    task.spawn(function()
-                        cfMoveToTarget(item, targetPos, CF_FEED_SPEED, r)
-                        cfReserved[item] = nil
-                        active -= 1
-                    end)
-
-                    task.wait(CF_SPAWN_STAGGER)
                 end
-            end
 
-            local deadline = cfNow() + 30
-            while active > 0 and cfRunning and cfNow() < deadline do
-                task.wait(0.05)
+                local deadline = cfNow() + 30
+                while active > 0 and cfRunning and cfNow() < deadline do
+                    task.wait(0.05)
+                end
             end
         end
     end
@@ -1258,42 +1142,33 @@ return function(C, R, UI)
 
     local function cfStartLoop()
         if cfRunning then return end
-
         local fire = findCampfire()
         if not fire then
             warn("[CampfireFeed] MainFire not found")
             return
         end
-
         local center = getCampfireCenter(fire)
         if not center then
             warn("[CampfireFeed] Center part not found")
             return
         end
-
         local ignoreR, scanR = getCampfireTouchRadii(fire)
-
         cfFireCenter   = center
         cfIgnoreRadius = ignoreR
         cfScanRadius   = scanR
         cfActiveDrags  = {}
         cfReserved     = setmetatable({}, { __mode = "k" })
         cfRunning      = true
-
         local processor     = findBiofuelProcessor()
         local processorPart = processor and mainPart(processor)
-
         requestMoreStreamingAround({
             cfFireCenter,
             processorPart and processorPart.Position or nil
         })
-
         cfThread = task.spawn(cfFeedWorker)
     end
 
-    tab:Section({
-        Title = "Campfire Feed"
-    })
+    tab:Section({ Title = "Campfire Feed" })
 
     tab:Dropdown({
         Title    = "Feed Items",
@@ -1319,11 +1194,7 @@ return function(C, R, UI)
         Default  = C.State.CampfireFeedEnabled and true or false,
         Callback = function(state)
             C.State.CampfireFeedEnabled = state and true or false
-            if state then
-                cfStartLoop()
-            else
-                cfStopLoop()
-            end
+            if state then cfStartLoop() else cfStopLoop() end
         end
     })
 
@@ -1335,24 +1206,19 @@ return function(C, R, UI)
                 warn("[CampfireFeed] MainFire not found")
                 return
             end
-
             local center = getCampfireCenter(fire)
             if not center then
                 warn("[CampfireFeed] Center part not found")
                 return
             end
-
             local ignoreR, scanR = getCampfireTouchRadii(fire)
             cfFireCenter   = center
             cfIgnoreRadius = ignoreR
             cfScanRadius   = scanR
-
             if cfRunning then return end
-
             cfActiveDrags = {}
             cfReserved    = setmetatable({}, { __mode = "k" })
             cfRunning     = true
-
             task.spawn(function()
                 cfRunOneCycle(CF_FEED_NOW_LIMIT)
                 if not C.State.CampfireFeedEnabled then
