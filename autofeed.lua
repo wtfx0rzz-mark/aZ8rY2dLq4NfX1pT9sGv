@@ -718,6 +718,7 @@ return function(C, R, UI)
         ["Corn"]          = CF_PROCESSOR_BATCH,
         ["Pumpkin"]       = CF_PROCESSOR_BATCH,
         ["Strawberry"]    = CF_PROCESSOR_BATCH,
+        ["Apple"]         = CF_PROCESSOR_BATCH,
     }
 
     local CF_DIRECT_FIRE_ITEMS = {
@@ -737,6 +738,7 @@ return function(C, R, UI)
         ["Corn"]          = true,
         ["Pumpkin"]       = true,
         ["Strawberry"]    = true,
+        ["Apple"]         = true,
     }
 
     local CF_ALL_ITEMS = {}
@@ -746,7 +748,7 @@ return function(C, R, UI)
     local CF_PRIORITY = {
         "Biofuel",
         "Log", "Morsel", "Cooked Morsel", "Steak", "Cooked Steak",
-        "Carrot", "Corn", "Pumpkin", "Strawberry",
+        "Carrot", "Corn", "Pumpkin", "Strawberry", "Apple",
         "Coal", "Fuel Canister", "Oil Barrel",
     }
 
@@ -1037,7 +1039,8 @@ return function(C, R, UI)
         return true
     end
 
-    local function cfRunOneCycle(feedNowCap)
+    -- ignoreFuel = true bypasses all fuel threshold checks (used by Feed Now)
+    local function cfRunOneCycle(feedNowCap, ignoreFuel)
         local fire = findCampfire()
         if not fire then return end
 
@@ -1059,24 +1062,24 @@ return function(C, R, UI)
             if not cfRunning then break end
             if totalDispatched >= cap then break end
 
-            local fireMidCheck = findCampfire()
-            local fuelMid = fireMidCheck and readCampfireFuel(fireMidCheck)
-            if fuelMid and fuelMid >= CF_FEED_TARGET then break end
+            if not ignoreFuel then
+                local fireMidCheck = findCampfire()
+                local fuelMid = fireMidCheck and readCampfireFuel(fireMidCheck)
+                if fuelMid and fuelMid >= CF_FEED_TARGET then break end
+            end
 
             local isProcessorItem = CF_PROCESSOR_ITEMS[priorityName] == true
             local targetPos
 
             if isProcessorItem then
-                if not processorPart then
-                else
+                if processorPart then
                     targetPos = processorPart.Position
                 end
             else
                 targetPos = cfFireCenter
             end
 
-            if not targetPos then
-            else
+            if targetPos then
                 local items = cfGetItemsByPriority()
                 local active      = 0
                 local activeLimit = math.min(CF_PER_ITEM_LIMIT[priorityName] or 1, cap - totalDispatched)
@@ -1085,9 +1088,11 @@ return function(C, R, UI)
                     if not cfRunning then break end
                     if totalDispatched >= cap then break end
 
-                    local fireInnerCheck = findCampfire()
-                    local fuelInner = fireInnerCheck and readCampfireFuel(fireInnerCheck)
-                    if fuelInner and fuelInner >= CF_FEED_TARGET then break end
+                    if not ignoreFuel then
+                        local fireInnerCheck = findCampfire()
+                        local fuelInner = fireInnerCheck and readCampfireFuel(fireInnerCheck)
+                        if fuelInner and fuelInner >= CF_FEED_TARGET then break end
+                    end
 
                     if item and item.Parent and item.Name == priorityName and cfIsWhitelisted(item) and cfIsNearFire(item) and not cfActiveDrags[item] and not cfReserved[item] then
                         if not (item.Name == "Biofuel" and cfIsInsideIgnore(item)) then
@@ -1124,7 +1129,7 @@ return function(C, R, UI)
             if fire and cfShouldFeed(fire) then
                 local fuel = readCampfireFuel(fire)
                 if fuel and fuel < CF_FEED_TARGET then
-                    cfRunOneCycle(nil)
+                    cfRunOneCycle(nil, false)
                 end
             end
             task.wait(CF_REFILL_INTERVAL)
@@ -1175,10 +1180,14 @@ return function(C, R, UI)
         Values   = {
             "Log", "Coal", "Fuel Canister", "Oil Barrel", "Biofuel",
             "Morsel", "Cooked Morsel", "Steak", "Cooked Steak",
-            "Carrot", "Corn", "Pumpkin", "Strawberry",
+            "Carrot", "Corn", "Pumpkin", "Strawberry", "Apple",
         },
         Multi    = true,
-        Default  = {},
+        Default  = {
+            "Log", "Coal", "Fuel Canister", "Oil Barrel", "Biofuel",
+            "Morsel", "Cooked Morsel", "Steak", "Cooked Steak",
+            "Carrot", "Corn", "Pumpkin", "Strawberry", "Apple",
+        },
         Callback = function(selection)
             cfWhitelist = {}
             if type(selection) == "table" then
@@ -1220,7 +1229,7 @@ return function(C, R, UI)
             cfReserved    = setmetatable({}, { __mode = "k" })
             cfRunning     = true
             task.spawn(function()
-                cfRunOneCycle(CF_FEED_NOW_LIMIT)
+                cfRunOneCycle(CF_FEED_NOW_LIMIT, true)
                 if not C.State.CampfireFeedEnabled then
                     cfRunning = false
                 end
