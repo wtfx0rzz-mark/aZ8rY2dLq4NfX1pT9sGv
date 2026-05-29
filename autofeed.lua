@@ -30,11 +30,10 @@ return function(C, R, UI)
     local FINAL_DROP_HEIGHT = 4.0
 
     local PER_ITEM_ACTIVE_LIMIT = {
-        ["Log"] = 8,
-        ["Biofuel"] = 8,
-        ["Coal"] = 4,
+        ["Biofuel"]      = 8,
+        ["Coal"]         = 4,
         ["Fuel Canister"] = 2,
-        ["Oil Barrel"] = 1
+        ["Oil Barrel"]   = 1
     }
 
     local FUEL_PRIORITY = {
@@ -42,15 +41,13 @@ return function(C, R, UI)
         "Coal",
         "Fuel Canister",
         "Oil Barrel",
-        "Log"
     }
 
     local FUEL_ITEMS = {
-        ["Biofuel"] = true,
-        ["Coal"] = true,
+        ["Biofuel"]       = true,
+        ["Coal"]          = true,
         ["Fuel Canister"] = true,
-        ["Oil Barrel"] = true,
-        ["Log"] = true
+        ["Oil Barrel"]    = true,
     }
 
     local running = false
@@ -148,6 +145,10 @@ return function(C, R, UI)
         if model:IsA("BasePart") and model.Anchored then
             pcall(function() model.Anchored = false end)
         end
+    end
+
+    local function getItemsFolder()
+        return WS:FindFirstChild("Items")
     end
 
     local function getRemote(...)
@@ -262,6 +263,22 @@ return function(C, R, UI)
         return 2
     end
 
+    local function isValidItem(m, itemSet)
+        if not (m and m:IsA("Model") and itemSet[m.Name] and mainPart(m) ~= nil) then return false end
+        local itemsFolder = getItemsFolder()
+        if itemsFolder then
+            if not m:IsDescendantOf(itemsFolder) then return false end
+            if m.Parent ~= itemsFolder then
+                local parent = m.Parent
+                while parent and parent ~= itemsFolder do
+                    if parent:IsA("Model") then return false end
+                    parent = parent.Parent
+                end
+            end
+        end
+        return true
+    end
+
     local function findGenerator()
         local map = WS:FindFirstChild("Map")
         local landmarks = map and map:FindFirstChild("Landmarks")
@@ -324,7 +341,7 @@ return function(C, R, UI)
     end
 
     local function isFuelItem(m)
-        return m and m:IsA("Model") and FUEL_ITEMS[m.Name] and mainPart(m) ~= nil
+        return isValidItem(m, FUEL_ITEMS)
     end
 
     local function isNearPile(item)
@@ -700,23 +717,22 @@ return function(C, R, UI)
     local CF_FINAL_DROP_HEIGHT = 6.0
     local CF_SPAWN_STAGGER     = 0.15
     local CF_FEED_NOW_LIMIT    = 50
-    local CF_PROCESSOR_BATCH   = 50
-    local CF_BIOFUEL_BATCH     = 50
+    local CF_BATCH             = 50
 
     local CF_PER_ITEM_LIMIT = {
         ["Coal"]          = 8,
-        ["Biofuel"]       = CF_BIOFUEL_BATCH,
+        ["Biofuel"]       = CF_BATCH,
         ["Fuel Canister"] = 3,
         ["Oil Barrel"]    = 1,
-        ["Morsel"]        = CF_PROCESSOR_BATCH,
-        ["Cooked Morsel"] = CF_PROCESSOR_BATCH,
-        ["Steak"]         = CF_PROCESSOR_BATCH,
-        ["Cooked Steak"]  = CF_PROCESSOR_BATCH,
-        ["Carrot"]        = CF_PROCESSOR_BATCH,
-        ["Corn"]          = CF_PROCESSOR_BATCH,
-        ["Pumpkin"]       = CF_PROCESSOR_BATCH,
-        ["Strawberry"]    = CF_PROCESSOR_BATCH,
-        ["Apple"]         = CF_PROCESSOR_BATCH,
+        ["Morsel"]        = CF_BATCH,
+        ["Cooked Morsel"] = CF_BATCH,
+        ["Steak"]         = CF_BATCH,
+        ["Cooked Steak"]  = CF_BATCH,
+        ["Carrot"]        = CF_BATCH,
+        ["Corn"]          = CF_BATCH,
+        ["Pumpkin"]       = CF_BATCH,
+        ["Strawberry"]    = CF_BATCH,
+        ["Apple"]         = CF_BATCH,
     }
 
     local CF_DIRECT_FIRE_ITEMS = {
@@ -797,24 +813,8 @@ return function(C, R, UI)
         return fuel ~= nil and fuel <= CF_FEED_THRESHOLD
     end
 
-    local function cfItemsFolder()
-        return WS:FindFirstChild("Items")
-    end
-
     local function cfIsItem(m)
-        if not (m and m:IsA("Model") and CF_ALL_ITEMS[m.Name] and mainPart(m) ~= nil) then return false end
-        local itemsFolder = cfItemsFolder()
-        if itemsFolder then
-            if not m:IsDescendantOf(itemsFolder) then return false end
-            if m.Parent ~= itemsFolder then
-                local parent = m.Parent
-                while parent and parent ~= itemsFolder do
-                    if parent:IsA("Model") then return false end
-                    parent = parent.Parent
-                end
-            end
-        end
-        return true
+        return isValidItem(m, CF_ALL_ITEMS)
     end
 
     local function cfIsNearFire(item)
@@ -839,8 +839,7 @@ return function(C, R, UI)
         local seen = {}
         for _, d in ipairs(WS:GetDescendants()) do
             if cfIsItem(d) and not seen[d] and not cfActiveDrags[d] and not cfReserved[d] and cfIsNearFire(d) then
-                if d.Name == "Biofuel" and cfIsInsideIgnore(d) then
-                else
+                if not (d.Name == "Biofuel" and cfIsInsideIgnore(d)) then
                     seen[d] = true
                     if foundByName[d.Name] then
                         foundByName[d.Name][#foundByName[d.Name] + 1] = d
@@ -915,10 +914,10 @@ return function(C, R, UI)
         local mp = mainPart(model)
         if not mp then return false end
 
-        local started  = safeStartDrag(r, model)
-        local riseY    = targetPos.Y + CF_ORB_OFFSET_Y
-        local H        = bboxHeight(model)
-        local riserY   = riseY - 1.0 + math.clamp(H * 0.45, 0.8, 3.0)
+        local started = safeStartDrag(r, model)
+        local riseY   = targetPos.Y + CF_ORB_OFFSET_Y
+        local H       = bboxHeight(model)
+        local riserY  = riseY - 1.0 + math.clamp(H * 0.45, 0.8, 3.0)
 
         local lookDir = Vector3.new(targetPos.X, mp.Position.Y, targetPos.Z) - mp.Position
         lookDir = lookDir.Magnitude > 0.001 and lookDir.Unit or Vector3.zAxis
