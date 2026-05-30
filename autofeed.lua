@@ -11,7 +11,7 @@ return function(C, R, UI)
 
     C.State = C.State or {}
 
-    local REFILL_INTERVAL = 1.5
+    local REFILL_INTERVAL = 2
     local FEED_THRESHOLD  = 200
     local FEED_TARGET     = 350
     local FUEL_MAX        = 674
