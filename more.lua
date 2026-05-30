@@ -465,11 +465,7 @@ return function(C, R, UI)
             local origin = xz + Vector3.new(0, 200, 0)
             local dir = Vector3.new(0, -1200, 0)
             local hit = WS:Raycast(origin, dir, params)
-            local y = hit and hit.Position.Y or (fallbackY or xz.Y)
-            if fallbackY and math.abs(y - fallbackY) > 35 then
-                y = fallbackY
-            end
-            return y
+            return hit and hit.Position.Y or (fallbackY or xz.Y)
         end
 
         local function yawRotationOnly(cf0)
@@ -501,14 +497,29 @@ return function(C, R, UI)
             if not (model and orbPos) then return nil, nil, nil end
             local ok, cf0 = pcall(function() return model:GetPivot() end)
             if not ok or not cf0 then return nil, nil, nil end
-            local fallbackY = hrp() and hrp().Position.Y or cf0.Position.Y
-            local gy0 = groundYAtSnap(Vector3.new(cf0.Position.X, cf0.Position.Y, cf0.Position.Z), fallbackY, model)
-            local yOff = cf0.Position.Y - gy0
-            local targetGroundY = groundYAtSnap(Vector3.new(orbPos.X, orbPos.Y, orbPos.Z), fallbackY, nil)
-            local pos = Vector3.new(orbPos.X, targetGroundY + yOff, orbPos.Z)
+
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = { model, chr(), cam }
+            params.IgnoreWater = false
+
+            local modelOrigin = cf0.Position
+            local modelHit = WS:Raycast(
+                modelOrigin + Vector3.new(0, 200, 0),
+                Vector3.new(0, -1200, 0),
+                params
+            )
+            local modelGroundY = modelHit and modelHit.Position.Y or modelOrigin.Y
+            local yOff = modelOrigin.Y - modelGroundY
+
+            local orbOrigin = Vector3.new(orbPos.X, orbPos.Y + 200, orbPos.Z)
+            local orbHit = WS:Raycast(orbOrigin, Vector3.new(0, -1200, 0), params)
+            local orbGroundY = orbHit and orbHit.Position.Y or modelGroundY
+
             local rot = yawRotationOnly(cf0)
-            local cf = CFrame.new(pos) * rot
-            local placement = { Valid = true, Position = pos, CFrame = cf }
+            local finalPos = Vector3.new(orbPos.X, orbGroundY + yOff, orbPos.Z)
+            local cf = CFrame.new(finalPos) * rot
+            local placement = { Valid = true, Position = Vector3.new(orbPos.X, orbGroundY, orbPos.Z), CFrame = cf }
             return placement, rot, true
         end
 
@@ -915,33 +926,37 @@ return function(C, R, UI)
 
                 local placeRemote = findPlaceRemote()
                 if not placeRemote then
-                    local bp = findAccelBlueprintInstance()
-                    if bp and bp.Parent and savedPlacement and savedRot then
-                        warn("[More] runTemporalSequence: no place remote, attempting recovery place")
-                        placeAccelConfirmed(placeRemote, bp, savedPlacement, savedRot)
-                    end
+                    warn("[More] runTemporalSequence: no place remote")
                     return
                 end
 
                 local bp = waitForAccelBlueprint(8)
                 if not (bp and bp.Parent) then
-                    warn("[More] runTemporalSequence: blueprint timeout, machine may be stuck in inventory")
+                    warn("[More] runTemporalSequence: blueprint timeout")
                     return
                 end
 
                 local placed = placeAccelConfirmed(placeRemote, bp, savedPlacement, savedRot)
                 if not placed then
-                    warn("[More] runTemporalSequence: place failed after retry, machine stuck in inventory")
+                    warn("[More] runTemporalSequence: place failed after retry")
                     return
                 end
 
                 task.wait(1.0)
 
                 local accelPlaced = waitForAccelModel(8)
-                if accelPlaced and accelPlaced.Parent then
-                    fireAccelRemote(accelPlaced)
+                if not (accelPlaced and accelPlaced.Parent) then
+                    warn("[More] runTemporalSequence: could not confirm model in workspace after place")
+                    return
                 end
 
+                local mpCheck = mainPart(accelPlaced)
+                if not mpCheck then
+                    warn("[More] runTemporalSequence: placed model has no mainPart")
+                    return
+                end
+
+                fireAccelRemote(accelPlaced)
                 task.wait(1.0)
             end)
 
@@ -949,11 +964,18 @@ return function(C, R, UI)
                 warn("[More] runTemporalSequence error: " .. tostring(err))
                 local bp = findAccelBlueprintInstance()
                 if bp and bp.Parent and savedPlacement and savedRot then
-                    warn("[More] runTemporalSequence: error recovery - attempting to re-place from inventory")
+                    warn("[More] runTemporalSequence: error recovery - placing machine back from inventory")
                     local placeRemote = findPlaceRemote()
                     if placeRemote then
                         task.wait(0.5)
-                        placeAccelConfirmed(placeRemote, bp, savedPlacement, savedRot)
+                        local placed = placeAccelConfirmed(placeRemote, bp, savedPlacement, savedRot)
+                        if placed then
+                            task.wait(1.0)
+                            local accelPlaced = waitForAccelModel(8)
+                            if accelPlaced and accelPlaced.Parent and mainPart(accelPlaced) then
+                                fireAccelRemote(accelPlaced)
+                            end
+                        end
                     end
                 end
             end
