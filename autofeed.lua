@@ -1,1233 +1,2067 @@
 return function(C, R, UI)
-    local Players = C.Services.Players
-    local WS      = C.Services.WS
-    local RS      = C.Services.RS
-    local Run     = C.Services.Run or game:GetService("RunService")
+    local function run()
+        C  = C  or _G.C
+        UI = UI or _G.UI
 
-    local lp = Players.LocalPlayer
-    local Tabs = UI and UI.Tabs or {}
-    local tab = Tabs.AutoFeed
-    if not tab then return end
+        local Players  = (C and C.Services and C.Services.Players)  or game:GetService("Players")
+        local RS       = (C and C.Services and C.Services.RS)       or game:GetService("ReplicatedStorage")
+        local WS       = (C and C.Services and C.Services.WS)       or game:GetService("Workspace")
+        local Run      = (C and C.Services and C.Services.Run)      or game:GetService("RunService")
+        local VIM      = game:GetService("VirtualInputManager")
 
-    C.State = C.State or {}
+        local lp = Players.LocalPlayer
+        local Tabs = (UI and UI.Tabs) or {}
+        local tab  = Tabs.More
+        if not tab then return end
 
-    local REFILL_INTERVAL = 2
-    local FEED_THRESHOLD  = 200
-    local FEED_TARGET     = 350
-    local FUEL_MAX        = 674
-    local BAR2_MIN = 0.484
-    local BAR2_MAX = 7.100
+        C.State = C.State or { Toggles = {} }
+        C.State.Toggles = C.State.Toggles or {}
 
-    local PILE_SCAN_RADIUS = 50
-    local FEED_SPEED = 80
-
-    local ORB_OFFSET_Y = 30
-    local VERTICAL_MULT = 1.35
-    local STEP_WAIT = 0.03
-    local CONSUME_WAIT = 2.5
-    local JOB_TIMEOUT = 45
-    local DEST_RADIUS = 1.0
-    local FINAL_DROP_HEIGHT = 4.0
-
-    local PER_ITEM_ACTIVE_LIMIT = {
-        ["Biofuel"]      = 8,
-        ["Coal"]         = 4,
-        ["Fuel Canister"] = 2,
-        ["Oil Barrel"]   = 1
-    }
-
-    local FUEL_PRIORITY = {
-        "Biofuel",
-        "Coal",
-        "Fuel Canister",
-        "Oil Barrel",
-    }
-
-    local FUEL_ITEMS = {
-        ["Biofuel"]       = true,
-        ["Coal"]          = true,
-        ["Fuel Canister"] = true,
-        ["Oil Barrel"]    = true,
-    }
-
-    local running = false
-    local feedThread = nil
-    local pilePos = nil
-
-    local ActiveDrags = {}
-    local ReservedItems = setmetatable({}, { __mode = "k" })
-
-    local function now()
-        return os.clock()
-    end
-
-    local function hrp()
-        local ch = lp.Character
-        return ch and ch:FindFirstChild("HumanoidRootPart")
-    end
-
-    local function mainPart(obj)
-        if not obj or not obj.Parent then return nil end
-        if obj:IsA("BasePart") then return obj end
-        if obj:IsA("Model") then
-            if obj.PrimaryPart then return obj.PrimaryPart end
-            local main = obj:FindFirstChild("Main", true)
-            if main and main:IsA("BasePart") then return main end
-            return obj:FindFirstChildWhichIsA("BasePart", true)
+        if _G.__MoreTemporal and type(_G.__MoreTemporal.Destroy) == "function" then
+            pcall(function() _G.__MoreTemporal.Destroy() end)
         end
-        return nil
-    end
 
-    local function physicalRootPart(model)
-        if not model or not model.Parent then return nil end
-        if model:IsA("BasePart") then return model end
-        if not model:IsA("Model") then return mainPart(model) end
-        local main = model:FindFirstChild("Main", true)
-        if main and main:IsA("BasePart") then return main end
-        if model.PrimaryPart then return model.PrimaryPart end
-        return model:FindFirstChildWhichIsA("BasePart", true)
-    end
+        local RootRS, RootWS, cam = nil, nil, nil
 
-    local function getAllParts(target)
-        local t = {}
-        if not target then return t end
-        if target:IsA("BasePart") then
-            t[1] = target
-        elseif target:IsA("Model") then
-            for _, d in ipairs(target:GetDescendants()) do
+        local function refreshRoots()
+            local ugc = game:FindFirstChild("Ugc")
+            if ugc then
+                local rs = ugc:FindFirstChild("ReplicatedStorage")
+                local ws = ugc:FindFirstChild("Workspace")
+                if rs and ws then
+                    RootRS = rs
+                    RootWS = ws
+                    cam = WS.CurrentCamera
+                    return RootRS, RootWS
+                end
+            end
+            RootRS = RS
+            RootWS = WS
+            cam = WS.CurrentCamera
+            return RootRS, RootWS
+        end
+        refreshRoots()
+
+        local function chr()
+            return lp.Character or lp.CharacterAdded:Wait()
+        end
+
+        local function hrp()
+            local ch = chr()
+            return ch and ch:WaitForChild("HumanoidRootPart")
+        end
+
+        local function hum()
+            local ch = lp.Character
+            return ch and ch:FindFirstChildOfClass("Humanoid")
+        end
+
+        local function mainPart(m)
+            if not m then return nil end
+            if m:IsA("BasePart") then return m end
+            if m:IsA("Model") then
+                if m.PrimaryPart then return m.PrimaryPart end
+                return m:FindFirstChildWhichIsA("BasePart", true)
+            end
+            return nil
+        end
+
+        local function getRemote(name)
+            refreshRoots()
+            local f = RootRS:FindFirstChild("RemoteEvents")
+            local r = f and f:FindFirstChild(name)
+            if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then return r end
+            for _, d in ipairs(RootRS:GetDescendants()) do
+                if d.Name == name and (d:IsA("RemoteEvent") or d:IsA("RemoteFunction")) then
+                    return d
+                end
+            end
+            return nil
+        end
+
+        local DUMMY_MODEL = Instance.new("Model")
+        DUMMY_MODEL.Name = "__cg_dummy__"
+
+        local function zeroAssembly(root)
+            if not root then return end
+            root.AssemblyLinearVelocity  = Vector3.new()
+            root.AssemblyAngularVelocity = Vector3.new()
+        end
+
+        local STREAM_TIMEOUT = 6.0
+        local function requestStreamAt(pos, timeout)
+            local p = typeof(pos) == "CFrame" and pos.Position or pos
+            local ok = pcall(function() WS:RequestStreamAroundAsync(p, timeout or STREAM_TIMEOUT) end)
+            return ok
+        end
+
+        local function prefetchRing(cf, r)
+            local base = typeof(cf) == "CFrame" and cf.Position or cf
+            r = r or 80
+            local o = {
+                Vector3.new( 0,0, 0),
+                Vector3.new( r,0, 0), Vector3.new(-r,0, 0),
+                Vector3.new( 0,0, r), Vector3.new( 0,0,-r),
+                Vector3.new( r,0, r), Vector3.new( r,0,-r),
+                Vector3.new(-r,0, r), Vector3.new(-r,0,-r),
+            }
+            for i=1,#o do requestStreamAt(base + o[i]) end
+        end
+
+        local function waitGameplayResumed(timeout)
+            local t0 = os.clock()
+            while lp and lp.GameplayPaused do
+                if os.clock() - t0 > (timeout or STREAM_TIMEOUT) then break end
+                Run.Heartbeat:Wait()
+            end
+        end
+
+        local function snapshotCollide()
+            local ch = lp.Character
+            if not ch then return {} end
+            local t = {}
+            for _,d in ipairs(ch:GetDescendants()) do
+                if d:IsA("BasePart") then t[d] = d.CanCollide end
+            end
+            return t
+        end
+
+        local function setCollideAll(on, snapshot)
+            local ch = lp.Character
+            if not ch then return end
+            if on and snapshot then
+                for part,can in pairs(snapshot) do
+                    if part and part.Parent then part.CanCollide = can end
+                end
+            else
+                for _,d in ipairs(ch:GetDescendants()) do
+                    if d:IsA("BasePart") then d.CanCollide = false end
+                end
+            end
+        end
+
+        local function isNoclipNow()
+            local ch = lp.Character
+            if not ch then return false end
+            local total, off = 0, 0
+            for _,d in ipairs(ch:GetDescendants()) do
                 if d:IsA("BasePart") then
-                    t[#t + 1] = d
+                    total += 1
+                    if d.CanCollide == false then off += 1 end
                 end
             end
+            return (total > 0) and ((off / total) >= 0.9) or false
         end
-        return t
-    end
 
-    local function zeroAssembly(model)
-        for _, p in ipairs(getAllParts(model)) do
-            p.AssemblyLinearVelocity = Vector3.new()
-            p.AssemblyAngularVelocity = Vector3.new()
+        local rollbackCF = nil
+        local rollbackThread = nil
+        local ROLLBACK_IDLE_S = 30
+        local MIN_MOVE_DIST = 2.0
+
+        local function stopRollbackWatch()
+            rollbackCF = nil
+            if rollbackThread then
+                pcall(function() task.cancel(rollbackThread) end)
+                rollbackThread = nil
+            end
         end
-    end
 
-    local function setCollide(model, on, snapshot)
-        local parts = getAllParts(model)
-        if on and snapshot then
-            for part, can in pairs(snapshot) do
-                if part and part.Parent then
-                    part.CanCollide = can
+        local function startRollbackWatch(afterCF)
+            stopRollbackWatch()
+            rollbackCF = afterCF
+            local startRoot = hrp()
+            local startPos = startRoot and startRoot.Position or nil
+            local startTime = os.clock()
+            rollbackThread = task.spawn(function()
+                local moved = false
+                while os.clock() - startTime < ROLLBACK_IDLE_S do
+                    local h = hum()
+                    local r = hrp()
+                    if r and startPos and (r.Position - startPos).Magnitude >= MIN_MOVE_DIST then
+                        moved = true
+                        break
+                    end
+                    if h and h.MoveDirection.Magnitude > 0.05 then
+                        moved = true
+                        break
+                    end
+                    if not lp or lp.GameplayPaused then
+                        moved = true
+                        break
+                    end
+                    Run.Heartbeat:Wait()
                 end
-            end
-            return
-        end
-        local snap = {}
-        for _, p in ipairs(parts) do
-            snap[p] = p.CanCollide
-            p.CanCollide = false
-        end
-        return snap
-    end
-
-    local function severeExternalWelds(model)
-        if not model or not model.Parent then return end
-        for _, d in ipairs(model:GetDescendants()) do
-            if d:IsA("WeldConstraint") then
-                local p0 = d.Part0
-                local p1 = d.Part1
-                if (p0 and not p0:IsDescendantOf(model)) or (p1 and not p1:IsDescendantOf(model)) then
-                    pcall(function() d:Destroy() end)
-                end
-            end
-            if d:IsA("BasePart") and d.Anchored then
-                pcall(function() d.Anchored = false end)
-            end
-        end
-        if model:IsA("BasePart") and model.Anchored then
-            pcall(function() model.Anchored = false end)
-        end
-    end
-
-    local function getItemsFolder()
-        return WS:FindFirstChild("Items")
-    end
-
-    local function getRemote(...)
-        local re = RS:FindFirstChild("RemoteEvents")
-        if not re then return nil end
-        for _, n in ipairs({...}) do
-            local x = re:FindFirstChild(n)
-            if x then return x end
-        end
-        return nil
-    end
-
-    local function getRemotes()
-        return {
-            StartDrag = getRemote("RequestStartDraggingItem", "StartDraggingItem"),
-            StopDrag  = getRemote("StopDraggingItem", "RequestStopDraggingItem"),
-            BurnItem  = getRemote("RequestAmmoFurnaceBurnItem")
-        }
-    end
-
-    local function safeStartDrag(r, model)
-        if r and r.StartDrag and model and model.Parent then
-            local ok = pcall(function() r.StartDrag:FireServer(model) end)
-            return ok
-        end
-        return false
-    end
-
-    local function safeStopDrag(r, model)
-        if r and r.StopDrag and model then
-            local ok = pcall(function() r.StopDrag:FireServer(model) end)
-            return ok
-        end
-        return false
-    end
-
-    local function stopDragHard(r, model)
-        pcall(safeStopDrag, r, model)
-        Run.Heartbeat:Wait()
-        pcall(safeStopDrag, r, model)
-        task.delay(0.05, function() pcall(safeStopDrag, r, model) end)
-        task.delay(0.20, function() pcall(safeStopDrag, r, model) end)
-    end
-
-    local function setNetworkOwnerLocal(model)
-        for _, p in ipairs(getAllParts(model)) do
-            pcall(function() p:SetNetworkOwner(lp) end)
-        end
-    end
-
-    local function restoreNetworkOwner(model)
-        for _, p in ipairs(getAllParts(model)) do
-            pcall(function() p:SetNetworkOwner(nil) end)
-            pcall(function()
-                if p.SetNetworkOwnershipAuto then
-                    p:SetNetworkOwnershipAuto()
+                if (not moved) and rollbackCF then
+                    local root = hrp()
+                    if root then
+                        local cf = rollbackCF
+                        local snap = snapshotCollide()
+                        setCollideAll(false)
+                        prefetchRing(cf)
+                        requestStreamAt(cf)
+                        waitGameplayResumed(1.0)
+                        pcall(function() (lp.Character or {}).PrimaryPart.CFrame = cf end)
+                        pcall(function() root.CFrame = cf end)
+                        zeroAssembly(root)
+                        setCollideAll(true, snap)
+                        waitGameplayResumed(1.0)
+                    end
                 end
             end)
         end
-    end
 
-    local function refreshPrompts(model)
-        if not model then return end
-        for _, d in ipairs(model:GetDescendants()) do
-            if d:IsA("ProximityPrompt") then
-                local was = d.Enabled
-                d.Enabled = false
-                task.defer(function()
-                    if d and d.Parent then d.Enabled = was ~= false end
-                end)
+        local function groundBelow(pos)
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            local ex = { lp.Character }
+            refreshRoots()
+            local map = (RootWS and RootWS:FindFirstChild("Map")) or WS:FindFirstChild("Map")
+            if map then
+                local fol = map:FindFirstChild("Foliage")
+                if fol then table.insert(ex, fol) end
+            end
+            local items = (RootWS and RootWS:FindFirstChild("Items")) or WS:FindFirstChild("Items")
+            local chars = (RootWS and RootWS:FindFirstChild("Characters")) or WS:FindFirstChild("Characters")
+            if items then table.insert(ex, items) end
+            if chars then table.insert(ex, chars) end
+            params.FilterDescendantsInstances = ex
+            local start = pos + Vector3.new(0, 5, 0)
+            local hit = WS:Raycast(start, Vector3.new(0, -1000, 0), params)
+            if hit then return hit.Position end
+            hit = WS:Raycast(pos + Vector3.new(0, 200, 0), Vector3.new(0, -1000, 0), params)
+            return (hit and hit.Position) or pos
+        end
+
+        local STICK_DURATION       = 0.35
+        local STICK_EXTRA_FR       = 2
+        local STICK_CLEAR_VEL      = true
+        local TELEPORT_UP_NUDGE    = 1.00
+        local SAFE_DROP_UP         = 4.0
+        local CAMPFIRE_TP_UP_NUDGE = 2.0
+
+        local function teleportSticky(cf, dropMode)
+            local root = hrp()
+            if not root then return end
+            local ch   = lp.Character
+            local targetCF = cf + Vector3.new(0, TELEPORT_UP_NUDGE, 0)
+
+            prefetchRing(targetCF)
+            requestStreamAt(targetCF)
+            waitGameplayResumed(1.0)
+
+            local hadNoclip = isNoclipNow()
+            local snap
+            if not hadNoclip then
+                snap = snapshotCollide()
+                setCollideAll(false)
+            end
+
+            if ch then pcall(function() ch:PivotTo(targetCF) end) end
+            pcall(function() root.CFrame = targetCF end)
+            if STICK_CLEAR_VEL then zeroAssembly(root) end
+
+            if dropMode then
+                if not hadNoclip then setCollideAll(true, snap) end
+                waitGameplayResumed(1.0)
+                startRollbackWatch(targetCF)
+                return
+            end
+
+            local t0 = os.clock()
+            while (os.clock() - t0) < STICK_DURATION do
+                if ch then pcall(function() ch:PivotTo(targetCF) end) end
+                pcall(function() root.CFrame = targetCF end)
+                if STICK_CLEAR_VEL then zeroAssembly(root) end
+                Run.Heartbeat:Wait()
+            end
+            for _=1,STICK_EXTRA_FR do
+                if ch then pcall(function() ch:PivotTo(targetCF) end) end
+                pcall(function() root.CFrame = targetCF end)
+                if STICK_CLEAR_VEL then zeroAssembly(root) end
+                Run.Heartbeat:Wait()
+            end
+
+            if not hadNoclip then
+                setCollideAll(true, snap)
+            end
+            if STICK_CLEAR_VEL then zeroAssembly(root) end
+            waitGameplayResumed(1.0)
+            startRollbackWatch(targetCF)
+        end
+
+        local function waitUntilGroundedOrMoving(timeout)
+            local h = hum()
+            local t0 = os.clock()
+            local groundedFrames = 0
+            while os.clock() - t0 < (timeout or 3) do
+                if h then
+                    local grounded = (h.FloorMaterial ~= Enum.Material.Air)
+                    if grounded then groundedFrames += 1 else groundedFrames = 0 end
+                    if groundedFrames >= 5 then
+                        local t1 = os.clock()
+                        while os.clock() - t1 < 0.35 do
+                            if h.MoveDirection.Magnitude > 0.05 then return true end
+                            Run.Heartbeat:Wait()
+                        end
+                        return true
+                    end
+                end
+                Run.Heartbeat:Wait()
+            end
+            return false
+        end
+
+        local function teleportWithDive(targetCF)
+            if not targetCF then return end
+            local upCF = targetCF + Vector3.new(0, SAFE_DROP_UP, 0)
+            prefetchRing(upCF)
+            requestStreamAt(upCF)
+            waitGameplayResumed(1.0)
+            teleportSticky(upCF, true)
+            waitUntilGroundedOrMoving(3)
+            waitGameplayResumed(1.0)
+        end
+
+        local function structureFolder()
+            refreshRoots()
+            return (RootWS and RootWS:FindFirstChild("Structures")) or WS:FindFirstChild("Structures")
+        end
+
+        local function modelPos(m)
+            if not m then return nil end
+            if m.PrimaryPart then return m.PrimaryPart.Position end
+            local ok, cf = pcall(function() return m:GetPivot() end)
+            if ok and cf then return cf.Position end
+            local bp = m:FindFirstChildWhichIsA("BasePart", true)
+            return bp and bp.Position or nil
+        end
+
+        local function nearestStructure()
+            local root = hrp()
+            local folder = structureFolder()
+            if not (root and folder) then return nil, nil end
+            local best, bestD = nil, math.huge
+            for _, m in ipairs(folder:GetChildren()) do
+                if m:IsA("Model") and m.Parent then
+                    local p = modelPos(m)
+                    if p then
+                        local d = (p - root.Position).Magnitude
+                        if d < bestD then bestD, best = d, m end
+                    end
+                end
+            end
+            return best, bestD
+        end
+
+        local function resolveAccelModel()
+            refreshRoots()
+            local folder = structureFolder()
+            if not folder then return nil end
+            local m = folder:FindFirstChild("Temporal Accelerometer") or folder:FindFirstChild("TemporalAccelerometer")
+            if m and m:IsA("Model") then return m end
+            for _, ch in ipairs(folder:GetChildren()) do
+                if ch:IsA("Model") then
+                    local n = ch.Name:lower()
+                    if n:find("temporal", 1, true) and n:find("acceler", 1, true) then
+                        return ch
+                    end
+                end
+            end
+            return nil
+        end
+
+        local function findCampfire()
+            refreshRoots()
+            local map = (RootWS and RootWS:FindFirstChild("Map")) or WS:FindFirstChild("Map")
+            local camp = map and map:FindFirstChild("Campground")
+            return camp and camp:FindFirstChild("MainFire")
+        end
+
+        local function campfireTeleportCF()
+            local fire = findCampfire()
+            if not fire then return nil end
+            local mp = mainPart(fire)
+            local pos = mp and mp.Position or (fire:IsA("Model") and fire:GetPivot().Position)
+            if not pos then return nil end
+            return CFrame.new(pos + Vector3.new(0, 6 + CAMPFIRE_TP_UP_NUDGE, 0))
+        end
+
+        local function nightSkipTeleportCF(machine)
+            if not machine then return nil end
+            local mp = mainPart(machine) or machine.PrimaryPart
+            if not mp then
+                local ok, cf = pcall(function() return machine:GetPivot() end)
+                return ok and cf or nil
+            end
+            local look = mp.CFrame.LookVector
+            local desired = mp.Position - look * 8
+            local g = groundBelow(desired)
+            local standPos = Vector3.new(desired.X, g.Y + 3.0, desired.Z)
+            return CFrame.new(standPos, mp.Position)
+        end
+
+        local function inv()
+            return lp:FindFirstChild("Inventory")
+        end
+
+        local function findAccelBlueprintInstance()
+            local f = inv()
+            if not f then return nil end
+            for _, ch in ipairs(f:GetChildren()) do
+                if ch:IsA("Model") then
+                    local n = ch.Name
+                    if type(n) == "string" then
+                        local ln = n:lower()
+                        if ln:sub(-9) == "blueprint" and ln:find("temporal", 1, true) and ln:find("acceler", 1, true) then
+                            return ch
+                        end
+                    end
+                end
+            end
+            return nil
+        end
+
+        local function waitForAccelBlueprint(timeout)
+            local t0 = os.clock()
+            while os.clock() - t0 < (timeout or 8) do
+                local bp = findAccelBlueprintInstance()
+                if bp and bp.Parent then return bp end
+                task.wait(0.15)
+            end
+            return nil
+        end
+
+        local function waitForAccelModel(timeout)
+            local t0 = os.clock()
+            while os.clock() - t0 < (timeout or 8) do
+                local m = resolveAccelModel()
+                if m and m.Parent then return m end
+                task.wait(0.15)
+            end
+            return nil
+        end
+
+        local camConn = WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+            cam = WS.CurrentCamera
+        end)
+
+        local function yawOnly(pos, lookVec)
+            local lv = Vector3.new(lookVec.X, 0, lookVec.Z)
+            if lv.Magnitude < 1e-6 then
+                lv = Vector3.new(0, 0, -1)
+            else
+                lv = lv.Unit
+            end
+            return CFrame.lookAt(pos, pos + lv, Vector3.new(0, 1, 0))
+        end
+
+        local function groundYAtSnap(xz, fallbackY, excludeModel)
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            local ex = { chr(), cam }
+            if excludeModel then table.insert(ex, excludeModel) end
+            params.FilterDescendantsInstances = ex
+            params.IgnoreWater = false
+            local origin = xz + Vector3.new(0, 200, 0)
+            local dir = Vector3.new(0, -1200, 0)
+            local hit = WS:Raycast(origin, dir, params)
+            return hit and hit.Position.Y or (fallbackY or xz.Y)
+        end
+
+        local function yawRotationOnly(cf0)
+            local lv = cf0.LookVector
+            local flat = Vector3.new(lv.X, 0, lv.Z)
+            if flat.Magnitude < 1e-6 then flat = Vector3.new(0, 0, -1) else flat = flat.Unit end
+            local origin = Vector3.new(0, 0, 0)
+            return CFrame.lookAt(origin, origin + flat, Vector3.new(0, 1, 0))
+        end
+
+        local function placementFromExistingModel(model)
+            local ok, cf0 = pcall(function() return model:GetPivot() end)
+            if not ok or not cf0 then return nil, nil, nil end
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = { model, chr(), cam }
+            local origin = cf0.Position + Vector3.new(0, 200, 0)
+            local hit = WS:Raycast(origin, Vector3.new(0, -1200, 0), params)
+            local groundY = hit and hit.Position.Y or cf0.Position.Y
+            local yOff = cf0.Position.Y - groundY
+            local rot = yawRotationOnly(cf0)
+            local pos = Vector3.new(cf0.Position.X, groundY, cf0.Position.Z)
+            local cf = CFrame.new(Vector3.new(pos.X, pos.Y + yOff, pos.Z)) * rot
+            local placement = { Valid = true, Position = pos, CFrame = cf }
+            return placement, rot, true
+        end
+
+        local function placementFromOrb(model, orbPos)
+            if not (model and orbPos) then return nil, nil, nil end
+            local ok, cf0 = pcall(function() return model:GetPivot() end)
+            if not ok or not cf0 then return nil, nil, nil end
+
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = { model, chr(), cam }
+            params.IgnoreWater = false
+
+            local modelOrigin = cf0.Position
+            local modelHit = WS:Raycast(
+                modelOrigin + Vector3.new(0, 200, 0),
+                Vector3.new(0, -1200, 0),
+                params
+            )
+            local modelGroundY = modelHit and modelHit.Position.Y or modelOrigin.Y
+            local yOff = modelOrigin.Y - modelGroundY
+
+            local orbOrigin = Vector3.new(orbPos.X, orbPos.Y + 200, orbPos.Z)
+            local orbHit = WS:Raycast(orbOrigin, Vector3.new(0, -1200, 0), params)
+            local orbGroundY = orbHit and orbHit.Position.Y or modelGroundY
+
+            local rot = yawRotationOnly(cf0)
+            local finalPos = Vector3.new(orbPos.X, orbGroundY + yOff, orbPos.Z)
+            local cf = CFrame.new(finalPos) * rot
+            local placement = { Valid = true, Position = Vector3.new(orbPos.X, orbGroundY, orbPos.Z), CFrame = cf }
+            return placement, rot, true
+        end
+
+        local function findPickUpRemote()
+            refreshRoots()
+            local re = RootRS:FindFirstChild("RemoteEvents")
+            if re then
+                local r = re:FindFirstChild("RequestPickUpStructure")
+                if r and (r:IsA("RemoteFunction") or r:IsA("RemoteEvent")) then return r end
+            end
+            local rf = RootRS:FindFirstChild("RemoteFunctions")
+            if rf then
+                local r = rf:FindFirstChild("RequestPickUpStructure")
+                if r and (r:IsA("RemoteFunction") or r:IsA("RemoteEvent")) then return r end
+            end
+            for _, d in ipairs(RootRS:GetDescendants()) do
+                if d.Name == "RequestPickUpStructure" and (d:IsA("RemoteFunction") or d:IsA("RemoteEvent")) then
+                    return d
+                end
+            end
+            return nil
+        end
+
+        local function doPickupStructure(targetModel)
+            local remote = findPickUpRemote()
+            if not (remote and targetModel and targetModel.Parent) then return false end
+            local ok = pcall(function()
+                if remote:IsA("RemoteFunction") then
+                    remote:InvokeServer(targetModel)
+                else
+                    remote:FireServer(targetModel)
+                end
+            end)
+            return ok
+        end
+
+        local function doPickupNearest()
+            local nearest = nil
+            local m, _ = nearestStructure()
+            if m then nearest = m end
+            return doPickupStructure(nearest)
+        end
+
+        local function findPlaceRemote()
+            refreshRoots()
+            local re = RootRS:FindFirstChild("RemoteEvents")
+            local r = re and re:FindFirstChild("RequestPlaceStructure")
+            if r and r:IsA("RemoteFunction") then return r end
+            for _, d in ipairs(RootRS:GetDescendants()) do
+                if d.Name == "RequestPlaceStructure" and d:IsA("RemoteFunction") then
+                    return d
+                end
+            end
+            return nil
+        end
+
+        local function waitForBlueprintGone(timeout)
+            local t0 = os.clock()
+            while os.clock() - t0 < (timeout or 8) do
+                if not findAccelBlueprintInstance() then return true end
+                task.wait(0.10)
+            end
+            return false
+        end
+
+        local function placeAccelConfirmed(placeRemote, bp, placement, rot)
+            if not (placeRemote and bp and placement and rot) then return false end
+            pcall(function() placeRemote:InvokeServer(bp, placement, rot, nil) end)
+            if waitForBlueprintGone(6) then return true end
+            bp = findAccelBlueprintInstance()
+            if bp and bp.Parent then
+                pcall(function() placeRemote:InvokeServer(bp, placement, rot, nil) end)
+                return waitForBlueprintGone(6)
+            end
+            return false
+        end
+
+        local function fireAccelRemote(model)
+            local r = getRemote("RequestActivateNightSkipMachine")
+            if not (r and model) then return false end
+            local ok = pcall(function()
+                if r:IsA("RemoteEvent") then
+                    r:FireServer(model)
+                else
+                    r:InvokeServer(model)
+                end
+            end)
+            return ok
+        end
+
+        local function vimTapKey(keyCode)
+            pcall(function()
+                VIM:SendKeyEvent(true, keyCode, false, game)
+                task.wait(0.05)
+                VIM:SendKeyEvent(false, keyCode, false, game)
+            end)
+        end
+
+        local playerGui = lp:FindFirstChildOfClass("PlayerGui") or lp:WaitForChild("PlayerGui")
+        local edgeGui   = playerGui:FindFirstChild("EdgeButtons")
+        if not edgeGui then
+            edgeGui = Instance.new("ScreenGui")
+            edgeGui.Name = "EdgeButtons"
+            edgeGui.ResetOnSpawn = false
+            pcall(function() edgeGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling end)
+            edgeGui.Parent = playerGui
+        end
+
+        local stack = edgeGui:FindFirstChild("EdgeStack")
+        if not stack then
+            stack = Instance.new("Frame")
+            stack.Name = "EdgeStack"
+            stack.AnchorPoint = Vector2.new(1, 0)
+            stack.Position = UDim2.new(1, -6, 0, 6)
+            stack.Size = UDim2.new(0, 150, 1, -12)
+            stack.BackgroundTransparency = 1
+            stack.BorderSizePixel = 0
+            stack.Parent = edgeGui
+            local list = Instance.new("UIListLayout")
+            list.Name = "VList"
+            list.FillDirection = Enum.FillDirection.Vertical
+            list.SortOrder = Enum.SortOrder.LayoutOrder
+            list.Padding = UDim.new(0, 6)
+            list.HorizontalAlignment = Enum.HorizontalAlignment.Right
+            list.Parent = stack
+        end
+
+        local function makeEdgeBtn(name, label, order)
+            local b = stack:FindFirstChild(name)
+            if not b then
+                b = Instance.new("TextButton")
+                b.Name = name
+                b.Size = UDim2.new(1, 0, 0, 30)
+                b.Text = label
+                b.TextSize = 12
+                b.Font = Enum.Font.GothamBold
+                b.BackgroundColor3 = Color3.fromRGB(30,30,35)
+                b.TextColor3 = Color3.new(1,1,1)
+                b.BorderSizePixel = 0
+                b.Visible = false
+                b.LayoutOrder = order or 50
+                b.Parent = stack
+                local corner = Instance.new("UICorner")
+                corner.CornerRadius = UDim.new(0, 8)
+                corner.Parent = b
+            else
+                b.Text = label
+                b.LayoutOrder = order or b.LayoutOrder
+                b.Visible = false
+            end
+            return b
+        end
+
+        local edgeBtn = makeEdgeBtn("TemporalAccelEdge", "Temporal Cycle", 40)
+
+        local function makeMiniBtn(parent, name, label, order)
+            local b = parent:FindFirstChild(name)
+            if not b then
+                b = Instance.new("TextButton")
+                b.Name = name
+                b.Size = UDim2.new(1, 0, 0, 30)
+                b.Text = label
+                b.TextSize = 12
+                b.Font = Enum.Font.GothamBold
+                b.BackgroundColor3 = Color3.fromRGB(25,25,28)
+                b.TextColor3 = Color3.new(1,1,1)
+                b.BorderSizePixel = 0
+                b.LayoutOrder = order or 10
+                b.Parent = parent
+                local corner = Instance.new("UICorner")
+                corner.CornerRadius = UDim.new(0, 8)
+                corner.Parent = b
+            else
+                b.Text = label
+                b.LayoutOrder = order or b.LayoutOrder
+            end
+            return b
+        end
+
+        local setupMenu = edgeGui:FindFirstChild("TemporalSetupMenu")
+        if not setupMenu then
+            setupMenu = Instance.new("Frame")
+            setupMenu.Name = "TemporalSetupMenu"
+            setupMenu.AnchorPoint = Vector2.new(1, 0)
+            setupMenu.Position = UDim2.new(1, -6, 0, 46)
+            setupMenu.Size = UDim2.new(0, 150, 0, 108)
+            setupMenu.BackgroundTransparency = 1
+            setupMenu.BorderSizePixel = 0
+            setupMenu.Visible = false
+            setupMenu.Parent = edgeGui
+            local list = Instance.new("UIListLayout")
+            list.Name = "VList"
+            list.FillDirection = Enum.FillDirection.Vertical
+            list.SortOrder = Enum.SortOrder.LayoutOrder
+            list.Padding = UDim.new(0, 6)
+            list.HorizontalAlignment = Enum.HorizontalAlignment.Right
+            list.Parent = setupMenu
+        end
+
+        local btnSetPlace   = makeMiniBtn(setupMenu, "SetTemporalLocation", "Set Temporal Location", 10)
+        local btnSetTP      = makeMiniBtn(setupMenu, "SetTeleportLocation", "Set Teleport Location", 20)
+        local btnClearOrbs  = makeMiniBtn(setupMenu, "ClearLocations", "Clear Locations", 30)
+
+        local temporalOrb = nil
+        local teleportOrb = nil
+
+        local function makeOrb(name, pos, color)
+            refreshRoots()
+            local p = Instance.new("Part")
+            p.Name = name
+            p.Shape = Enum.PartType.Ball
+            p.Material = Enum.Material.Neon
+            p.Size = Vector3.new(1.6, 1.6, 1.6)
+            p.Anchored = true
+            p.CanCollide = false
+            p.CanTouch = false
+            p.CanQuery = false
+            p.CastShadow = false
+            p.Color = color
+            p.CFrame = CFrame.new(pos)
+            p.Parent = RootWS
+            return p
+        end
+
+        local function setOrbVisible(orb, on)
+            if not orb then return end
+            if on then orb.Transparency = 0.05 else orb.Transparency = 1 end
+        end
+
+        local function groundPosForOrb(pos)
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            local ex = { lp.Character }
+            local items = (RootWS and RootWS:FindFirstChild("Items")) or WS:FindFirstChild("Items")
+            local chars = (RootWS and RootWS:FindFirstChild("Characters")) or WS:FindFirstChild("Characters")
+            if items then table.insert(ex, items) end
+            if chars then table.insert(ex, chars) end
+            params.FilterDescendantsInstances = ex
+            local origin = pos + Vector3.new(0, 5, 0)
+            local hit = WS:Raycast(origin, Vector3.new(0, -1000, 0), params)
+            if hit then return hit.Position end
+            hit = WS:Raycast(pos + Vector3.new(0, 200, 0), Vector3.new(0, -1000, 0), params)
+            return (hit and hit.Position) or pos
+        end
+
+        local function ensureOrbsFromState()
+            if C.State.MoreTemporalPlacePos and typeof(C.State.MoreTemporalPlacePos) == "Vector3" then
+                if not (temporalOrb and temporalOrb.Parent) then
+                    temporalOrb = makeOrb("__cg_temporal_place_orb__", C.State.MoreTemporalPlacePos + Vector3.new(0, 0.8, 0), Color3.fromRGB(0, 200, 255))
+                end
+            end
+            if C.State.MoreTemporalTeleportPos and typeof(C.State.MoreTemporalTeleportPos) == "Vector3" then
+                if not (teleportOrb and teleportOrb.Parent) then
+                    teleportOrb = makeOrb("__cg_temporal_tp_orb__", C.State.MoreTemporalTeleportPos + Vector3.new(0, 0.8, 0), Color3.fromRGB(255, 200, 0))
+                end
             end
         end
-    end
 
-    local function isConsumed(model)
-        if not model then return true end
-        if not model.Parent then return true end
-        if not model:IsDescendantOf(WS) then return true end
-        if not mainPart(model) then return true end
-        if model:GetAttribute("Consumed") == true then return true end
-        return false
-    end
+        local function applySetupVisibility()
+            local on = (C.State.Toggles.MoreTemporalSetup == true)
+            setupMenu.Visible = on
+            ensureOrbsFromState()
+            setOrbVisible(temporalOrb, on)
+            setOrbVisible(teleportOrb, on)
+        end
 
-    local function setPivot(model, cf)
-        if not model or not model.Parent then return end
-        if model:IsA("Model") then
-            model:PivotTo(cf)
+        local function safeFlatForwardUnit(cf)
+            local lv = cf.LookVector
+            local v = Vector3.new(lv.X, 0, lv.Z)
+            if v.Magnitude < 1e-6 then return Vector3.new(0, 0, -1) end
+            return v.Unit
+        end
+
+        local function clearLocations()
+            C.State.MoreTemporalPlacePos = nil
+            C.State.MoreTemporalTeleportPos = nil
+            C.State.MoreTemporalTeleportCF = nil
+            if temporalOrb then pcall(function() temporalOrb:Destroy() end) end
+            if teleportOrb then pcall(function() teleportOrb:Destroy() end) end
+            temporalOrb = nil
+            teleportOrb = nil
+            applySetupVisibility()
+        end
+
+        local function isTemporalSetupConfigured()
+            return C.State.MoreTemporalPlacePos ~= nil and typeof(C.State.MoreTemporalPlacePos) == "Vector3"
+        end
+
+        local setupConns = {}
+
+        setupConns[#setupConns+1] = btnSetPlace.MouseButton1Click:Connect(function()
+            local root = hrp()
+            if not root then return end
+            local fwd = safeFlatForwardUnit(root.CFrame)
+            local desired = root.Position + fwd * 10
+            local g = groundPosForOrb(desired)
+            local placePos = Vector3.new(g.X, g.Y, g.Z)
+            C.State.MoreTemporalPlacePos = placePos
+            if temporalOrb then pcall(function() temporalOrb:Destroy() end) end
+            temporalOrb = makeOrb("__cg_temporal_place_orb__", placePos + Vector3.new(0, 0.8, 0), Color3.fromRGB(0, 200, 255))
+            applySetupVisibility()
+        end)
+
+        setupConns[#setupConns+1] = btnSetTP.MouseButton1Click:Connect(function()
+            local root = hrp()
+            if not root then return end
+            local g = groundBelow(root.Position)
+            local tpPos = Vector3.new(root.Position.X, g.Y, root.Position.Z)
+            local tpCF = yawOnly(Vector3.new(tpPos.X, tpPos.Y + 3.0, tpPos.Z), root.CFrame.LookVector)
+            C.State.MoreTemporalTeleportPos = tpPos
+            C.State.MoreTemporalTeleportCF = tpCF
+            if teleportOrb then pcall(function() teleportOrb:Destroy() end) end
+            teleportOrb = makeOrb("__cg_temporal_tp_orb__", tpPos + Vector3.new(0, 0.8, 0), Color3.fromRGB(255, 200, 0))
+            applySetupVisibility()
+        end)
+
+        setupConns[#setupConns+1] = btnClearOrbs.MouseButton1Click:Connect(function()
+            clearLocations()
+        end)
+
+        local busy = false
+        local temporalRunNonce = 0
+
+        local function freshTemporalRunState()
+            refreshRoots()
+            stopRollbackWatch()
+            cam = WS.CurrentCamera
+            temporalRunNonce += 1
+            return temporalRunNonce
+        end
+
+        local function doPickupTemporalAccelerometerOnly(targetModel)
+            if not (targetModel and targetModel.Parent) then return false end
+            local preBlueprint = findAccelBlueprintInstance()
+            local okPickup = doPickupStructure(targetModel)
+            if not okPickup then return false end
+            local t0 = os.clock()
+            while os.clock() - t0 < 5 do
+                local bp = findAccelBlueprintInstance()
+                if bp and bp.Parent and bp ~= preBlueprint then return true end
+                if not (targetModel and targetModel.Parent) then
+                    local bp2 = findAccelBlueprintInstance()
+                    if bp2 and bp2.Parent then return true end
+                end
+                task.wait(0.10)
+            end
+            return false
+        end
+
+        local function runTemporalSequence(fromTimer)
+            if busy then return end
+            busy = true
+
+            local runNonce = freshTemporalRunState()
+            local root0 = hrp()
+            local returnCF = root0 and root0.CFrame or nil
+            local savedPlacement, savedRot = nil, nil
+            local setupConfigured = isTemporalSetupConfigured()
+
+            local ok, err = pcall(function()
+                if fromTimer == true then
+                    if setupConfigured then
+                        local tp = C.State.MoreTemporalTeleportCF
+                        if typeof(tp) == "CFrame" then
+                            teleportSticky(tp, true)
+                            task.wait(0.75)
+                        end
+                    else
+                        local campCF = campfireTeleportCF()
+                        if campCF then
+                            teleportSticky(campCF, true)
+                            task.wait(1.5)
+                        end
+                    end
+                end
+
+                if runNonce ~= temporalRunNonce then return end
+
+                local machine = resolveAccelModel()
+                if not machine then return end
+
+                local destCF = nightSkipTeleportCF(machine)
+                if not destCF then return end
+
+                if setupConfigured then
+                    savedPlacement, savedRot = placementFromOrb(machine, C.State.MoreTemporalPlacePos)
+                else
+                    savedPlacement, savedRot = placementFromExistingModel(machine)
+                end
+                if not savedPlacement then return end
+
+                teleportSticky(destCF, true)
+                task.wait(1.0)
+
+                if not (machine and machine.Parent) then
+                    machine = resolveAccelModel()
+                    if not machine then return end
+                end
+
+                local picked = doPickupTemporalAccelerometerOnly(machine)
+                if not picked then return end
+
+                task.wait(0.35)
+
+                local placeRemote = findPlaceRemote()
+                if not placeRemote then
+                    warn("[More] runTemporalSequence: no place remote")
+                    return
+                end
+
+                local bp = waitForAccelBlueprint(8)
+                if not (bp and bp.Parent) then
+                    warn("[More] runTemporalSequence: blueprint timeout")
+                    return
+                end
+
+                local placed = placeAccelConfirmed(placeRemote, bp, savedPlacement, savedRot)
+                if not placed then
+                    warn("[More] runTemporalSequence: place failed after retry")
+                    return
+                end
+
+                task.wait(1.0)
+
+                local accelPlaced = waitForAccelModel(8)
+                if not (accelPlaced and accelPlaced.Parent) then
+                    warn("[More] runTemporalSequence: could not confirm model in workspace after place")
+                    return
+                end
+
+                local mpCheck = mainPart(accelPlaced)
+                if not mpCheck then
+                    warn("[More] runTemporalSequence: placed model has no mainPart")
+                    return
+                end
+
+                fireAccelRemote(accelPlaced)
+                task.wait(1.0)
+            end)
+
+            if not ok then
+                warn("[More] runTemporalSequence error: " .. tostring(err))
+                local bp = findAccelBlueprintInstance()
+                if bp and bp.Parent and savedPlacement and savedRot then
+                    warn("[More] runTemporalSequence: error recovery - placing machine back from inventory")
+                    local placeRemote = findPlaceRemote()
+                    if placeRemote then
+                        task.wait(0.5)
+                        local placed = placeAccelConfirmed(placeRemote, bp, savedPlacement, savedRot)
+                        if placed then
+                            task.wait(1.0)
+                            local accelPlaced = waitForAccelModel(8)
+                            if accelPlaced and accelPlaced.Parent and mainPart(accelPlaced) then
+                                fireAccelRemote(accelPlaced)
+                            end
+                        end
+                    end
+                end
+            end
+
+            if returnCF then
+                pcall(function()
+                    freshTemporalRunState()
+                    teleportSticky(returnCF, true)
+                end)
+            end
+
+            task.wait(3.0)
+            vimTapKey(Enum.KeyCode.One)
+
+            busy = false
+        end
+
+        local edgeConn = edgeBtn.MouseButton1Click:Connect(function()
+            runTemporalSequence(false)
+        end)
+
+        if C.State.Toggles.MoreTemporalEdge == nil then C.State.Toggles.MoreTemporalEdge = false end
+        if C.State.Toggles.MoreTemporalTimer == nil then C.State.Toggles.MoreTemporalTimer = false end
+        if C.State.Toggles.MoreTemporalSetup == nil then C.State.Toggles.MoreTemporalSetup = false end
+
+        edgeBtn.Visible = (C.State.Toggles.MoreTemporalEdge == true)
+
+        tab:Section({ Title = "Temporal Accelerometer" })
+
+        tab:Toggle({
+            Title = "Edge Button: Temporal Cycle",
+            Value = (C.State.Toggles.MoreTemporalEdge == true),
+            Callback = function(state)
+                C.State.Toggles.MoreTemporalEdge = (state == true)
+                if edgeBtn then edgeBtn.Visible = (state == true) end
+            end
+        })
+
+        tab:Button({
+            Title = "Run Temporal Cycle Now",
+            Callback = function()
+                runTemporalSequence(false)
+            end
+        })
+
+        tab:Button({
+            Title = "Pick Up Nearest Structure",
+            Callback = function()
+                local ok = doPickupNearest()
+                if not ok then
+                    warn("[More] pickup failed (no target/remote or invoke error)")
+                end
+            end
+        })
+
+        tab:Section({ Title = "Temporal Setup" })
+
+        tab:Toggle({
+            Title = "Temporal Setup",
+            Value = (C.State.Toggles.MoreTemporalSetup == true),
+            Callback = function(state)
+                C.State.Toggles.MoreTemporalSetup = (state == true)
+                applySetupVisibility()
+            end
+        })
+
+        local timerOn = false
+        local timerConn = nil
+
+        local function stopTimer()
+            timerOn = false
+            if timerConn then
+                pcall(function() timerConn:Disconnect() end)
+                timerConn = nil
+            end
+        end
+
+        local function getPeriod(clock)
+            return (clock >= 6 and clock < 20) and "DAY" or "NIGHT"
+        end
+
+        local function startTimer()
+            if timerOn then return end
+            timerOn = true
+            local lastPeriod = getPeriod(game:GetService("Lighting").ClockTime)
+            timerConn = game:GetService("Lighting"):GetPropertyChangedSignal("ClockTime"):Connect(function()
+                if not timerOn then return end
+                local period = getPeriod(game:GetService("Lighting").ClockTime)
+                if period ~= lastPeriod then
+                    lastPeriod = period
+                    if period == "NIGHT" then
+                        local root = hrp()
+                        local accel = resolveAccelModel()
+                        if root and accel then
+                            local mp = mainPart(accel)
+                            if mp then
+                                local verticalDistance = root.Position.Y - mp.Position.Y
+                                if verticalDistance > -50 then
+                                    task.spawn(function()
+                                        runTemporalSequence(true)
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+
+        tab:Toggle({
+            Title = "Auto Temporal Cycle",
+            Value = (C.State.Toggles.MoreTemporalTimer == true),
+            Callback = function(state)
+                C.State.Toggles.MoreTemporalTimer = (state == true)
+                if state then startTimer() else stopTimer() end
+            end
+        })
+
+        if C.State.Toggles.MoreTemporalTimer == true then
+            startTimer()
         else
-            local p = mainPart(model)
-            if p then p.CFrame = cf end
+            stopTimer()
         end
-    end
 
-    local function getPivot(model)
-        if not model or not model.Parent then return nil end
-        if model:IsA("Model") then return model:GetPivot() end
-        local p = mainPart(model)
-        return p and p.CFrame or nil
-    end
+        do
+            local function lower(s)
+                return (type(s) == "string") and string.lower(s) or ""
+            end
 
-    local function bboxHeight(model)
-        local rp = physicalRootPart(model)
-        if rp then return math.max(0.5, rp.Size.Y) end
-        local minY, maxY = nil, nil
-        for _, p in ipairs(getAllParts(model)) do
-            local y0 = p.Position.Y - p.Size.Y * 0.5
-            local y1 = p.Position.Y + p.Size.Y * 0.5
-            if not minY or y0 < minY then minY = y0 end
-            if not maxY or y1 > maxY then maxY = y1 end
-        end
-        if minY and maxY then return math.max(0.5, maxY - minY) end
-        return 2
-    end
+            local function itemsFolder()
+                refreshRoots()
+                local f = RootWS:FindFirstChild("Items")
+                if f then return f end
+                local f2 = WS:FindFirstChild("Items")
+                if f2 then return f2 end
+                return nil
+            end
 
-    local function isValidItem(m, itemSet)
-        if not (m and m:IsA("Model") and itemSet[m.Name] and mainPart(m) ~= nil) then return false end
-        local itemsFolder = getItemsFolder()
-        if itemsFolder then
-            if not m:IsDescendantOf(itemsFolder) then return false end
-            if m.Parent ~= itemsFolder then
+            local function isMyCharModel(m)
+                local c = lp.Character
+                return c and m == c
+            end
+
+            local function isDownedPlayerBody(m)
+                if not (m and m:IsA("Model")) then return false end
+                if isMyCharModel(m) then return false end
+                local nm = tostring(m.Name or "")
+                if not nm:match("%sBody$") then return false end
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= lp then
+                        local n1 = tostring(p.Name or "") .. " Body"
+                        local n2 = tostring(p.DisplayName or "") .. " Body"
+                        if nm == n1 or nm == n2 then return true end
+                    end
+                end
+                return false
+            end
+
+            local SCRAP_NAMES = {
+                "Tyre", "Bolt", "Broken Fan", "Broken Microwave", "Sheet Metal",
+                "Old Radio", "Washing Machine", "Old Car Engine", "Metal Chair",
+                "Cultist Prototype", "Cultist Experiment", "UFO Junk", "UFO Component", "Gears"
+            }
+            local scrapNameSet = {}
+            for _, n in ipairs(SCRAP_NAMES) do scrapNameSet[n] = true end
+
+            local function isSelectedNPC(m, selectedSet)
+                if not (m and m:IsA("Model")) then return false end
+                if isMyCharModel(m) then return false end
+                if not m:FindFirstChildWhichIsA("Humanoid", true) then return false end
+                local n = lower(m.Name or "")
+                if selectedSet["Cultist"] and n:find("cultist", 1, true) then return true end
+                if selectedSet["Alien"] and n:find("alien", 1, true) then return true end
+                return false
+            end
+
+            local function isSelectedItem(inst, selectedSet)
+                if not inst then return false end
+                local ln = lower(inst.Name or "")
+                ln = ln:gsub("%s+", " ")
+                local ln2 = (lower(inst.Name or "")):gsub("%s+", "")
+                if selectedSet["Sapling"] and ln == "sapling" then return true end
+                if selectedSet["Log"] and inst.Name == "Log" then return true end
+                if selectedSet["Scrap"] and scrapNameSet[inst.Name] then return true end
+                if selectedSet["Sacrifice Totem"] then
+                    if ln == "sacrifice totem" or ln2 == "sacrificetotem" then return true end
+                    if ln:find("sacrifice", 1, true) and ln:find("totem", 1, true) then return true end
+                end
+                if selectedSet["Morsel"] and (ln == "morsel" or ln == "cooked morsel") then return true end
+                if selectedSet["Steak"] and (ln == "steak" or ln == "cooked steak") then return true end
+                if selectedSet["Pelts"] then
+                    if ln == "bunny foot" or ln == "wolf pelt" or ln == "alpha wolf pelt" or ln == "bear pelt" then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            local function topModelUnderItems(part, items)
+                local cur = part
+                local lastModel = nil
+                while cur and cur ~= WS and cur ~= RootWS and cur ~= items do
+                    if cur:IsA("Model") then lastModel = cur end
+                    cur = cur.Parent
+                end
+                if lastModel and items and lastModel:IsDescendantOf(items) then return lastModel end
+                return lastModel
+            end
+
+            local function isTopLevel(m)
+                local items = itemsFolder()
+                if not items then return true end
+                if m.Parent == items then return true end
                 local parent = m.Parent
-                while parent and parent ~= itemsFolder do
+                while parent and parent ~= items do
                     if parent:IsA("Model") then return false end
                     parent = parent.Parent
                 end
+                return true
             end
-        end
-        return true
-    end
 
-    local function findGenerator()
-        local map = WS:FindFirstChild("Map")
-        local landmarks = map and map:FindFirstChild("Landmarks")
-        if not landmarks then return nil end
-        for _, child in ipairs(landmarks:GetChildren()) do
-            local nl = child.Name:lower()
-            if nl:find("cultist", 1, true) and (nl:find("generator", 1, true) or nl:find("base", 1, true)) then
-                local ext = child:FindFirstChild("GeneratorExtension", true)
-                if ext then return ext end
-            end
-        end
-        return nil
-    end
-
-    local function findFurnace2(ext)
-        local extraBits = ext and ext:FindFirstChild("ExtraBits")
-        local furnace = extraBits and extraBits:FindFirstChild("Furnace")
-        return furnace and furnace:FindFirstChild("Furnace2")
-    end
-
-    local function findBar2(ext)
-        local extraBits = ext and ext:FindFirstChild("ExtraBits")
-        local bars = extraBits and extraBits:FindFirstChild("Bars")
-        return bars and bars:FindFirstChild("Bar2")
-    end
-
-    local function readFuel(ext, bar2)
-        local attr = ext and ext:GetAttribute("FuelRemaining")
-        if attr ~= nil and attr > 0 then return attr end
-        if bar2 and bar2.Parent then
-            local x = bar2.Size.X
-            local pct = math.clamp((x - BAR2_MIN) / (BAR2_MAX - BAR2_MIN), 0, 1)
-            return math.floor(pct * FUEL_MAX)
-        end
-        return 0
-    end
-
-    local function currentFuel()
-        local ext = findGenerator()
-        if not ext then return nil, nil, nil, nil end
-        local furnace2 = findFurnace2(ext)
-        if not furnace2 then return nil, ext, nil, nil end
-        local bar2 = findBar2(ext)
-        return readFuel(ext, bar2), ext, furnace2, bar2
-    end
-
-    local function requestMoreStreamingAround(posList)
-        if not WS.StreamingEnabled then return end
-        local seen = {}
-        for _, pos in ipairs(posList) do
-            if typeof(pos) == "Vector3" then
-                local key = math.floor(pos.X / 64) .. "|" .. math.floor(pos.Z / 64)
-                if not seen[key] then
-                    seen[key] = true
-                    pcall(function() WS:RequestStreamAroundAsync(pos) end)
+            local function findLavaBurnRemote()
+                refreshRoots()
+                local remFolder = RootRS:FindFirstChild("RemoteEvents") or RootRS
+                local r = remFolder:FindFirstChild("RequestLavaBurnItem")
+                if r and (r:IsA("RemoteFunction") or r:IsA("RemoteEvent")) then return r end
+                for _, d in ipairs(RootRS:GetDescendants()) do
+                    if d.Name == "RequestLavaBurnItem" and (d:IsA("RemoteFunction") or d:IsA("RemoteEvent")) then
+                        return d
+                    end
                 end
+                return nil
             end
-        end
-        task.wait(0.12)
-    end
 
-    local function isFuelItem(m)
-        return isValidItem(m, FUEL_ITEMS)
-    end
-
-    local function isNearPile(item)
-        if not pilePos then return false end
-        local mp = mainPart(item)
-        if not mp then return false end
-        return (mp.Position - pilePos).Magnitude <= PILE_SCAN_RADIUS
-    end
-
-    local function getPileItemsByPriority()
-        local foundByName = {}
-        for _, name in ipairs(FUEL_PRIORITY) do
-            foundByName[name] = {}
-        end
-        local seen = {}
-        for _, d in ipairs(WS:GetDescendants()) do
-            if isFuelItem(d) and not seen[d] and not ActiveDrags[d] and not ReservedItems[d] and isNearPile(d) then
-                seen[d] = true
-                foundByName[d.Name][#foundByName[d.Name] + 1] = d
+            local function findLava()
+                refreshRoots()
+                local direct = RootWS:FindFirstChild("Map")
+                if direct then
+                    local lm = direct:FindFirstChild("Landmarks")
+                    local v  = lm and lm:FindFirstChild("Volcano")
+                    local f  = v and v:FindFirstChild("Functional")
+                    local lv = f and f:FindFirstChild("Lava")
+                    if lv and lv:IsA("BasePart") then return lv end
+                end
+                for _, d in ipairs(RootWS:GetDescendants()) do
+                    if d:IsA("BasePart") and d.Name == "Lava" then
+                        local a = d.Parent
+                        while a do
+                            if a.Name == "Volcano" then return d end
+                            a = a.Parent
+                        end
+                    end
+                end
+                return nil
             end
-        end
-        if pilePos then
-            for _, name in ipairs(FUEL_PRIORITY) do
-                table.sort(foundByName[name], function(a, b)
-                    local ap = mainPart(a)
-                    local bp = mainPart(b)
-                    local ad = ap and (ap.Position - pilePos).Magnitude or math.huge
-                    local bd = bp and (bp.Position - pilePos).Magnitude or math.huge
-                    return ad < bd
+
+            local function candidateFromPart(part, items, selectedSet)
+                if not (part and part:IsA("BasePart")) then return nil end
+                if RootWS ~= WS and not part:IsDescendantOf(RootWS) then return nil end
+                if items and part:IsDescendantOf(items) then
+                    local m = topModelUnderItems(part, items) or part:FindFirstAncestorOfClass("Model")
+                    if m and isSelectedItem(m, selectedSet) then return m end
+                    if isSelectedItem(part, selectedSet) then return part end
+                end
+                local m = part:FindFirstAncestorOfClass("Model")
+                if m and isSelectedNPC(m, selectedSet) then return m end
+                return nil
+            end
+
+            local SCAN_RADIUS = 140
+
+            local function setFromChoice(choice)
+                local s = {}
+                if type(choice) == "table" then
+                    for _,v in ipairs(choice) do
+                        if v and v ~= "" then s[v] = true end
+                    end
+                elseif choice and choice ~= "" then
+                    s[choice] = true
+                end
+                return s
+            end
+
+            C.State.MoreLavaBurnChoice = C.State.MoreLavaBurnChoice or {}
+            local burnSelectedSet = setFromChoice(C.State.MoreLavaBurnChoice)
+
+            local burnBusy = false
+            local function burnSelected()
+                if burnBusy then return end
+                burnBusy = true
+                local ok = pcall(function()
+                    if not burnSelectedSet or next(burnSelectedSet) == nil then return end
+                    local Remote = findLavaBurnRemote()
+                    local Lava = findLava()
+                    if not (Remote and Lava and Lava.Parent) then
+                        warn("[More] LavaBurn missing Remote or Lava")
+                        return
+                    end
+                    local root = hrp()
+                    if not root then return end
+                    local items = itemsFolder()
+                    local params = OverlapParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = { lp.Character }
+                    local parts = WS:GetPartBoundsInRadius(root.Position, SCAN_RADIUS, params) or {}
+                    local uniq, targets = {}, {}
+                    for _,p in ipairs(parts) do
+                        local cand = candidateFromPart(p, items, burnSelectedSet)
+                        if cand and not uniq[cand] then
+                            if isTopLevel(cand) then
+                                uniq[cand] = true
+                                targets[#targets+1] = cand
+                            end
+                        end
+                    end
+                    local okN, errN = 0, 0
+                    for i = 1, #targets do
+                        local inst = targets[i]
+                        if inst and inst.Parent then
+                            local okCall = false
+                            if Remote:IsA("RemoteFunction") then
+                                okCall = pcall(function() return Remote:InvokeServer(inst, Lava) end)
+                            else
+                                okCall = pcall(function() Remote:FireServer(inst, Lava) end)
+                            end
+                            if okCall then okN += 1 else errN += 1 end
+                        end
+                        if i % 8 == 0 then Run.Heartbeat:Wait() end
+                        task.wait(0.02)
+                    end
+                    warn(("[More] LavaBurn: radius=%d targets=%d ok=%d err=%d"):format(SCAN_RADIUS, #targets, okN, errN))
                 end)
+                burnBusy = false
+                return ok
             end
-        end
-        local out = {}
-        for _, name in ipairs(FUEL_PRIORITY) do
-            for _, item in ipairs(foundByName[name]) do
-                out[#out + 1] = item
-            end
-        end
-        return out
-    end
 
-    local function getAmmoOrbCF(furnacePart)
-        return furnacePart.CFrame + Vector3.new(0, ORB_OFFSET_Y, 0)
-    end
+            tab:Section({ Title = "Lava Burn" })
 
-    local function getFinalTargetPos(furnacePart)
-        return furnacePart.Position + Vector3.new(0, FINAL_DROP_HEIGHT, 0)
-    end
+            tab:Dropdown({
+                Title = "Targets",
+                Values = { "Cultist", "Alien", "Sacrifice Totem", "Sapling", "Log", "Scrap" },
+                Multi = true,
+                AllowNone = true,
+                Callback = function(choice)
+                    local list = {}
+                    if type(choice) == "table" then
+                        for i=1,#choice do
+                            local v = choice[i]
+                            if v and v ~= "" then list[#list+1] = v end
+                        end
+                    elseif choice and choice ~= "" then
+                        list[1] = choice
+                    end
+                    C.State.MoreLavaBurnChoice = list
+                    burnSelectedSet = setFromChoice(choice)
+                end
+            })
 
-    local function fireAmmoBurnRemote(r, ext)
-        if r and r.BurnItem and ext then
-            pcall(function() r.BurnItem:FireServer(ext, Instance.new("Model")) end)
-        end
-    end
+            tab:Button({
+                Title = "Burn",
+                Callback = function() burnSelected() end
+            })
 
-    local function markActive(model, r, snap, started)
-        ActiveDrags[model] = { r = r, snap = snap, started = started }
-    end
+            local autoBurnConn = nil
+            local autoBurnSeen = {}
 
-    local function clearActive(model)
-        ActiveDrags[model] = nil
-    end
-
-    local function stopActiveItem(model, rec)
-        if not model then return end
-        local r = rec and rec.r or getRemotes()
-        pcall(function() stopDragHard(r, model) end)
-        if model and model.Parent then
-            if rec and rec.snap then
-                pcall(function() setCollide(model, true, rec.snap) end)
-            end
-            for _, p in ipairs(getAllParts(model)) do
-                pcall(function() p.Anchored = false end)
-            end
-            pcall(function() restoreNetworkOwner(model) end)
-            pcall(function() refreshPrompts(model) end)
-        end
-    end
-
-    local function moveVisibleConveyor(model, orbPos, finalPos, speed, r, ext)
-        if not running then return false end
-        if not model or not model.Parent then return false end
-
-        severeExternalWelds(model)
-
-        local mp = mainPart(model)
-        if not mp then return false end
-
-        local started = safeStartDrag(r, model)
-        local H = bboxHeight(model)
-        local riserY = orbPos.Y - 1.0 + math.clamp(H * 0.45, 0.8, 3.0)
-        local lookDir = Vector3.new(orbPos.X, mp.Position.Y, orbPos.Z) - mp.Position
-        lookDir = lookDir.Magnitude > 0.001 and lookDir.Unit or Vector3.zAxis
-
-        local snapOrig = setCollide(model, false)
-        markActive(model, r, snapOrig, started)
-        zeroAssembly(model)
-        setNetworkOwnerLocal(model)
-
-        local t0 = now()
-
-        while running and model and model.Parent do
-            if now() - t0 > JOB_TIMEOUT then break end
-            if isConsumed(model) then
-                if started then stopDragHard(r, model) end
-                clearActive(model)
-                restoreNetworkOwner(model)
-                return true
-            end
-            local pivot = getPivot(model)
-            if not pivot then break end
-            local pos = pivot.Position
-            local dy = riserY - pos.Y
-            if math.abs(dy) <= 0.4 then break end
-            local stepY = math.sign(dy) * math.min(speed * VERTICAL_MULT * STEP_WAIT, math.abs(dy))
-            local newPos = Vector3.new(pos.X, pos.Y + stepY, pos.Z)
-            setPivot(model, CFrame.new(newPos, newPos + lookDir))
-            zeroAssembly(model)
-            Run.Heartbeat:Wait()
-            task.wait(STEP_WAIT)
-        end
-
-        while running and model and model.Parent do
-            if now() - t0 > JOB_TIMEOUT then break end
-            if isConsumed(model) then
-                if started then stopDragHard(r, model) end
-                clearActive(model)
-                restoreNetworkOwner(model)
-                return true
-            end
-            local pivot = getPivot(model)
-            if not pivot then break end
-            local pos = pivot.Position
-            local delta = Vector3.new(orbPos.X - pos.X, 0, orbPos.Z - pos.Z)
-            local dist = delta.Magnitude
-            if dist <= DEST_RADIUS then break end
-            local step = math.min(speed * STEP_WAIT, dist)
-            local dir = delta.Unit
-            local newPos = Vector3.new(pos.X, riserY, pos.Z) + dir * step
-            setPivot(model, CFrame.new(newPos, newPos + dir))
-            zeroAssembly(model)
-            Run.Heartbeat:Wait()
-            task.wait(STEP_WAIT)
-        end
-
-        while running and model and model.Parent do
-            if now() - t0 > JOB_TIMEOUT then break end
-            if isConsumed(model) then
-                if started then stopDragHard(r, model) end
-                clearActive(model)
-                restoreNetworkOwner(model)
-                return true
-            end
-            local pivot = getPivot(model)
-            if not pivot then break end
-            local pos = pivot.Position
-            local delta = finalPos - pos
-            local dist = delta.Magnitude
-            if dist <= 0.55 then break end
-            local step = math.min(speed * VERTICAL_MULT * STEP_WAIT, dist)
-            local dir = delta.Unit
-            local newPos = pos + dir * step
-            setPivot(model, CFrame.new(newPos, finalPos))
-            zeroAssembly(model)
-            Run.Heartbeat:Wait()
-            task.wait(STEP_WAIT)
-        end
-
-        if model and model.Parent then
-            setCollide(model, true, snapOrig)
-            setPivot(model, CFrame.new(finalPos))
-            for _, p in ipairs(getAllParts(model)) do
-                p.Anchored = false
-                p.AssemblyLinearVelocity = Vector3.new(0, -18, 0)
-                p.AssemblyAngularVelocity = Vector3.new()
-            end
-        end
-
-        fireAmmoBurnRemote(r, ext)
-
-        local waitStart = now()
-        while running and model and model.Parent and now() - waitStart < CONSUME_WAIT do
-            if isConsumed(model) then
-                if started then stopDragHard(r, model) end
-                clearActive(model)
-                restoreNetworkOwner(model)
-                return true
-            end
-            Run.Heartbeat:Wait()
-            task.wait(STEP_WAIT)
-        end
-
-        if started then stopDragHard(r, model) end
-        if model and model.Parent then
-            restoreNetworkOwner(model)
-            refreshPrompts(model)
-            pcall(function()
-                model:SetAttribute("AmmoFeedInFlightAt", nil)
-                model:SetAttribute("AmmoFeedJob", nil)
-            end)
-        end
-        clearActive(model)
-        return true
-    end
-
-    local function shouldMoveItems()
-        local fuel = currentFuel()
-        return fuel ~= nil and fuel <= FEED_THRESHOLD
-    end
-
-    local function getActiveLimitForItem(item)
-        if item and PER_ITEM_ACTIVE_LIMIT[item.Name] then
-            return PER_ITEM_ACTIVE_LIMIT[item.Name]
-        end
-        return 1
-    end
-
-    local function feedWorker()
-        while running do
-            if pilePos and shouldMoveItems() then
-                local fuel, ext, furnace2, bar2 = currentFuel()
-                if fuel and ext and furnace2 and bar2 and fuel < FEED_TARGET then
-                    local furnacePart = mainPart(furnace2)
-                    local r = getRemotes()
-                    if furnacePart and r.StartDrag and r.StopDrag then
-                        requestMoreStreamingAround({ pilePos, furnacePart.Position })
-                        local orbPos = getAmmoOrbCF(furnacePart).Position
-                        local finalPos = getFinalTargetPos(furnacePart)
-                        local pileItems = getPileItemsByPriority()
-
-                        for _, priorityName in ipairs(FUEL_PRIORITY) do
-                            if not running then break end
-                            if not shouldMoveItems() then break end
-                            local latestFuel = readFuel(ext, bar2)
-                            if latestFuel >= FEED_TARGET then break end
-
-                            local active = 0
-
-                            for _, item in ipairs(pileItems) do
-                                if not running then break end
-                                if not shouldMoveItems() then break end
-                                latestFuel = readFuel(ext, bar2)
-                                if latestFuel >= FEED_TARGET then break end
-
-                                if item and item.Parent and item.Name == priorityName and isFuelItem(item) and isNearPile(item) and not ActiveDrags[item] and not ReservedItems[item] then
-                                    local activeLimit = getActiveLimitForItem(item)
-                                    while active >= activeLimit and running do
-                                        Run.Heartbeat:Wait()
-                                    end
-                                    ReservedItems[item] = true
-                                    active = active + 1
-                                    task.spawn(function()
-                                        moveVisibleConveyor(item, orbPos, finalPos, FEED_SPEED, r, ext)
-                                        ReservedItems[item] = nil
-                                        active = active - 1
+            local function burnAllExistingCultists()
+                task.spawn(function()
+                    pcall(function()
+                        local items = itemsFolder()
+                        if not items then return end
+                        local Remote = findLavaBurnRemote()
+                        local Lava = findLava()
+                        if not (Remote and Lava and Lava.Parent) then return end
+                        for _, inst in ipairs(items:GetChildren()) do
+                            if inst:IsA("Model") then
+                                local n = lower(inst.Name or "")
+                                if n:find("cultist", 1, true) and inst:FindFirstChildWhichIsA("Humanoid", true) then
+                                    autoBurnSeen[inst] = true
+                                    pcall(function()
+                                        if Remote:IsA("RemoteFunction") then
+                                            Remote:InvokeServer(inst, Lava)
+                                        else
+                                            Remote:FireServer(inst, Lava)
+                                        end
                                     end)
-                                    task.wait(0.35)
+                                    task.wait(0.02)
                                 end
                             end
-
-                            local deadline = now() + 20
-                            while active > 0 and running and now() < deadline do
-                                task.wait(0.05)
-                            end
-
-                            latestFuel = readFuel(ext, bar2)
-                            if latestFuel >= FEED_TARGET then break end
                         end
-                    end
-                end
-            end
-            task.wait(REFILL_INTERVAL)
-        end
-    end
-
-    local function stopAllOutstandingDrags()
-        local copy = {}
-        for model, rec in pairs(ActiveDrags) do
-            copy[model] = rec
-        end
-        ActiveDrags = {}
-        for model, rec in pairs(copy) do
-            stopActiveItem(model, rec)
-        end
-        ReservedItems = setmetatable({}, { __mode = "k" })
-    end
-
-    local function stopLoop()
-        running = false
-        if feedThread then
-            pcall(function() task.cancel(feedThread) end)
-            feedThread = nil
-        end
-        stopAllOutstandingDrags()
-    end
-
-    local function startLoop()
-        if running then return end
-        local root = hrp()
-        if not root then
-            warn("[AutoFeed] HumanoidRootPart not found")
-            return
-        end
-        local ext = findGenerator()
-        if not ext then
-            warn("[AutoFeed] GeneratorExtension not found")
-            return
-        end
-        local furnace2 = findFurnace2(ext)
-        if not furnace2 then
-            warn("[AutoFeed] Furnace2 not found")
-            return
-        end
-        pilePos = root.Position
-        ActiveDrags = {}
-        ReservedItems = setmetatable({}, { __mode = "k" })
-        running = true
-        local furnacePart = mainPart(furnace2)
-        requestMoreStreamingAround({ pilePos, furnacePart and furnacePart.Position or nil })
-        feedThread = task.spawn(feedWorker)
-    end
-
-    tab:Section({ Title = "Generator Auto Feed" })
-
-    tab:Toggle({
-        Title   = "Auto Feed For Ammo",
-        Default = C.State.AutoFeedEnabled and true or false,
-        Callback = function(state)
-            C.State.AutoFeedEnabled = state and true or false
-            if state then startLoop() else stopLoop() end
-        end
-    })
-
-    tab:Button({
-        Title = "Feed Now",
-        Callback = function()
-            if running then return end
-            local root = hrp()
-            if not root then return end
-            pilePos = root.Position
-            ActiveDrags = {}
-            ReservedItems = setmetatable({}, { __mode = "k" })
-            running = true
-            feedThread = task.spawn(feedWorker)
-            task.delay(20, function()
-                if running and not C.State.AutoFeedEnabled then
-                    stopLoop()
-                end
-            end)
-        end
-    })
-
-    if C.State.AutoFeedEnabled then
-        startLoop()
-    end
-
-    -- ============================================================
-    -- CAMPFIRE FEED
-    -- ============================================================
-
-    local CF_FUEL_MAX        = 3500
-    local CF_FEED_THRESHOLD  = CF_FUEL_MAX * 0.50
-    local CF_FEED_TARGET     = CF_FUEL_MAX * 0.90
-
-    local CF_REFILL_INTERVAL   = 1.5
-    local CF_FEED_SPEED        = 80
-    local CF_ORB_OFFSET_Y      = 20
-    local CF_VERTICAL_MULT     = 1.35
-    local CF_STEP_WAIT         = 0.03
-    local CF_CONSUME_WAIT      = 2.5
-    local CF_JOB_TIMEOUT       = 45
-    local CF_DEST_RADIUS       = 1.0
-    local CF_FINAL_DROP_HEIGHT = 6.0
-    local CF_SPAWN_STAGGER     = 0.15
-    local CF_FEED_NOW_LIMIT    = 50
-    local CF_BATCH             = 50
-
-    local CF_PER_ITEM_LIMIT = {
-        ["Coal"]          = 8,
-        ["Biofuel"]       = CF_BATCH,
-        ["Fuel Canister"] = 3,
-        ["Oil Barrel"]    = 1,
-        ["Morsel"]        = CF_BATCH,
-        ["Cooked Morsel"] = CF_BATCH,
-        ["Steak"]         = CF_BATCH,
-        ["Cooked Steak"]  = CF_BATCH,
-        ["Carrot"]        = CF_BATCH,
-        ["Corn"]          = CF_BATCH,
-        ["Pumpkin"]       = CF_BATCH,
-        ["Strawberry"]    = CF_BATCH,
-        ["Apple"]         = CF_BATCH,
-    }
-
-    local CF_DIRECT_FIRE_ITEMS = {
-        ["Coal"]          = true,
-        ["Biofuel"]       = true,
-        ["Fuel Canister"] = true,
-        ["Oil Barrel"]    = true,
-    }
-
-    local CF_PROCESSOR_ITEMS = {
-        ["Morsel"]        = true,
-        ["Cooked Morsel"] = true,
-        ["Steak"]         = true,
-        ["Cooked Steak"]  = true,
-        ["Carrot"]        = true,
-        ["Corn"]          = true,
-        ["Pumpkin"]       = true,
-        ["Strawberry"]    = true,
-        ["Apple"]         = true,
-    }
-
-    local CF_ALL_ITEMS = {}
-    for k in pairs(CF_DIRECT_FIRE_ITEMS) do CF_ALL_ITEMS[k] = true end
-    for k in pairs(CF_PROCESSOR_ITEMS)  do CF_ALL_ITEMS[k] = true end
-
-    local CF_PRIORITY = {
-        "Biofuel",
-        "Morsel", "Cooked Morsel", "Steak", "Cooked Steak",
-        "Carrot", "Corn", "Pumpkin", "Strawberry", "Apple",
-        "Coal", "Fuel Canister", "Oil Barrel",
-    }
-
-    local cfRunning      = false
-    local cfThread       = nil
-    local cfFireCenter   = nil
-    local cfScanRadius   = nil
-    local cfIgnoreRadius = nil
-    local cfActiveDrags  = {}
-    local cfReserved     = setmetatable({}, { __mode = "k" })
-
-    local function cfNow()
-        return os.clock()
-    end
-
-    local function findCampfire()
-        local map = WS:FindFirstChild("Map")
-        local campground = map and map:FindFirstChild("Campground")
-        if not campground then return nil end
-        return campground:FindFirstChild("MainFire")
-    end
-
-    local function findBiofuelProcessor()
-        local structures = WS:FindFirstChild("Structures")
-        if not structures then return nil end
-        return structures:FindFirstChild("Biofuel Processor")
-    end
-
-    local function getCampfireCenter(fire)
-        local center = fire:FindFirstChild("Center")
-        return center and center.Position or nil
-    end
-
-    local function getCampfireTouchRadii(fire)
-        local inner = fire:FindFirstChild("InnerTouchZone")
-        local outer = fire:FindFirstChild("OuterTouchZone")
-        local ignoreR = inner and (inner.Size.X / 2) or 9.1
-        local scanR   = outer and (outer.Size.X / 2) or 65
-        return ignoreR, scanR
-    end
-
-    local function readCampfireFuel(fire)
-        if not fire or not fire.Parent then return nil end
-        return fire:GetAttribute("FuelRemaining")
-    end
-
-    local function cfShouldFeed(fire)
-        local fuel = readCampfireFuel(fire)
-        return fuel ~= nil and fuel <= CF_FEED_THRESHOLD
-    end
-
-    local function cfIsItem(m)
-        return isValidItem(m, CF_ALL_ITEMS)
-    end
-
-    local function cfIsNearFire(item)
-        if not cfFireCenter then return false end
-        local mp = mainPart(item)
-        if not mp then return false end
-        return (mp.Position - cfFireCenter).Magnitude <= cfScanRadius
-    end
-
-    local function cfIsInsideIgnore(item)
-        if not cfFireCenter or not cfIgnoreRadius then return false end
-        local mp = mainPart(item)
-        if not mp then return false end
-        return (mp.Position - cfFireCenter).Magnitude <= cfIgnoreRadius
-    end
-
-    local function cfGetItemsByPriority()
-        local foundByName = {}
-        for _, name in ipairs(CF_PRIORITY) do
-            foundByName[name] = {}
-        end
-        local seen = {}
-        for _, d in ipairs(WS:GetDescendants()) do
-            if cfIsItem(d) and not seen[d] and not cfActiveDrags[d] and not cfReserved[d] and cfIsNearFire(d) then
-                if not (d.Name == "Biofuel" and cfIsInsideIgnore(d)) then
-                    seen[d] = true
-                    if foundByName[d.Name] then
-                        foundByName[d.Name][#foundByName[d.Name] + 1] = d
-                    end
-                end
-            end
-        end
-        if cfFireCenter then
-            for _, name in ipairs(CF_PRIORITY) do
-                table.sort(foundByName[name], function(a, b)
-                    local ap = mainPart(a)
-                    local bp = mainPart(b)
-                    local ad = ap and (ap.Position - cfFireCenter).Magnitude or math.huge
-                    local bd = bp and (bp.Position - cfFireCenter).Magnitude or math.huge
-                    return ad < bd
+                    end)
                 end)
             end
-        end
-        local out = {}
-        for _, name in ipairs(CF_PRIORITY) do
-            for _, item in ipairs(foundByName[name]) do
-                out[#out + 1] = item
-            end
-        end
-        return out
-    end
 
-    local function cfMarkActive(model, r, snap, started)
-        cfActiveDrags[model] = { r = r, snap = snap, started = started }
-    end
-
-    local function cfClearActive(model)
-        cfActiveDrags[model] = nil
-    end
-
-    local function cfDropInPlace(model, rec)
-        if not model or not model.Parent then return end
-        local r = rec and rec.r or getRemotes()
-        pcall(function() stopDragHard(r, model) end)
-        if rec and rec.snap then
-            pcall(function() setCollide(model, true, rec.snap) end)
-        end
-        for _, p in ipairs(getAllParts(model)) do
-            pcall(function()
-                p.Anchored = false
-                p.AssemblyLinearVelocity  = Vector3.new(0, -18, 0)
-                p.AssemblyAngularVelocity = Vector3.new()
-            end)
-        end
-        pcall(function() restoreNetworkOwner(model) end)
-        pcall(function() refreshPrompts(model) end)
-    end
-
-    local function cfStopAllDrags()
-        local copy = {}
-        for model, rec in pairs(cfActiveDrags) do
-            copy[model] = rec
-        end
-        cfActiveDrags = {}
-        for model, rec in pairs(copy) do
-            cfDropInPlace(model, rec)
-        end
-        cfReserved = setmetatable({}, { __mode = "k" })
-    end
-
-    local function cfMoveToTarget(model, targetPos, speed, r)
-        if not cfRunning then return false end
-        if not model or not model.Parent then return false end
-
-        severeExternalWelds(model)
-
-        local mp = mainPart(model)
-        if not mp then return false end
-
-        local started = safeStartDrag(r, model)
-        local riseY   = targetPos.Y + CF_ORB_OFFSET_Y
-        local H       = bboxHeight(model)
-        local riserY  = riseY - 1.0 + math.clamp(H * 0.45, 0.8, 3.0)
-
-        local lookDir = Vector3.new(targetPos.X, mp.Position.Y, targetPos.Z) - mp.Position
-        lookDir = lookDir.Magnitude > 0.001 and lookDir.Unit or Vector3.zAxis
-
-        local snapOrig = setCollide(model, false)
-        cfMarkActive(model, r, snapOrig, started)
-        zeroAssembly(model)
-        setNetworkOwnerLocal(model)
-
-        local t0 = cfNow()
-
-        while cfRunning and model and model.Parent do
-            if cfNow() - t0 > CF_JOB_TIMEOUT then break end
-            if isConsumed(model) then
-                if started then stopDragHard(r, model) end
-                cfClearActive(model)
-                restoreNetworkOwner(model)
-                return true
-            end
-            local pivot = getPivot(model)
-            if not pivot then break end
-            local pos = pivot.Position
-            local dy = riserY - pos.Y
-            if math.abs(dy) <= 0.4 then break end
-            local stepY = math.sign(dy) * math.min(speed * CF_VERTICAL_MULT * CF_STEP_WAIT, math.abs(dy))
-            local np = Vector3.new(pos.X, pos.Y + stepY, pos.Z)
-            setPivot(model, CFrame.new(np, np + lookDir))
-            zeroAssembly(model)
-            Run.Heartbeat:Wait()
-            task.wait(CF_STEP_WAIT)
-        end
-
-        if not cfRunning then
-            cfDropInPlace(model, cfActiveDrags[model])
-            cfClearActive(model)
-            return false
-        end
-
-        while cfRunning and model and model.Parent do
-            if cfNow() - t0 > CF_JOB_TIMEOUT then break end
-            if isConsumed(model) then
-                if started then stopDragHard(r, model) end
-                cfClearActive(model)
-                restoreNetworkOwner(model)
-                return true
-            end
-            local pivot = getPivot(model)
-            if not pivot then break end
-            local pos = pivot.Position
-            local delta = Vector3.new(targetPos.X - pos.X, 0, targetPos.Z - pos.Z)
-            local dist = delta.Magnitude
-            if dist <= CF_DEST_RADIUS then break end
-            local step = math.min(speed * CF_STEP_WAIT, dist)
-            local dir = delta.Unit
-            local np = Vector3.new(pos.X, riserY, pos.Z) + dir * step
-            setPivot(model, CFrame.new(np, np + dir))
-            zeroAssembly(model)
-            Run.Heartbeat:Wait()
-            task.wait(CF_STEP_WAIT)
-        end
-
-        if not cfRunning then
-            cfDropInPlace(model, cfActiveDrags[model])
-            cfClearActive(model)
-            return false
-        end
-
-        local finalPos = targetPos + Vector3.new(0, CF_FINAL_DROP_HEIGHT, 0)
-
-        while cfRunning and model and model.Parent do
-            if cfNow() - t0 > CF_JOB_TIMEOUT then break end
-            if isConsumed(model) then
-                if started then stopDragHard(r, model) end
-                cfClearActive(model)
-                restoreNetworkOwner(model)
-                return true
-            end
-            local pivot = getPivot(model)
-            if not pivot then break end
-            local pos = pivot.Position
-            local delta = finalPos - pos
-            local dist = delta.Magnitude
-            if dist <= 0.55 then break end
-            local step = math.min(speed * CF_VERTICAL_MULT * CF_STEP_WAIT, dist)
-            local dir = delta.Unit
-            setPivot(model, CFrame.new(pos + dir * step, finalPos))
-            zeroAssembly(model)
-            Run.Heartbeat:Wait()
-            task.wait(CF_STEP_WAIT)
-        end
-
-        if not cfRunning then
-            cfDropInPlace(model, cfActiveDrags[model])
-            cfClearActive(model)
-            return false
-        end
-
-        if model and model.Parent then
-            setCollide(model, true, snapOrig)
-            setPivot(model, CFrame.new(finalPos))
-            for _, p in ipairs(getAllParts(model)) do
-                p.Anchored = false
-                p.AssemblyLinearVelocity  = Vector3.new(0, -18, 0)
-                p.AssemblyAngularVelocity = Vector3.new()
-            end
-        end
-
-        local waitStart = cfNow()
-        while cfRunning and model and model.Parent and cfNow() - waitStart < CF_CONSUME_WAIT do
-            if isConsumed(model) then
-                if started then stopDragHard(r, model) end
-                cfClearActive(model)
-                restoreNetworkOwner(model)
-                return true
-            end
-            Run.Heartbeat:Wait()
-            task.wait(CF_STEP_WAIT)
-        end
-
-        if started then stopDragHard(r, model) end
-        if model and model.Parent then
-            restoreNetworkOwner(model)
-            refreshPrompts(model)
-        end
-        cfClearActive(model)
-        return true
-    end
-
-    local function cfRunOneCycle(feedNowCap, ignoreFuel)
-        local fire = findCampfire()
-        if not fire then return end
-
-        local processor     = findBiofuelProcessor()
-        local processorPart = processor and mainPart(processor)
-        local r             = getRemotes()
-
-        if not r.StartDrag or not r.StopDrag then return end
-
-        requestMoreStreamingAround({
-            cfFireCenter,
-            processorPart and processorPart.Position or nil
-        })
-
-        local totalDispatched = 0
-        local cap = feedNowCap or math.huge
-
-        for _, priorityName in ipairs(CF_PRIORITY) do
-            if not cfRunning then break end
-            if totalDispatched >= cap then break end
-
-            if not ignoreFuel then
-                local fireMidCheck = findCampfire()
-                local fuelMid = fireMidCheck and readCampfireFuel(fireMidCheck)
-                if fuelMid and fuelMid >= CF_FEED_TARGET then break end
-            end
-
-            local isProcessorItem = CF_PROCESSOR_ITEMS[priorityName] == true
-            local targetPos
-
-            if isProcessorItem then
-                if processorPart then
-                    targetPos = processorPart.Position
+            local function stopAutoBurn()
+                if autoBurnConn then
+                    pcall(function() autoBurnConn:Disconnect() end)
+                    autoBurnConn = nil
                 end
-            else
-                targetPos = cfFireCenter
+                autoBurnSeen = {}
             end
 
-            if targetPos then
-                local items = cfGetItemsByPriority()
-                local active      = 0
-                local activeLimit = math.min(CF_PER_ITEM_LIMIT[priorityName] or 1, cap - totalDispatched)
-
-                for _, item in ipairs(items) do
-                    if not cfRunning then break end
-                    if totalDispatched >= cap then break end
-
-                    if not ignoreFuel then
-                        local fireInnerCheck = findCampfire()
-                        local fuelInner = fireInnerCheck and readCampfireFuel(fireInnerCheck)
-                        if fuelInner and fuelInner >= CF_FEED_TARGET then break end
-                    end
-
-                    if item and item.Parent and item.Name == priorityName and cfIsItem(item) and cfIsNearFire(item) and not cfActiveDrags[item] and not cfReserved[item] then
-                        if not (item.Name == "Biofuel" and cfIsInsideIgnore(item)) then
-                            while active >= activeLimit and cfRunning do
-                                task.wait(0.05)
+            local function startAutoBurn()
+                stopAutoBurn()
+                burnAllExistingCultists()
+                local items = itemsFolder()
+                if not items then return end
+                autoBurnConn = items.DescendantAdded:Connect(function(inst)
+                    if not inst:IsA("Model") then return end
+                    if autoBurnSeen[inst] then return end
+                    local n = lower(inst.Name or "")
+                    if not n:find("cultist", 1, true) then return end
+                    if not inst:FindFirstChildWhichIsA("Humanoid", true) then return end
+                    if not isTopLevel(inst) then return end
+                    autoBurnSeen[inst] = true
+                    task.spawn(function()
+                        task.wait(0.2)
+                        if not (inst and inst.Parent) then return end
+                        local Remote = findLavaBurnRemote()
+                        local Lava = findLava()
+                        if not (Remote and Lava and Lava.Parent) then return end
+                        pcall(function()
+                            if Remote:IsA("RemoteFunction") then
+                                Remote:InvokeServer(inst, Lava)
+                            else
+                                Remote:FireServer(inst, Lava)
                             end
+                        end)
+                        task.delay(30, function() autoBurnSeen[inst] = nil end)
+                    end)
+                end)
+            end
 
-                            cfReserved[item] = true
-                            active = active + 1
-                            totalDispatched = totalDispatched + 1
+            if C.State.Toggles.MoreAutoBurnCultist == nil then
+                C.State.Toggles.MoreAutoBurnCultist = false
+            end
 
-                            task.spawn(function()
-                                cfMoveToTarget(item, targetPos, CF_FEED_SPEED, r)
-                                cfReserved[item] = nil
-                                active = active - 1
-                            end)
+            tab:Section({ Title = "Auto Burn" })
 
-                            task.wait(CF_SPAWN_STAGGER)
+            tab:Toggle({
+                Title = "Auto Burn: Cultist",
+                Value = (C.State.Toggles.MoreAutoBurnCultist == true),
+                Callback = function(state)
+                    C.State.Toggles.MoreAutoBurnCultist = (state == true)
+                    if state then startAutoBurn() else stopAutoBurn() end
+                end
+            })
+
+            if C.State.Toggles.MoreAutoBurnCultist == true then startAutoBurn() end
+
+            C.State.MoreAutoBurnSelectedChoice = C.State.MoreAutoBurnSelectedChoice or {}
+            local autoBurnSelectedSet = setFromChoice(C.State.MoreAutoBurnSelectedChoice)
+
+            local autoBurnSelectedConn = nil
+            local autoBurnSelectedSeen = {}
+
+            local function burnAllExistingSelected()
+                task.spawn(function()
+                    pcall(function()
+                        if not autoBurnSelectedSet or next(autoBurnSelectedSet) == nil then return end
+                        local items = itemsFolder()
+                        if not items then return end
+                        local Remote = findLavaBurnRemote()
+                        local Lava = findLava()
+                        if not (Remote and Lava and Lava.Parent) then return end
+                        for _, inst in ipairs(items:GetChildren()) do
+                            if inst:IsA("Model") and isSelectedItem(inst, autoBurnSelectedSet) then
+                                autoBurnSelectedSeen[inst] = true
+                                pcall(function()
+                                    if Remote:IsA("RemoteFunction") then
+                                        Remote:InvokeServer(inst, Lava)
+                                    else
+                                        Remote:FireServer(inst, Lava)
+                                    end
+                                end)
+                                task.wait(0.02)
+                            end
+                        end
+                    end)
+                end)
+            end
+
+            local function stopAutoBurnSelected()
+                if autoBurnSelectedConn then
+                    pcall(function() autoBurnSelectedConn:Disconnect() end)
+                    autoBurnSelectedConn = nil
+                end
+                autoBurnSelectedSeen = {}
+            end
+
+            local function startAutoBurnSelected()
+                stopAutoBurnSelected()
+                burnAllExistingSelected()
+                local items = itemsFolder()
+                if not items then return end
+                autoBurnSelectedConn = items.DescendantAdded:Connect(function(inst)
+                    if not inst:IsA("Model") then return end
+                    if autoBurnSelectedSeen[inst] then return end
+                    if not isSelectedItem(inst, autoBurnSelectedSet) then return end
+                    if not isTopLevel(inst) then return end
+                    autoBurnSelectedSeen[inst] = true
+                    task.spawn(function()
+                        task.wait(0.2)
+                        if not (inst and inst.Parent) then return end
+                        local Remote = findLavaBurnRemote()
+                        local Lava = findLava()
+                        if not (Remote and Lava and Lava.Parent) then return end
+                        pcall(function()
+                            if Remote:IsA("RemoteFunction") then
+                                Remote:InvokeServer(inst, Lava)
+                            else
+                                Remote:FireServer(inst, Lava)
+                            end
+                        end)
+                        task.delay(30, function() autoBurnSelectedSeen[inst] = nil end)
+                    end)
+                end)
+            end
+
+            if C.State.Toggles.MoreAutoBurnSelected == nil then
+                C.State.Toggles.MoreAutoBurnSelected = false
+            end
+
+            tab:Dropdown({
+                Title = "Auto Burn Targets",
+                Values = { "Morsel", "Steak", "Pelts", "Sapling" },
+                Multi = true,
+                AllowNone = true,
+                Callback = function(choice)
+                    local list = {}
+                    if type(choice) == "table" then
+                        for i=1,#choice do
+                            local v = choice[i]
+                            if v and v ~= "" then list[#list+1] = v end
+                        end
+                    elseif choice and choice ~= "" then
+                        list[1] = choice
+                    end
+                    C.State.MoreAutoBurnSelectedChoice = list
+                    autoBurnSelectedSet = setFromChoice(choice)
+                end
+            })
+
+            tab:Toggle({
+                Title = "Auto Burn",
+                Value = (C.State.Toggles.MoreAutoBurnSelected == true),
+                Callback = function(state)
+                    C.State.Toggles.MoreAutoBurnSelected = (state == true)
+                    if state then startAutoBurnSelected() else stopAutoBurnSelected() end
+                end
+            })
+
+            if C.State.Toggles.MoreAutoBurnSelected == true then startAutoBurnSelected() end
+
+            local manualBurnGui = nil
+            local manualBurnBtn = nil
+            local manualBurnUpdateConn = nil
+            local manualBurnHighlight = nil
+            local manualBurnHighlightedItem = nil
+
+            local function getNearestBurnableItem()
+                local char = lp.Character
+                if not char then return nil end
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if not root then return nil end
+                local nearest, nearestDist = nil, math.huge
+                local items = itemsFolder()
+                if items then
+                    for _, item in ipairs(items:GetChildren()) do
+                        if item:IsA("Model") or item:IsA("BasePart") then
+                            local mp = mainPart(item)
+                            if mp then
+                                local dist = (mp.Position - root.Position).Magnitude
+                                if dist < nearestDist then nearestDist = dist; nearest = item end
+                            end
                         end
                     end
                 end
+                local charsFolder = WS:FindFirstChild("Characters")
+                if charsFolder then
+                    for _, m in ipairs(charsFolder:GetChildren()) do
+                        if m:IsA("Model") and isDownedPlayerBody(m) then
+                            local mp = mainPart(m)
+                            if mp then
+                                local dist = (mp.Position - root.Position).Magnitude
+                                if dist < nearestDist then nearestDist = dist; nearest = m end
+                            end
+                        end
+                    end
+                end
+                return nearest
+            end
 
-                local deadline = cfNow() + 30
-                while active > 0 and cfRunning and cfNow() < deadline do
-                    task.wait(0.05)
+            local function getHighlightLabel(item)
+                if not item then return "Burn Highlighted Item" end
+                if isDownedPlayerBody(item) then return "Burn: " .. tostring(item.Name or "") end
+                return "Burn: " .. tostring(item.Name or "item")
+            end
+
+            local function clearManualBurnHighlight()
+                if manualBurnHighlight then
+                    pcall(function() manualBurnHighlight:Destroy() end)
+                    manualBurnHighlight = nil
+                end
+                manualBurnHighlightedItem = nil
+            end
+
+            local function highlightManualBurnItem(item)
+                clearManualBurnHighlight()
+                if not item then return end
+                manualBurnHighlightedItem = item
+                manualBurnHighlight = Instance.new("Highlight")
+                if isDownedPlayerBody(item) then
+                    manualBurnHighlight.FillColor = Color3.fromRGB(255, 50, 50)
+                    manualBurnHighlight.OutlineColor = Color3.fromRGB(255, 0, 0)
+                else
+                    manualBurnHighlight.FillColor = Color3.fromRGB(255, 255, 0)
+                    manualBurnHighlight.OutlineColor = Color3.fromRGB(255, 200, 0)
+                end
+                manualBurnHighlight.FillTransparency = 0.5
+                manualBurnHighlight.OutlineTransparency = 0
+                manualBurnHighlight.Adornee = item
+                manualBurnHighlight.Parent = item
+            end
+
+            local function updateManualBurnHighlight()
+                local nearest = getNearestBurnableItem()
+                if nearest ~= manualBurnHighlightedItem then
+                    highlightManualBurnItem(nearest)
+                    if manualBurnBtn then manualBurnBtn.Text = getHighlightLabel(nearest) end
                 end
             end
-        end
-    end
 
-    local function cfFeedWorker()
-        while cfRunning do
-            local fire = findCampfire()
-            if fire and cfShouldFeed(fire) then
-                local fuel = readCampfireFuel(fire)
-                if fuel and fuel < CF_FEED_TARGET then
-                    cfRunOneCycle(nil, false)
+            local function stopManualBurn()
+                if manualBurnGui then
+                    pcall(function() manualBurnGui:Destroy() end)
+                    manualBurnGui = nil
+                    manualBurnBtn = nil
+                end
+                if manualBurnUpdateConn then
+                    pcall(function() manualBurnUpdateConn:Disconnect() end)
+                    manualBurnUpdateConn = nil
+                end
+                clearManualBurnHighlight()
+            end
+
+            local function startManualBurn()
+                stopManualBurn()
+                manualBurnGui = Instance.new("ScreenGui")
+                manualBurnGui.Name = "ManualBurnGui"
+                manualBurnGui.ResetOnSpawn = false
+                manualBurnGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+                manualBurnGui.Parent = playerGui
+                local frame = Instance.new("Frame")
+                frame.Name = "MainFrame"
+                frame.AnchorPoint = Vector2.new(0, 1)
+                frame.Position = UDim2.new(0, 10, 1, -10)
+                frame.Size = UDim2.new(0, 200, 0, 80)
+                frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+                frame.BorderSizePixel = 0
+                frame.Parent = manualBurnGui
+                local corner = Instance.new("UICorner")
+                corner.CornerRadius = UDim.new(0, 8)
+                corner.Parent = frame
+                frame.Active = true
+                frame.Draggable = true
+                local burnBtn = Instance.new("TextButton")
+                burnBtn.Name = "BurnButton"
+                burnBtn.Size = UDim2.new(1, -20, 0, 40)
+                burnBtn.Position = UDim2.new(0, 10, 0, 10)
+                burnBtn.Text = "Burn Highlighted Item"
+                burnBtn.TextSize = 14
+                burnBtn.Font = Enum.Font.GothamBold
+                burnBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+                burnBtn.TextColor3 = Color3.new(1, 1, 1)
+                burnBtn.BorderSizePixel = 0
+                burnBtn.Parent = frame
+                manualBurnBtn = burnBtn
+                local btnCorner = Instance.new("UICorner")
+                btnCorner.CornerRadius = UDim.new(0, 6)
+                btnCorner.Parent = burnBtn
+                local closeBtn = Instance.new("TextButton")
+                closeBtn.Name = "CloseButton"
+                closeBtn.Size = UDim2.new(0, 30, 0, 20)
+                closeBtn.Position = UDim2.new(1, -35, 1, -25)
+                closeBtn.Text = "X"
+                closeBtn.TextSize = 12
+                closeBtn.Font = Enum.Font.GothamBold
+                closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+                closeBtn.TextColor3 = Color3.new(1, 1, 1)
+                closeBtn.BorderSizePixel = 0
+                closeBtn.Parent = frame
+                local closeBtnCorner = Instance.new("UICorner")
+                closeBtnCorner.CornerRadius = UDim.new(0, 4)
+                closeBtnCorner.Parent = closeBtn
+                burnBtn.MouseButton1Click:Connect(function()
+                    if not manualBurnHighlightedItem then warn("No item highlighted") return end
+                    local remote = findLavaBurnRemote()
+                    local lava = findLava()
+                    if not (remote and lava and lava.Parent) then warn("Missing burn remote or lava") return end
+                    local item = manualBurnHighlightedItem
+                    if not (item and item.Parent) then warn("Highlighted item no longer exists") return end
+                    pcall(function()
+                        if remote:IsA("RemoteFunction") then
+                            remote:InvokeServer(item, lava)
+                        else
+                            remote:FireServer(item, lava)
+                        end
+                    end)
+                end)
+                closeBtn.MouseButton1Click:Connect(function()
+                    C.State.Toggles.MoreManualBurn = false
+                    stopManualBurn()
+                end)
+                manualBurnUpdateConn = Run.Heartbeat:Connect(function()
+                    updateManualBurnHighlight()
+                end)
+            end
+
+            if C.State.Toggles.MoreManualBurn == nil then C.State.Toggles.MoreManualBurn = false end
+
+            tab:Toggle({
+                Title = "Manual Burn",
+                Value = (C.State.Toggles.MoreManualBurn == true),
+                Callback = function(state)
+                    C.State.Toggles.MoreManualBurn = (state == true)
+                    if state then startManualBurn() else stopManualBurn() end
+                end
+            })
+
+            if C.State.Toggles.MoreManualBurn == true then startManualBurn() end
+
+            local SCRAP_BRING_INTERVAL = 120
+            local DRAG_SETTLE          = 0.06
+            local scrapDragStarted     = setmetatable({}, { __mode = "k" })
+
+            local function scrapGetRemotes()
+                refreshRoots()
+                local re = RootRS:FindFirstChild("RemoteEvents")
+                return {
+                    StartDrag = re and re:FindFirstChild("RequestStartDraggingItem"),
+                    StopDrag  = re and re:FindFirstChild("StopDraggingItem"),
+                }
+            end
+
+            local function scrapGetAllParts(m)
+                local t = {}
+                if not m then return t end
+                if m:IsA("BasePart") then t[1] = m; return t end
+                for _, d in ipairs(m:GetDescendants()) do
+                    if d:IsA("BasePart") then t[#t+1] = d end
+                end
+                return t
+            end
+
+            local function scrapSetCollide(m, on, snapshot)
+                if on and snapshot then
+                    for part, can in pairs(snapshot) do
+                        if part and part.Parent then part.CanCollide = can end
+                    end
+                    return
+                end
+                local snap = {}
+                for _, p in ipairs(scrapGetAllParts(m)) do
+                    snap[p] = p.CanCollide
+                    p.CanCollide = false
+                end
+                return snap
+            end
+
+            local function scrapZeroAssembly(m)
+                for _, p in ipairs(scrapGetAllParts(m)) do
+                    p.AssemblyLinearVelocity  = Vector3.new()
+                    p.AssemblyAngularVelocity = Vector3.new()
                 end
             end
-            task.wait(CF_REFILL_INTERVAL)
-        end
-    end
 
-    local function cfStopLoop()
-        cfRunning = false
-        if cfThread then
-            pcall(function() task.cancel(cfThread) end)
-            cfThread = nil
-        end
-        cfStopAllDrags()
-    end
-
-    local function cfStartLoop()
-        if cfRunning then return end
-        local fire = findCampfire()
-        if not fire then
-            warn("[CampfireFeed] MainFire not found")
-            return
-        end
-        local center = getCampfireCenter(fire)
-        if not center then
-            warn("[CampfireFeed] Center part not found")
-            return
-        end
-        local ignoreR, scanR = getCampfireTouchRadii(fire)
-        cfFireCenter   = center
-        cfIgnoreRadius = ignoreR
-        cfScanRadius   = scanR
-        cfActiveDrags  = {}
-        cfReserved     = setmetatable({}, { __mode = "k" })
-        cfRunning      = true
-        local processor     = findBiofuelProcessor()
-        local processorPart = processor and mainPart(processor)
-        requestMoreStreamingAround({
-            cfFireCenter,
-            processorPart and processorPart.Position or nil
-        })
-        cfThread = task.spawn(cfFeedWorker)
-    end
-
-    tab:Section({ Title = "Campfire Feed" })
-
-    tab:Toggle({
-        Title    = "Auto Feed Campfire",
-        Default  = C.State.CampfireFeedEnabled and true or false,
-        Callback = function(state)
-            C.State.CampfireFeedEnabled = state and true or false
-            if state then cfStartLoop() else cfStopLoop() end
-        end
-    })
-
-    tab:Button({
-        Title    = "Feed Now (50)",
-        Callback = function()
-            local fire = findCampfire()
-            if not fire then
-                warn("[CampfireFeed] MainFire not found")
-                return
-            end
-            local center = getCampfireCenter(fire)
-            if not center then
-                warn("[CampfireFeed] Center part not found")
-                return
-            end
-            local ignoreR, scanR = getCampfireTouchRadii(fire)
-            cfFireCenter   = center
-            cfIgnoreRadius = ignoreR
-            cfScanRadius   = scanR
-            if cfRunning then return end
-            cfActiveDrags = {}
-            cfReserved    = setmetatable({}, { __mode = "k" })
-            cfRunning     = true
-            task.spawn(function()
-                cfRunOneCycle(CF_FEED_NOW_LIMIT, true)
-                if not C.State.CampfireFeedEnabled then
-                    cfRunning = false
+            local function scrapSevereExternalWelds(m)
+                if not (m and m.Parent) then return end
+                for _, d in ipairs(m:GetDescendants()) do
+                    if d:IsA("WeldConstraint") then
+                        local p0, p1 = d.Part0, d.Part1
+                        if (p0 and not p0:IsDescendantOf(m)) or (p1 and not p1:IsDescendantOf(m)) then
+                            pcall(function() d:Destroy() end)
+                        end
+                    end
+                    if d:IsA("BasePart") and d.Anchored then
+                        pcall(function() d.Anchored = false end)
+                    end
                 end
-            end)
+                if m:IsA("BasePart") and m.Anchored then
+                    pcall(function() m.Anchored = false end)
+                end
+            end
+
+            local function scrapRefreshPrompts(m)
+                if not (m and m.Parent) then return end
+                for _, d in ipairs(m:GetDescendants()) do
+                    if d:IsA("ProximityPrompt") then
+                        local was = d.Enabled
+                        d.Enabled = false
+                        task.defer(function() d.Enabled = was ~= false end)
+                    end
+                end
+            end
+
+            local function scrapSafeStartDrag(r, m)
+                if not (r and r.StartDrag and m and m.Parent) then return false end
+                local ok = pcall(function() r.StartDrag:FireServer(m) end)
+                return ok
+            end
+
+            local function scrapFinallyStopDragTwice(r, m)
+                pcall(function() if r and r.StopDrag and m then r.StopDrag:FireServer(m) end end)
+                Run.Heartbeat:Wait()
+                pcall(function() if r and r.StopDrag and m then r.StopDrag:FireServer(m) end end)
+                task.delay(0.05, function() pcall(function() if r and r.StopDrag and m then r.StopDrag:FireServer(m) end end) end)
+                task.delay(0.20, function() pcall(function() if r and r.StopDrag and m then r.StopDrag:FireServer(m) end end) end)
+            end
+
+            local function scrapStopIfDragging(r, m)
+                if not m then return end
+                if scrapDragStarted[m] then
+                    scrapFinallyStopDragTwice(r, m)
+                    scrapDragStarted[m] = nil
+                end
+            end
+
+            local function scrapperDropCF()
+                local map  = WS:FindFirstChild("Map")
+                local camp = map and map:FindFirstChild("Campground")
+                local scr  = camp and camp:FindFirstChild("Scrapper")
+                if not scr then return nil end
+                local mp = mainPart(scr)
+                local cf = (mp and mp.CFrame) or (scr:IsA("Model") and scr:GetPivot()) or nil
+                if not cf then return nil end
+                return CFrame.new(cf.Position + Vector3.new(0, 5, 0))
+            end
+
+            local function scrapperFragmentDropCF()
+                local map  = WS:FindFirstChild("Map")
+                local camp = map and map:FindFirstChild("Campground")
+                local scr  = camp and camp:FindFirstChild("Scrapper")
+                if not scr then return nil end
+                local mp = mainPart(scr)
+                local cf = (mp and mp.CFrame) or (scr:IsA("Model") and scr:GetPivot()) or nil
+                if not cf then return nil end
+                return CFrame.new(cf.Position + Vector3.new(8, 5, 0))
+            end
+
+            local function scrapDropAtScrapper(m, useFragmentOffset)
+                if not (m and m.Parent) then return false end
+                scrapSevereExternalWelds(m)
+                local r = scrapGetRemotes()
+                local started = scrapSafeStartDrag(r, m)
+                if started then scrapDragStarted[m] = true end
+                Run.Heartbeat:Wait()
+                task.wait(DRAG_SETTLE)
+                local destCF = useFragmentOffset and scrapperFragmentDropCF() or scrapperDropCF()
+                if not destCF then scrapStopIfDragging(r, m); return false end
+                local snap = scrapSetCollide(m, false)
+                scrapZeroAssembly(m)
+                if m:IsA("Model") then
+                    m:PivotTo(destCF)
+                else
+                    local p = mainPart(m)
+                    if p then p.CFrame = destCF end
+                end
+                scrapSetCollide(m, true, snap)
+                scrapStopIfDragging(r, m)
+                for _, p in ipairs(scrapGetAllParts(m)) do
+                    p.Anchored = false
+                    p.AssemblyLinearVelocity  = Vector3.new()
+                    p.AssemblyAngularVelocity = Vector3.new()
+                end
+                scrapRefreshPrompts(m)
+                return true
+            end
+
+            local function scrapRunPass(selectedSet)
+                local items = itemsFolder()
+                if not items then return end
+                local queue, seen = {}, {}
+                for _, m in ipairs(items:GetChildren()) do
+                    if m:IsA("Model") and not seen[m] and selectedSet[m.Name] then
+                        seen[m] = true
+                        queue[#queue+1] = m
+                    end
+                end
+                local active = 0
+                for i = 1, #queue do
+                    local m = queue[i]
+                    if m and m.Parent then
+                        active += 1
+                        task.spawn(function()
+                            scrapDropAtScrapper(m, m.Name == "Gem of the Forest Fragment")
+                            active -= 1
+                        end)
+                    end
+                    while active >= 10 do Run.Heartbeat:Wait() end
+                    task.wait(0.5)
+                end
+                local deadline = os.clock() + math.max(5, 0.5 * #queue + 5)
+                while active > 0 and os.clock() < deadline do Run.Heartbeat:Wait() end
+            end
+
+            local function makeScrapBringToggle(selectedSet)
+                local running     = false
+                local timerThread = nil
+                local descConn    = nil
+                local descSeen    = setmetatable({}, { __mode = "k" })
+
+                local function stop()
+                    running = false
+                    if timerThread then pcall(function() task.cancel(timerThread) end); timerThread = nil end
+                    if descConn then pcall(function() descConn:Disconnect() end); descConn = nil end
+                    descSeen = setmetatable({}, { __mode = "k" })
+                end
+
+                local function start()
+                    stop()
+                    running = true
+                    local items = itemsFolder()
+                    if items then
+                        descConn = items.DescendantAdded:Connect(function(inst)
+                            if not running then return end
+                            if not inst:IsA("Model") then return end
+                            if descSeen[inst] then return end
+                            if not selectedSet[inst.Name] then return end
+                            descSeen[inst] = true
+                            task.spawn(function()
+                                task.wait(0.2)
+                                if not (inst and inst.Parent) then return end
+                                scrapDropAtScrapper(inst, inst.Name == "Gem of the Forest Fragment")
+                                task.delay(30, function() descSeen[inst] = nil end)
+                            end)
+                        end)
+                    end
+                    timerThread = task.spawn(function()
+                        while running do
+                            pcall(function() scrapRunPass(selectedSet) end)
+                            local t0 = os.clock()
+                            while running and (os.clock() - t0) < SCRAP_BRING_INTERVAL do task.wait(1) end
+                        end
+                    end)
+                end
+
+                return { start = start, stop = stop }
+            end
+
+            local CULTIST_GEM_SET = { ["Cultist Gem"] = true }
+            local FOREST_GEM_SET  = { ["Gem of the Forest Fragment"] = true, ["Gem of the Forest"] = true }
+
+            local cultistGemBring = makeScrapBringToggle(CULTIST_GEM_SET)
+            local forestGemBring  = makeScrapBringToggle(FOREST_GEM_SET)
+
+            if C.State.Toggles.MoreAutoScrapCultistGem == nil then C.State.Toggles.MoreAutoScrapCultistGem = false end
+            if C.State.Toggles.MoreAutoScrapForestGem == nil then C.State.Toggles.MoreAutoScrapForestGem = false end
+
+            tab:Section({ Title = "Auto Scrap" })
+
+            tab:Toggle({
+                Title = "Auto Scrap: Cultist Gem",
+                Value = (C.State.Toggles.MoreAutoScrapCultistGem == true),
+                Callback = function(state)
+                    C.State.Toggles.MoreAutoScrapCultistGem = (state == true)
+                    if state then cultistGemBring.start() else cultistGemBring.stop() end
+                end
+            })
+
+            tab:Toggle({
+                Title = "Auto Scrap: Forest Gem",
+                Value = (C.State.Toggles.MoreAutoScrapForestGem == true),
+                Callback = function(state)
+                    C.State.Toggles.MoreAutoScrapForestGem = (state == true)
+                    if state then forestGemBring.start() else forestGemBring.stop() end
+                end
+            })
+
+            if C.State.Toggles.MoreAutoScrapCultistGem == true then cultistGemBring.start() end
+            if C.State.Toggles.MoreAutoScrapForestGem  == true then forestGemBring.start()  end
+
+            local RECYCLE_INTERVAL = 123
+            local recycleThread = nil
+
+            local function findRecycleMaterialRemote()
+                refreshRoots()
+                local re = RootRS:FindFirstChild("RemoteEvents")
+                local r = re and re:FindFirstChild("RequestRecycleMaterial")
+                if r and r:IsA("RemoteEvent") then return r end
+                for _, d in ipairs(RootRS:GetDescendants()) do
+                    if d.Name == "RequestRecycleMaterial" and d:IsA("RemoteEvent") then return d end
+                end
+                return nil
+            end
+
+            local function findRecycler()
+                refreshRoots()
+                local folder = (RootWS and RootWS:FindFirstChild("Structures")) or WS:FindFirstChild("Structures")
+                if folder then
+                    local r = folder:FindFirstChild("Recycler")
+                    if r and r:IsA("Model") then return r end
+                end
+                for _, d in ipairs((RootWS or WS):GetDescendants()) do
+                    if d.Name == "Recycler" and d:IsA("Model") then return d end
+                end
+                return nil
+            end
+
+            local function stopAutoRecycle()
+                if recycleThread then pcall(function() task.cancel(recycleThread) end); recycleThread = nil end
+            end
+
+            local function startAutoRecycle()
+                stopAutoRecycle()
+                task.spawn(function()
+                    pcall(function()
+                        local remote = findRecycleMaterialRemote()
+                        local recycler = findRecycler()
+                        if remote and recycler then remote:FireServer(recycler, "TotalGreenGems") end
+                    end)
+                end)
+                recycleThread = task.spawn(function()
+                    while true do
+                        task.wait(RECYCLE_INTERVAL)
+                        pcall(function()
+                            local remote = findRecycleMaterialRemote()
+                            local recycler = findRecycler()
+                            if remote and recycler then remote:FireServer(recycler, "TotalGreenGems") end
+                        end)
+                    end
+                end)
+            end
+
+            if C.State.Toggles.MoreAutoRecycle == nil then C.State.Toggles.MoreAutoRecycle = false end
+
+            tab:Section({ Title = "Auto Recycle" })
+
+            tab:Toggle({
+                Title = "Auto Recycle",
+                Value = (C.State.Toggles.MoreAutoRecycle == true),
+                Callback = function(state)
+                    C.State.Toggles.MoreAutoRecycle = (state == true)
+                    if state then startAutoRecycle() else stopAutoRecycle() end
+                end
+            })
+
+            if C.State.Toggles.MoreAutoRecycle == true then startAutoRecycle() end
         end
-    })
 
-    if C.State.CampfireFeedEnabled then
-        cfStartLoop()
-    end
-
-    if type(C.RegisterCleanup) == "function" then
-        C.RegisterCleanup(function()
-            stopLoop()
-            cfStopLoop()
+        local charConn = Players.LocalPlayer.CharacterAdded:Connect(function()
+            refreshRoots()
+            local pg = lp:WaitForChild("PlayerGui")
+            local eg = pg:FindFirstChild("EdgeButtons")
+            if eg and eg.Parent ~= pg then eg.Parent = pg end
+            if edgeBtn then edgeBtn.Visible = (C.State.Toggles.MoreTemporalEdge == true) end
+            applySetupVisibility()
         end)
+
+        applySetupVisibility()
+
+        _G.__MoreTemporal = {
+            Destroy = function()
+                stopTimer()
+                stopAutoBurn()
+                stopAutoBurnSelected()
+                stopManualBurn()
+                cultistGemBring.stop()
+                forestGemBring.stop()
+                stopAutoRecycle()
+                busy = false
+                stopRollbackWatch()
+                if edgeConn then pcall(function() edgeConn:Disconnect() end); edgeConn = nil end
+                if charConn then pcall(function() charConn:Disconnect() end); charConn = nil end
+                if camConn then pcall(function() camConn:Disconnect() end); camConn = nil end
+                for i=1,#setupConns do pcall(function() setupConns[i]:Disconnect() end) end
+                setupConns = {}
+                if temporalOrb then pcall(function() temporalOrb:Destroy() end); temporalOrb = nil end
+                if teleportOrb then pcall(function() teleportOrb:Destroy() end); teleportOrb = nil end
+                if setupMenu and setupMenu.Parent then pcall(function() setupMenu:Destroy() end) end
+                if edgeBtn and edgeBtn.Parent then pcall(function() edgeBtn:Destroy() end) end
+                if DUMMY_MODEL then pcall(function() DUMMY_MODEL:Destroy() end) end
+            end
+        }
     end
+
+    local ok, err = pcall(run)
+    if not ok then warn("[More] module error: " .. tostring(err)) end
 end
