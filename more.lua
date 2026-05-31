@@ -1535,6 +1535,44 @@ return function(C, R, UI)
             local manualBurnUpdateConn = nil
             local manualBurnHighlight = nil
             local manualBurnHighlightedItem = nil
+            local manualBurnCooldowns = {}
+            local manualBurnCooldownConns = {}
+
+            local MANUAL_BURN_COOLDOWN = 5.0
+
+            local function isOnBurnCooldown(item)
+                if not item then return false end
+                local expiry = manualBurnCooldowns[item]
+                if not expiry then return false end
+                return os.clock() < expiry
+            end
+
+            local function setBurnCooldown(item)
+                if not item then return end
+                manualBurnCooldowns[item] = os.clock() + MANUAL_BURN_COOLDOWN
+                if manualBurnCooldownConns[item] then
+                    pcall(function() manualBurnCooldownConns[item]:Disconnect() end)
+                    manualBurnCooldownConns[item] = nil
+                end
+                manualBurnCooldownConns[item] = item.AncestryChanged:Connect(function()
+                    if not (item and item.Parent) then
+                        manualBurnCooldowns[item] = nil
+                        if manualBurnCooldownConns[item] then
+                            pcall(function() manualBurnCooldownConns[item]:Disconnect() end)
+                            manualBurnCooldownConns[item] = nil
+                        end
+                    end
+                end)
+                task.delay(MANUAL_BURN_COOLDOWN, function()
+                    if manualBurnCooldowns[item] and os.clock() >= manualBurnCooldowns[item] then
+                        manualBurnCooldowns[item] = nil
+                    end
+                    if manualBurnCooldownConns[item] then
+                        pcall(function() manualBurnCooldownConns[item]:Disconnect() end)
+                        manualBurnCooldownConns[item] = nil
+                    end
+                end)
+            end
 
             local function getNearestBurnableItem()
                 local char = lp.Character
@@ -1546,10 +1584,12 @@ return function(C, R, UI)
                 if items then
                     for _, item in ipairs(items:GetChildren()) do
                         if item:IsA("Model") or item:IsA("BasePart") then
-                            local mp = mainPart(item)
-                            if mp then
-                                local dist = (mp.Position - root.Position).Magnitude
-                                if dist < nearestDist then nearestDist = dist; nearest = item end
+                            if not isOnBurnCooldown(item) then
+                                local mp = mainPart(item)
+                                if mp then
+                                    local dist = (mp.Position - root.Position).Magnitude
+                                    if dist < nearestDist then nearestDist = dist; nearest = item end
+                                end
                             end
                         end
                     end
@@ -1558,10 +1598,12 @@ return function(C, R, UI)
                 if charsFolder then
                     for _, m in ipairs(charsFolder:GetChildren()) do
                         if m:IsA("Model") and isDownedPlayerBody(m) then
-                            local mp = mainPart(m)
-                            if mp then
-                                local dist = (mp.Position - root.Position).Magnitude
-                                if dist < nearestDist then nearestDist = dist; nearest = m end
+                            if not isOnBurnCooldown(m) then
+                                local mp = mainPart(m)
+                                if mp then
+                                    local dist = (mp.Position - root.Position).Magnitude
+                                    if dist < nearestDist then nearestDist = dist; nearest = m end
+                                end
                             end
                         end
                     end
@@ -1620,6 +1662,11 @@ return function(C, R, UI)
                     manualBurnUpdateConn = nil
                 end
                 clearManualBurnHighlight()
+                for item, conn in pairs(manualBurnCooldownConns) do
+                    pcall(function() conn:Disconnect() end)
+                end
+                manualBurnCooldowns = {}
+                manualBurnCooldownConns = {}
             end
 
             local function startManualBurn()
@@ -1678,6 +1725,9 @@ return function(C, R, UI)
                     if not (remote and lava and lava.Parent) then warn("Missing burn remote or lava") return end
                     local item = manualBurnHighlightedItem
                     if not (item and item.Parent) then warn("Highlighted item no longer exists") return end
+                    setBurnCooldown(item)
+                    clearManualBurnHighlight()
+                    if manualBurnBtn then manualBurnBtn.Text = "Burn Highlighted Item" end
                     pcall(function()
                         if remote:IsA("RemoteFunction") then
                             remote:InvokeServer(item, lava)
