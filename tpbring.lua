@@ -27,28 +27,28 @@ return function(C, R, UI)
     end
 
     local function allParts(m)
-    local t = {}
-    if not m then return t end
-    if m:IsA("BasePart") then
-        t[1] = m
+        local t = {}
+        if not m then return t end
+        if m:IsA("BasePart") then
+            t[1] = m
+            return t
+        end
+        for _,d in ipairs(m:GetDescendants()) do
+            if d:IsA("BasePart") then
+                t[#t+1] = d
+            end
+        end
         return t
     end
-    for _,d in ipairs(m:GetDescendants()) do
-        if d:IsA("BasePart") then
-            t[#t+1] = d
-        end
-    end
-    return t
-end
 
-local function isAnyPartLocked(m)
-    for _, p in ipairs(allParts(m)) do
-        local locked = false
-        local ok = pcall(function() locked = p.Locked end)
-        if ok and locked then return true end
+    local function isAnyPartLocked(m)
+        for _, p in ipairs(allParts(m)) do
+            local locked = false
+            local ok = pcall(function() locked = p.Locked end)
+            if ok and locked then return true end
+        end
+        return false
     end
-    return false
-end
 
     local function setPivot(m, cf)
         if not m then return end
@@ -154,6 +154,9 @@ end
     local AIR_DROP_TIMEOUT_S      = 2.25
     local AIR_RETRY_PUSH_DOWN_VY  = -80
 
+    local MAX_AIR_DROPPING        = 5
+    local AIR_DROP_SPREAD_RADIUS  = 0.6
+
     local INFLT_ATTR = "OrbInFlightAt"
     local JOB_ATTR   = "OrbJob"
     local DONE_ATTR  = "OrbDelivered"
@@ -172,23 +175,26 @@ end
     local CURRENT_RUN_ID = nil
     local CURRENT_MODE   = nil
 
-    local running      = false
-    local hb           = nil
-    local orb          = nil
-    local orbTouch     = nil
-    local touchConn    = nil
-    local orbPosVec    = nil
-    local inflight     = {}
-    local releaseQueue = {}
-    local releaseAcc   = 0.0
-    local activeCount  = 0
-    local unstickConn  = nil
-    local preclaimConn = nil
-    local finalized    = {}
-    local fruitNudged  = {}
-    local dropStacks   = {}
-    local pendingRetry = {}
-    local charAddedConn = nil
+    local running        = false
+    local hb             = nil
+    local orb            = nil
+    local orbTouch       = nil
+    local touchConn      = nil
+    local orbPosVec      = nil
+    local inflight       = {}
+    local releaseQueue   = {}
+    local releaseAcc     = 0.0
+    local activeCount    = 0
+    local unstickConn    = nil
+    local preclaimConn   = nil
+    local finalized      = {}
+    local fruitNudged    = {}
+    local dropStacks     = {}
+    local pendingRetry   = {}
+    local charAddedConn  = nil
+
+    local airDropQueue     = {}
+    local airDroppingCount = 0
 
     local junkItems = {
         "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
@@ -682,10 +688,12 @@ end
                         pcall(function() m:SetAttribute(DONE_ATTR, nil) end)
                     end
                     pendingConfirm[m] = nil
+                    airDroppingCount = math.max(0, airDroppingCount - 1)
                 else
                     local t0 = (info and info.at) or now
                     if (now - t0) >= CONFIRM_WINDOW_S then
                         pendingConfirm[m] = nil
+                        airDroppingCount = math.max(0, airDroppingCount - 1)
                         pcall(function()
                             m:SetAttribute(DONE_ATTR, nil)
                             m:SetAttribute(INFLT_ATTR, nil)
@@ -712,6 +720,44 @@ end
         local tries = tonumber(m:GetAttribute(SENT_TRIES_ATTR)) or 1
         pendingRetry[m] = { mode = CURRENT_MODE, at = now, tries = tries }
         markForConfirm(m)
+    end
+
+    local function airDropSpreadOffset(index)
+        local ang = (index - 1) * 2.399963229728653
+        local rad = AIR_DROP_SPREAD_RADIUS * math.sqrt(math.max(index - 1, 0) + 1)
+        rad = math.min(rad, AIR_DROP_SPREAD_RADIUS * 3)
+        return Vector3.new(math.cos(ang) * rad, 0, math.sin(ang) * rad)
+    end
+
+    local function processAirDropQueue()
+        if not (running and isAirMode() and orbPosVec) then return end
+        while airDroppingCount < MAX_AIR_DROPPING and #airDropQueue > 0 do
+            local entry = table.remove(airDropQueue, 1)
+            local m = entry and entry.model
+            local rec = m and inflight[m]
+            if not (m and m.Parent and rec) then
+                goto continue
+            end
+            local queueIndex = airDroppingCount + 1
+            local spread = airDropSpreadOffset(queueIndex)
+            local dropPos = orbPosVec + Vector3.new(spread.X, AIR_RELEASE_UP, spread.Z)
+            setPivot(m, CFrame.new(dropPos))
+            zeroAssembly(m)
+            setCollideFromSnapshot(rec.snap)
+            setAnchored(m, false)
+            for _,p in ipairs(allParts(m)) do
+                p.AssemblyLinearVelocity  = Vector3.new()
+                p.AssemblyAngularVelocity = Vector3.new()
+                pcall(function() p:SetNetworkOwner(nil) end)
+                pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
+            end
+            tryStopDrag(m, rec)
+            rec.dropping   = true
+            rec.droppingAt = os.clock()
+            rec.snap       = rec.snap
+            airDroppingCount = airDroppingCount + 1
+            ::continue::
+        end
     end
 
     local function spawnOrbAt(pos, color, withTouchOrb)
@@ -829,22 +875,7 @@ end
         if info then tryStopDrag(m, info) end
 
         if rec and rec.dropKind == "air" and orbPosVec then
-            local pos = orbPosVec + Vector3.new(0, AIR_RELEASE_UP, 0)
-            setPivot(m, CFrame.new(pos))
-            setAnchored(m, false)
-            zeroAssembly(m)
-            for _,p in ipairs(allParts(m)) do
-                p.CanCollide = false
-                pcall(function() p:SetNetworkOwner(nil) end)
-                pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
-                p.AssemblyLinearVelocity = Vector3.new(0, AIR_RETRY_PUSH_DOWN_VY, 0)
-            end
-            if info then
-                info.released   = true
-                info.dropping   = true
-                info.droppingAt = os.clock()
-                info.snap       = snap
-            end
+            airDropQueue[#airDropQueue+1] = { model = m }
             return
         end
 
@@ -916,10 +947,10 @@ end
     end
 
     local function startConveyor(m, jobId, destBaseVec, destKey, dropKind)
-    if not (running and m and m.Parent) then return end
-    if isAnyPartLocked(m) then return end
-    if not mainPart(m) then return end
-    if not destBaseVec then return end
+        if not (running and m and m.Parent) then return end
+        if isAnyPartLocked(m) then return end
+        if not mainPart(m) then return end
+        if not destBaseVec then return end
 
         if isFruitModel(m) then fruitPreNudge(m) end
 
@@ -1142,11 +1173,11 @@ end
                         if (now - t0) >= AIR_DROP_TIMEOUT_S and orbPosVec then
                             local pos = orbPosVec + Vector3.new(0, AIR_RELEASE_UP, 0)
                             setPivot(m, CFrame.new(pos))
-                            setAnchored(m, false)
                             zeroAssembly(m)
+                            setAnchored(m, false)
                             for _,p in ipairs(allParts(m)) do
                                 p.CanCollide = false
-                                p.AssemblyLinearVelocity = Vector3.new(0, AIR_RETRY_PUSH_DOWN_VY, 0)
+                                p.AssemblyLinearVelocity = Vector3.new()
                                 pcall(function() p:SetNetworkOwner(nil) end)
                                 pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
                             end
@@ -1217,7 +1248,9 @@ end
             local rec = releaseQueue[i]
             if rec and rec.model and rec.model.Parent then releaseOne(rec) end
         end
-        releaseQueue = {}
+        releaseQueue   = {}
+        airDropQueue   = {}
+        airDroppingCount = 0
         for m,rec in pairs(inflight) do abortRestore(m, rec) end
         inflight       = {}
         pendingRetry   = {}
@@ -1292,8 +1325,10 @@ end
 
         stopAll()
         refreshRemoteRefs()
-        orbGroundBases = { nil, nil, nil, nil }
-        preclaimedAt   = {}
+        orbGroundBases   = { nil, nil, nil, nil }
+        preclaimedAt     = {}
+        airDropQueue     = {}
+        airDroppingCount = 0
 
         CURRENT_MODE   = mode
         CURRENT_RUN_ID = tostring(os.clock())
@@ -1358,6 +1393,7 @@ end
             end
 
             checkAirDeliveries()
+            processAirDropQueue()
 
             releaseAcc = releaseAcc + dt
             local interval  = 1 / math.max(1, releaseRateHz)
@@ -1446,6 +1482,8 @@ end
             orbPosVec      = nil
             orbGroundBases = { nil, nil, nil, nil }
         end
+        airDropQueue     = {}
+        airDroppingCount = 0
     end)
 
     local function cleanupModule()
