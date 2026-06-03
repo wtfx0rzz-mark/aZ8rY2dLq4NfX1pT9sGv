@@ -65,14 +65,14 @@ return function(C, R, UI)
         "Basketball","Blueprint","Diamond","Gem of the Forest Fragment","Gem of the Forest","Flashlight","Old Taming flute","Old Rod","Cultist Gem",
         "Tusk","Revolver Ammo","Rifle Ammo","Shotgun Ammo","Explosive Revolver Ammo","Explosive Rifle Ammo","Sacrifice Totem","Anvil Back","Anvil Front","Anvil Base","Armor Trim","Crystal Skull Key"
     }
-    local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt","Basic Egg","Blue Orchid","Pink Tulip","Yellow Peony","Red Rose","White Lily","Purple Carnation"}
+    local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt","Basic Egg","Blue Orchid","Pink Tulip","Yellow Peony","Red Rose","White Lily","Purple Carnation",}
 
     local fuelSet, junkSet, cookSet, scrapAlso, foodSet = {}, {}, {}, {}, {}
     for _,n in ipairs(fuelItems) do fuelSet[n] = true end
     for _,n in ipairs(junkItems) do junkSet[n] = true end
     for _,n in ipairs(foodItems) do if n ~= "Rotten" then foodSet[n] = true end end
     cookSet["Morsel"] = true; cookSet["Steak"] = true; cookSet["Ribs"] = true
-    scrapAlso["Log"] = true; scrapAlso["Chair"] = true
+    scrapAlso["Log"] = true;  scrapAlso["Chair"] = true
 
     local RAW_TO_COOKED = { ["Morsel"]="Cooked Morsel", ["Steak"]="Cooked Steak", ["Ribs"]="Cooked Ribs" }
 
@@ -146,17 +146,13 @@ return function(C, R, UI)
         return t
     end
     local function isAnyPartLocked(model)
-        for _, p in ipairs(getAllParts(model)) do
-            local locked = false
-            local ok = pcall(function() locked = p.Locked end)
-            if ok and locked then return true end
-        end
-        return false
+    for _, p in ipairs(getAllParts(model)) do
+        local locked = false
+        local ok = pcall(function() locked = p.Locked end)
+        if ok and locked then return true end
     end
-    local function isLockedAttribute(model)
-        if not (model and model.Parent) then return false end
-        return model:GetAttribute("Locked") == true
-    end
+    return false
+end
     local function bboxHeight(model)
         local rp = physicalRootPart(model)
         if rp then return rp.Size.Y end
@@ -184,7 +180,9 @@ return function(C, R, UI)
                 local key = math.floor(pos.X/64).."|"..math.floor(pos.Z/64)
                 if not seen[key] then
                     seen[key] = true
-                    pcall(function() WS:RequestStreamAroundAsync(pos) end)
+                    pcall(function()
+                        WS:RequestStreamAroundAsync(pos)
+                    end)
                 end
             end
         end
@@ -529,10 +527,9 @@ return function(C, R, UI)
     end
 
     local function dropNearPlayer(model)
-        if not (model and model.Parent) then return false end
-        if isAnyPartLocked(model) then return false end
-        if isLockedAttribute(model) then return false end
-        severeExternalWelds(model)
+    if not (model and model.Parent) then return false end
+    if isAnyPartLocked(model) then return false end
+    severeExternalWelds(model)
 
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
@@ -541,7 +538,9 @@ return function(C, R, UI)
 
         local cf = groundCFAroundPlayer(model) or computeForwardDropCF()
         if not cf then
-            if started then stopIfDragging(r, model) end
+            if started then
+                stopIfDragging(r, model)
+            end
             return false
         end
 
@@ -554,7 +553,9 @@ return function(C, R, UI)
         end
         setCollide(model, true, snap)
 
-        if started then stopIfDragging(r, model) end
+        if started then
+            stopIfDragging(r, model)
+        end
 
         for _,p in ipairs(getAllParts(model)) do
             p.Anchored = false
@@ -584,16 +585,13 @@ return function(C, R, UI)
         return part
     end
     local function mergedSet(a, b)
-        local t = {}
-        for k,v in pairs(a) do if v then t[k]=true end end
-        for k,v in pairs(b) do if v then t[k]=true end end
-        return t
+        local t = {}; for k,v in pairs(a) do if v then t[k]=true end end; for k,v in pairs(b) do if v then t[k]=true end end; return t
     end
 
-    local DRAG_SPEED      = 18
-    local VERTICAL_MULT   = 1.35
-    local STEP_WAIT       = 0.03
-    local STUCK_TTL       = 6.0
+    local DRAG_SPEED    = 18
+    local VERTICAL_MULT = 1.35
+    local STEP_WAIT     = 0.03
+    local STUCK_TTL     = 6.0
     local ORB_PICK_RADIUS = 60
 
     local function setPivot(model, cf)
@@ -741,11 +739,13 @@ return function(C, R, UI)
             if isInsideTree(m) then return false end
             return true
         end
+
         if selectedSet["Berry"] and nm == "Berry" then
             if itemsFolder and m.Parent ~= itemsFolder then return false end
             if isInsideTree(m) then return false end
             return true
         end
+
         if selectedSet["Rotten"] and m:GetAttribute("FoodRot") ~= nil and foodSet[nm] then
             if nm == "Apple" then
                 if itemsFolder and m.Parent ~= itemsFolder then return false end
@@ -761,7 +761,10 @@ return function(C, R, UI)
         end
 
         local rk = "Rotten " .. nm
-        if selectedSet[rk] then return m:GetAttribute("FoodRot") ~= nil end
+        if selectedSet[rk] then
+            return m:GetAttribute("FoodRot") ~= nil
+        end
+
         if selectedSet[nm] then return true end
         if selectedSet["Mossy Coin"] and (nm == "Mossy Coin" or nm:match("^Mossy Coin%d+$")) then return true end
         if selectedSet["Cultist"] and m and m:IsA("Model") and l:find("cultist",1,true) and hasHumanoid(m) then return true end
@@ -805,31 +808,35 @@ return function(C, R, UI)
     end
 
     local function canPick(m, center, radius, selectedSet, jobId)
-        if not (m and m.Parent and m:IsA("Model")) then return false end
-        local itemsFolder = itemsRootOrNil()
-        if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
-        if isExcludedModel(m) then return false end
-        if isLogWallBlocked(m, selectedSet) then return false end
-        if isLockedAttribute(m) then return false end
-        if isAnyPartLocked(m) then return false end
-
-        if itemsFolder and m.Parent ~= itemsFolder then
-            local parent = m.Parent
-            while parent and parent ~= itemsFolder do
-                if parent:IsA("Model") then return false end
-                parent = parent.Parent
+    if not (m and m.Parent and m:IsA("Model")) then return false end
+    local itemsFolder = itemsRootOrNil()
+    if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
+    if isExcludedModel(m) then return false end
+    if isLogWallBlocked(m, selectedSet) then return false end
+    
+    -- Skip if this model has a parent model between it and Items folder
+    if itemsFolder and m.Parent ~= itemsFolder then
+        local parent = m.Parent
+        while parent and parent ~= itemsFolder do
+            if parent:IsA("Model") then
+                -- This model is inside another model, skip it
+                return false
             end
+            parent = parent.Parent
         end
-
-        local tIn = tonumber(m:GetAttribute(INFLT_ATTR))
-        local jIn = m:GetAttribute(JOB_ATTR)
-        if tIn and jIn and tostring(jIn) ~= tostring(jobId) and (now() - tIn) < STUCK_TTL then
-            return false
-        end
-        if not nameMatches(selectedSet, m) then return false end
-        local mp = mainPart(m); if not mp then return false end
-        return (mp.Position - center).Magnitude <= radius
     end
+    
+    local tIn = tonumber(m:GetAttribute(INFLT_ATTR))
+    local jIn = m:GetAttribute(JOB_ATTR)
+    if tIn and jIn and tostring(jIn) ~= tostring(jobId) and (now() - tIn) < STUCK_TTL then
+        return false
+    end
+    if not nameMatches(selectedSet, m) then
+        return false
+    end
+    local mp = mainPart(m); if not mp then return false end
+    return (mp.Position - center).Magnitude <= radius
+end
 
     local function getCandidates(center, radius, selectedSet, jobId)
         local params = OverlapParams.new()
@@ -913,7 +920,9 @@ return function(C, R, UI)
 
     local function runConveyorWave(centerPos, orbPos, targets, jobId, perNameCount)
         local picked = getCandidates(centerPos, ORB_PICK_RADIUS, targets, jobId)
-        if #picked == 0 then return 0 end
+        if #picked == 0 then
+            return 0
+        end
 
         local limitOn = C.State.BringLimitEnabled and true or false
         local maxPerName = currentLimit()
@@ -947,7 +956,9 @@ return function(C, R, UI)
         end
 
         local deadline = now() + math.max(5, 0.5 * #picked + 5)
-        while active > 0 and now() < deadline do Run.Heartbeat:Wait() end
+        while active > 0 and now() < deadline do
+            Run.Heartbeat:Wait()
+        end
 
         return #picked
     end
@@ -958,7 +969,9 @@ return function(C, R, UI)
         local perNameCount = {}
 
         while true do
-            if now() - t0 >= JOB_HARD_TIMEOUT_S then break end
+            if now() - t0 >= JOB_HARD_TIMEOUT_S then
+                break
+            end
             local moved = runConveyorWave(centerPos, orbPos, targets, jobId, perNameCount)
             if moved == 0 then
                 emptyPasses += 1
@@ -1014,8 +1027,12 @@ return function(C, R, UI)
 
     local _bringBusy = false
     local function fastBringToGround(selectedSet, opts)
-        if not selectedSet or next(selectedSet) == nil then return end
-        if _bringBusy then return end
+        if not selectedSet or next(selectedSet) == nil then
+            return
+        end
+        if _bringBusy then
+            return
+        end
         _bringBusy = true
 
         local skipFoodRot   = (opts and opts.SkipFoodRot == true) or false
@@ -1028,6 +1045,7 @@ return function(C, R, UI)
 
             local limitOn = C.State.BringLimitEnabled and true or false
             local maxPerName = currentLimit()
+
             local perNameCount = {}
 
             local function scanQueue(alreadyMoved)
@@ -1042,35 +1060,40 @@ return function(C, R, UI)
                     end
                     if m and not seenModel[m] and not alreadyMoved[m] then
                         seenModel[m] = true
-                        if not isLockedAttribute(m) then
+
+                        if excludeCorpse then
                             local ln = (m.Name or ""):lower()
-                            local skipItem = false
-                            if excludeCorpse and ln:find("corpse", 1, true) then
-                                skipItem = true
+                            if ln:find("corpse", 1, true) then
+                                continue
                             end
-                            if not skipItem and skipFoodRot then
-                                local rot = m:GetAttribute("FoodRot")
-                                if rot ~= nil then
-                                    local nm0 = tostring(m.Name or "")
-                                    local rk = "Rotten " .. nm0
-                                    local allow = false
-                                    if selectedSet["Rotten"] and foodSet[nm0] then allow = true end
-                                    if selectedSet[rk] then allow = true end
-                                    if not allow then skipItem = true end
+                        end
+
+                        if skipFoodRot then
+                            local rot = m:GetAttribute("FoodRot")
+                            if rot ~= nil then
+                                local nm0 = tostring(m.Name or "")
+                                local rk = "Rotten " .. nm0
+                                local allow = false
+                                if selectedSet["Rotten"] and foodSet[nm0] then allow = true end
+                                if selectedSet[rk] then allow = true end
+                                if not allow then
+                                    continue
                                 end
                             end
-                            if not skipItem and m.Name == "Stew" then
-                                if isModelWeldedToOutside(m) or isStewOnCrockpot(m) then
-                                    skipItem = true
-                                end
+                        end
+
+                        if m.Name == "Stew" then
+                            if isModelWeldedToOutside(m) or isStewOnCrockpot(m) then
+                                continue
                             end
-                            if not skipItem and not isExcludedModel(m) and not isLogWallBlocked(m, selectedSet) then
-                                local mp = mainPart(m)
-                                if mp then
-                                    perNameCount[m.Name] = (perNameCount[m.Name] or 0) + 1
-                                    if (not limitOn) or perNameCount[m.Name] <= maxPerName then
-                                        queue[#queue+1] = m
-                                    end
+                        end
+
+                        if not isExcludedModel(m) and not isLogWallBlocked(m, selectedSet) then
+                            local mp = mainPart(m)
+                            if mp then
+                                perNameCount[m.Name] = (perNameCount[m.Name] or 0) + 1
+                                if (not limitOn) or perNameCount[m.Name] <= maxPerName then
+                                    queue[#queue+1] = m
                                 end
                             end
                         end
@@ -1082,8 +1105,12 @@ return function(C, R, UI)
             local alreadyMoved = {}
             local maxPasses = 3
             for pass = 1, maxPasses do
-                if root then requestMoreStreamingAround({ root.Position }) end
+                if root then
+                    requestMoreStreamingAround({ root.Position })
+                end
+
                 local queue = scanQueue(alreadyMoved)
+
                 if #queue == 0 then
                     if WS.StreamingEnabled and root then
                         requestMoreStreamingAround({ root.Position })
@@ -1109,6 +1136,7 @@ return function(C, R, UI)
         _bringBusy = false
         if not ok then
             stopAllOutstandingDrags()
+            return
         end
     end
 
@@ -1126,38 +1154,52 @@ return function(C, R, UI)
         if type(v) == "number" then return v end
         if type(v) == "string" then return tonumber(v) end
         if type(v) ~= "table" then return nil end
-        local keys = { "Value","value","Current","current","CurrentValue","currentValue","Number","number","Slider","slider" }
+
+        local keys = {
+            "Value","value",
+            "Current","current",
+            "CurrentValue","currentValue",
+            "Number","number",
+            "Slider","slider",
+        }
         for _,k in ipairs(keys) do
             local n = tonumber(v[k])
             if n then return n end
         end
+
         if type(v.Value) == "table" then
             local n = tonumber(v.Value.Value) or tonumber(v.Value.Current) or tonumber(v.Value.CurrentValue)
             if n then return n end
         end
+
         if #v >= 1 then
             local n = tonumber(v[1])
             if n then return n end
         end
+
         return nil
     end
 
     tab:Section({ Title = "Actions" })
     tab:Button({ Title = "Burn/Cook Nearby", Callback = burnNearby })
-    tab:Button({ Title = "Scrap Nearby",     Callback = scrapNearby })
+    tab:Button({ Title = "Scrap Nearby",      Callback = scrapNearby })
 
     tab:Section({ Title = "Bring Limits" })
     tab:Toggle({
         Title = "Enable per-name limit",
         Default = C.State.BringLimitEnabled and true or false,
-        Callback = function(on) C.State.BringLimitEnabled = on and true or false end
+        Callback = function(on)
+            C.State.BringLimitEnabled = on and true or false
+        end
     })
     tab:Slider({
         Title = "Max per item name",
         Value = { Min = 1, Max = 100, Default = currentLimit() },
         Callback = function(v)
             local nv = parseSliderNumber(v)
-            if nv then C.State.BringLimitAmount = math.clamp(nv, 1, 100) end
+            if nv then
+                C.State.BringLimitAmount = math.clamp(nv, 1, 100)
+            end
         end
     })
 
@@ -1240,43 +1282,39 @@ return function(C, R, UI)
             local pScr  = scrapOrbPos(); if pScr  then positions[#positions+1] = pScr  end
             if #positions == 0 then return end
 
-            local items = WS:FindFirstChild("Items")
-            if not items then return end
-
+            local items = WS:FindFirstChild("Items"); if not items then return end
             for _,m in ipairs(items:GetChildren()) do
-                if m:IsA("Model") then
-                    local mp = mainPart(m)
-                    if mp then
-                        local nearest, orbY = nil, nil
-                        local pos = mp.Position
-                        for _,o in ipairs(positions) do
-                            local d = (pos - o).Magnitude
-                            if d <= ORB_RADIUS then nearest, orbY = true, o.Y; break end
-                        end
+                if not m:IsA("Model") then continue end
+                local mp = mainPart(m); if not mp then continue end
 
-                        if nearest then
-                            local rec = watched[m]
-                            if not rec then
-                                watched[m] = {t=now(), y0=pos.Y, kicks=0}
-                            else
-                                local fell = (rec.y0 - pos.Y) >= ORB_FALL_DELTA or pos.Y < (orbY - ORB_FALL_DELTA)
-                                if fell then
-                                    watched[m] = nil
-                                elseif (now() - rec.t) >= ORB_STUCK_SECS then
-                                    if rec.kicks < ORB_MAX_KICKS then
-                                        rec.kicks += 1
-                                        rec.t = now()
-                                        rec.y0 = pos.Y
-                                        kickDown(m, orbY)
-                                    else
-                                        watched[m] = nil
-                                    end
-                                end
-                            end
-                        else
+                local nearest, orbY = nil, nil
+                local pos = mp.Position
+                for _,o in ipairs(positions) do
+                    local d = (pos - o).Magnitude
+                    if d <= ORB_RADIUS then nearest, orbY = true, o.Y; break end
+                end
+
+                if nearest then
+                    local rec = watched[m]
+                    if not rec then
+                        watched[m] = {t=now(), y0=pos.Y, kicks=0}
+                    else
+                        local fell = (rec.y0 - pos.Y) >= ORB_FALL_DELTA or pos.Y < (orbY - ORB_FALL_DELTA)
+                        if fell then
                             watched[m] = nil
+                        elseif (now() - rec.t) >= ORB_STUCK_SECS then
+                            if rec.kicks < ORB_MAX_KICKS then
+                                rec.kicks += 1
+                                rec.t = now()
+                                rec.y0 = pos.Y
+                                kickDown(m, orbY)
+                            else
+                                watched[m] = nil
+                            end
                         end
                     end
+                else
+                    watched[m] = nil
                 end
             end
         end)
