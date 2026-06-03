@@ -1385,6 +1385,7 @@ return function(C, R, UI)
                 if not items then return end
                 autoBurnConn = items.DescendantAdded:Connect(function(inst)
                     if not inst:IsA("Model") then return end
+                    if autoBurnSeen[inst] then return end
                     local n = lower(inst.Name or "")
                     if not n:find("cultist", 1, true) then return end
                     if not inst:FindFirstChildWhichIsA("Humanoid", true) then return end
@@ -1910,10 +1911,8 @@ return function(C, R, UI)
                 local queue, seen = {}, {}
                 for _, m in ipairs(items:GetChildren()) do
                     if m:IsA("Model") and not seen[m] and selectedSet[m.Name] then
-                        if m:GetAttribute("Locked") ~= true then
-                            seen[m] = true
-                            queue[#queue+1] = m
-                        end
+                        seen[m] = true
+                        queue[#queue+1] = m
                     end
                 end
                 local active = 0
@@ -1956,12 +1955,10 @@ return function(C, R, UI)
                             if not inst:IsA("Model") then return end
                             if descSeen[inst] then return end
                             if not selectedSet[inst.Name] then return end
-                            if inst:GetAttribute("Locked") == true then return end
                             descSeen[inst] = true
                             task.spawn(function()
                                 task.wait(0.2)
                                 if not (inst and inst.Parent) then return end
-                                if inst:GetAttribute("Locked") == true then return end
                                 scrapDropAtScrapper(inst, inst.Name == "Gem of the Forest Fragment")
                                 task.delay(30, function() descSeen[inst] = nil end)
                             end)
