@@ -472,6 +472,7 @@ return function(C, R, UI)
                             local nameLower = n:lower()
                             if string.find(nameLower, "horse", 1, true) then break end
                             if n == "Deer" or n == "Ram" or n == "Owl" or n == "Pelt Trader" or n == "Furniture Trader" or n == "Horse" then break end
+                            if C.State.Toggles.CultistsOnly and not string.find(nameLower, "cultist", 1, true) then break end
                             seen[mdl] = true
                             out[#out + 1] = mdl
                         until true
@@ -1794,6 +1795,14 @@ return function(C, R, UI)
         Callback = function(on)
             C.State.Toggles.CharacterAura = on
             if on then CharacterAura.Start() else CharacterAura.Stop() end
+        end
+    })
+
+    CombatTab:Toggle({
+        Title = "Cultists Only",
+        Value = C.State.Toggles.CultistsOnly or false,
+        Callback = function(on)
+            C.State.Toggles.CultistsOnly = on
         end
     })
 
