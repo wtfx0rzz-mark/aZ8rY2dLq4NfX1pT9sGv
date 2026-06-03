@@ -146,17 +146,13 @@ return function(C, R, UI)
         return t
     end
     local function isAnyPartLocked(model)
-        for _, p in ipairs(getAllParts(model)) do
-            local locked = false
-            local ok = pcall(function() locked = p.Locked end)
-            if ok and locked then return true end
-        end
-        return false
+    for _, p in ipairs(getAllParts(model)) do
+        local locked = false
+        local ok = pcall(function() locked = p.Locked end)
+        if ok and locked then return true end
     end
-    local function isLockedAttribute(model)
-        if not (model and model.Parent) then return false end
-        return model:GetAttribute("Locked") == true
-    end
+    return false
+end
     local function bboxHeight(model)
         local rp = physicalRootPart(model)
         if rp then return rp.Size.Y end
@@ -531,10 +527,9 @@ return function(C, R, UI)
     end
 
     local function dropNearPlayer(model)
-        if not (model and model.Parent) then return false end
-        if isAnyPartLocked(model) then return false end
-        if isLockedAttribute(model) then return false end
-        severeExternalWelds(model)
+    if not (model and model.Parent) then return false end
+    if isAnyPartLocked(model) then return false end
+    severeExternalWelds(model)
 
         local r = resolveRemotes()
         local started = safeStartDrag(r, model)
@@ -813,35 +808,35 @@ return function(C, R, UI)
     end
 
     local function canPick(m, center, radius, selectedSet, jobId)
-        if not (m and m.Parent and m:IsA("Model")) then return false end
-        local itemsFolder = itemsRootOrNil()
-        if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
-        if isExcludedModel(m) then return false end
-        if isLogWallBlocked(m, selectedSet) then return false end
-        if isLockedAttribute(m) then return false end
-        if isAnyPartLocked(m) then return false end
-
-        if itemsFolder and m.Parent ~= itemsFolder then
-            local parent = m.Parent
-            while parent and parent ~= itemsFolder do
-                if parent:IsA("Model") then
-                    return false
-                end
-                parent = parent.Parent
+    if not (m and m.Parent and m:IsA("Model")) then return false end
+    local itemsFolder = itemsRootOrNil()
+    if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
+    if isExcludedModel(m) then return false end
+    if isLogWallBlocked(m, selectedSet) then return false end
+    
+    -- Skip if this model has a parent model between it and Items folder
+    if itemsFolder and m.Parent ~= itemsFolder then
+        local parent = m.Parent
+        while parent and parent ~= itemsFolder do
+            if parent:IsA("Model") then
+                -- This model is inside another model, skip it
+                return false
             end
+            parent = parent.Parent
         end
-
-        local tIn = tonumber(m:GetAttribute(INFLT_ATTR))
-        local jIn = m:GetAttribute(JOB_ATTR)
-        if tIn and jIn and tostring(jIn) ~= tostring(jobId) and (now() - tIn) < STUCK_TTL then
-            return false
-        end
-        if not nameMatches(selectedSet, m) then
-            return false
-        end
-        local mp = mainPart(m); if not mp then return false end
-        return (mp.Position - center).Magnitude <= radius
     end
+    
+    local tIn = tonumber(m:GetAttribute(INFLT_ATTR))
+    local jIn = m:GetAttribute(JOB_ATTR)
+    if tIn and jIn and tostring(jIn) ~= tostring(jobId) and (now() - tIn) < STUCK_TTL then
+        return false
+    end
+    if not nameMatches(selectedSet, m) then
+        return false
+    end
+    local mp = mainPart(m); if not mp then return false end
+    return (mp.Position - center).Magnitude <= radius
+end
 
     local function getCandidates(center, radius, selectedSet, jobId)
         local params = OverlapParams.new()
@@ -1066,15 +1061,12 @@ return function(C, R, UI)
                     if m and not seenModel[m] and not alreadyMoved[m] then
                         seenModel[m] = true
 
-                        if isLockedAttribute(m) then
-                            seenModel[m] = true
-                        else
-
                         if excludeCorpse then
                             local ln = (m.Name or ""):lower()
                             if ln:find("corpse", 1, true) then
-                                seenModel[m] = true
-                            else
+                                continue
+                            end
+                        end
 
                         if skipFoodRot then
                             local rot = m:GetAttribute("FoodRot")
@@ -1085,13 +1077,16 @@ return function(C, R, UI)
                                 if selectedSet["Rotten"] and foodSet[nm0] then allow = true end
                                 if selectedSet[rk] then allow = true end
                                 if not allow then
-                                    seenModel[m] = true
-                                else
+                                    continue
+                                end
+                            end
+                        end
 
                         if m.Name == "Stew" then
                             if isModelWeldedToOutside(m) or isStewOnCrockpot(m) then
-                                seenModel[m] = true
-                            else
+                                continue
+                            end
+                        end
 
                         if not isExcludedModel(m) and not isLogWallBlocked(m, selectedSet) then
                             local mp = mainPart(m)
@@ -1100,15 +1095,6 @@ return function(C, R, UI)
                                 if (not limitOn) or perNameCount[m.Name] <= maxPerName then
                                     queue[#queue+1] = m
                                 end
-                            end
-                        end
-
-                            end
-                        end
-                            end
-                        end
-                            end
-                        end
                             end
                         end
                     end
