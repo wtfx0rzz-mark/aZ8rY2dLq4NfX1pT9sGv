@@ -154,7 +154,7 @@ return function(C, R, UI)
     local AIR_DROP_TIMEOUT_S      = 2.25
     local AIR_RETRY_PUSH_DOWN_VY  = -80
 
-    local MAX_AIR_DROPPING        = 5
+    local MAX_AIR_DROPPING        = MAX_CONCURRENT
     local AIR_DROP_SPREAD_RADIUS  = 0.6
 
     local INFLT_ATTR = "OrbInFlightAt"
@@ -752,9 +752,15 @@ return function(C, R, UI)
                     pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
                 end
                 tryStopDrag(m, rec)
+                rec.airQueued  = false
+                rec.released   = true
                 rec.dropping   = true
                 rec.droppingAt = os.clock()
                 airDroppingCount = airDroppingCount + 1
+                if rec.counted then
+                    rec.counted = false
+                    activeCount = math.max(0, activeCount - 1)
+                end
             end
         end
     end
@@ -874,6 +880,15 @@ return function(C, R, UI)
         if info then tryStopDrag(m, info) end
 
         if rec and rec.dropKind == "air" and orbPosVec then
+            local info = inflight[m]
+            if info then
+                if info.airQueued or info.dropping or info.released then
+                    return
+                end
+                info.airQueued = true
+                info.staged = true
+                info.stagedAt = os.clock()
+            end
             airDropQueue[#airDropQueue+1] = { model = m }
             return
         end
