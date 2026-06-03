@@ -780,11 +780,13 @@ return function(C, R, UI)
             local rec = m and inflight[m]
             if m and m.Parent and rec then
                 local targetXZ = entry.targetXZ
-                local dropPos = Vector3.new(
-                    targetXZ and targetXZ.X or dropTarget.X,
-                    dropTarget.Y + SCRAPPER_CHUTE_ABOVE,
-                    targetXZ and targetXZ.Z or dropTarget.Z
-                )
+                local waveIndex = airDroppingCount
+		local waveY = math.sin(waveIndex * 0.8) * 4
+		local dropPos = Vector3.new(
+    		targetXZ and targetXZ.X or dropTarget.X,
+    		dropTarget.Y + SCRAPPER_CHUTE_ABOVE + waveY,
+    		targetXZ and targetXZ.Z or dropTarget.Z
+		)
                 setPivot(m, CFrame.new(dropPos))
                 zeroAssembly(m)
                 setCollideFromSnapshot(rec.snap)
