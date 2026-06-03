@@ -154,7 +154,7 @@ return function(C, R, UI)
     local AIR_DROP_TIMEOUT_S      = 2.25
     local AIR_RETRY_PUSH_DOWN_VY  = -80
 
-    local MAX_AIR_DROPPING        = MAX_CONCURRENT-1
+    local MAX_AIR_DROPPING        = 50
     local AIR_DROP_SPREAD_RADIUS  = 0.6
 
     local SCRAPPER_CHUTE_ABOVE    = 12
