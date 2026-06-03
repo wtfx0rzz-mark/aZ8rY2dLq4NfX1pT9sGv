@@ -715,6 +715,10 @@ return function(C, R, UI)
             pcall(function() p:SetNetworkOwner(nil) end)
             pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
         end
+        if rec.counted then
+            rec.counted = false
+            activeCount = math.max(0, activeCount - 1)
+        end
         local now = os.clock()
         pcall(function() m:SetAttribute(SENT_DELIV_ATTR, now) end)
         local tries = tonumber(m:GetAttribute(SENT_TRIES_ATTR)) or 1
@@ -899,6 +903,11 @@ return function(C, R, UI)
             p.AssemblyLinearVelocity  = Vector3.new()
             pcall(function() p:SetNetworkOwner(nil) end)
             pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
+        end
+        local gInfo = inflight[m]
+        if gInfo and gInfo.counted then
+            gInfo.counted = false
+            activeCount = math.max(0, activeCount - 1)
         end
         markDoneThisRun(m)
     end
@@ -1115,10 +1124,6 @@ return function(C, R, UI)
 
                         if distH <= ARRIVE_EPS_H and math.abs(tgt.Y-pos.Y) <= 1.2 then
                             tryStopDrag(m, rec)
-                            if rec.counted then
-                                rec.counted = false
-                                activeCount = math.max(0, activeCount - 1)
-                            end
                             if rec.dropKind == "air" then
                                 releaseOne({ model = m, snap = rec.snap, dropKind = "air" })
                             else
