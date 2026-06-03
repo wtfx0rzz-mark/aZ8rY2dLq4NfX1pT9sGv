@@ -48,8 +48,8 @@ return function(C, R, UI)
     local speedConn
 
     local noclipAddedConn, noclipCharConn, noclipTimerConn
-    local noclipTouched = {}   -- [BasePart]=true
-    local noclipOrig    = {}   -- [BasePart]=original CanCollide bool
+    local noclipTouched = {}
+    local noclipOrig    = {}
     local noclipLastReassert = 0
 
     local jumpConn
@@ -143,46 +143,14 @@ return function(C, R, UI)
         clearInstance(bodyGyro); bodyGyro = nil
     end
 
-    local function startFly()
-        flyEnabled = true
-        startMobileFly()
-    end
-
-    local function stopFly()
-        flyEnabled = false
-        stopMobileFly()
-    end
-
-    local function setWalkSpeed(val)
-        local hum = humanoid()
-        if hum then hum.WalkSpeed = val end
-    end
-
-    local function startSpeedEnforcer()
-        disconnectConn(speedConn); speedConn = nil
-        speedConn = RunService.Heartbeat:Connect(function()
-            if not speedEnabled then return end
-            local hum = humanoid()
-            if hum and hum.WalkSpeed ~= walkSpeedValue then
-                hum.WalkSpeed = walkSpeedValue
-            end
-        end)
-    end
-
-    --========================
-    -- Noclip (cheap + restores on OFF)
-    --========================
     local function setPartNoclip(part)
         if not part or not part:IsA("BasePart") then return end
-
         if noclipOrig[part] == nil then
             noclipOrig[part] = part.CanCollide
         end
-
         if part.CanCollide ~= false then
             part.CanCollide = false
         end
-
         noclipTouched[part] = true
     end
 
@@ -267,9 +235,34 @@ return function(C, R, UI)
         noclipOrig = {}
     end
 
-    --========================
-    -- Infinite Jump
-    --========================
+    local function startFly()
+        flyEnabled = true
+        startNoclip()
+        startMobileFly()
+    end
+
+    local function stopFly()
+        flyEnabled = false
+        stopMobileFly()
+        stopNoclip()
+    end
+
+    local function setWalkSpeed(val)
+        local hum = humanoid()
+        if hum then hum.WalkSpeed = val end
+    end
+
+    local function startSpeedEnforcer()
+        disconnectConn(speedConn); speedConn = nil
+        speedConn = RunService.Heartbeat:Connect(function()
+            if not speedEnabled then return end
+            local hum = humanoid()
+            if hum and hum.WalkSpeed ~= walkSpeedValue then
+                hum.WalkSpeed = walkSpeedValue
+            end
+        end)
+    end
+
     local function startInfJump()
         disconnectConn(jumpConn); jumpConn = nil
         jumpConn = UIS.JumpRequest:Connect(function()
@@ -282,9 +275,6 @@ return function(C, R, UI)
         disconnectConn(jumpConn); jumpConn = nil
     end
 
-    --========================
-    -- Cleanup (module reload safety)
-    --========================
     BAG.__cleanup = function()
         if flyEnabled or FLYING then stopFly() end
         disconnectConn(flyCharConn); flyCharConn = nil
@@ -305,12 +295,8 @@ return function(C, R, UI)
         cachedControlOk = false
     end
 
-    -- Start the speed enforcer once per module load (and ensure old one is cleaned up)
     startSpeedEnforcer()
 
-    --========================
-    -- UI Controls
-    --========================
     tab:Section({ Title = "Movement Controls", Icon = "activity" })
 
     tab:Slider({
@@ -322,7 +308,7 @@ return function(C, R, UI)
     })
 
     tab:Toggle({
-        Title = "Enable Fly (Mobile)",
+        Title = "Fly",
         Value = false,
         Callback = function(state)
             if state then startFly() else stopFly() end
@@ -357,6 +343,7 @@ return function(C, R, UI)
         Title = "Noclip",
         Value = false,
         Callback = function(state)
+            if flyEnabled then return end
             if state then startNoclip() else stopNoclip() end
         end
     })
@@ -373,9 +360,6 @@ return function(C, R, UI)
     if infiniteJumpEnabled then startInfJump() end
     if speedEnabled then setWalkSpeed(walkSpeedValue) end
 
-    --========================
-    -- Character lifecycle
-    --========================
     disconnectConn(flyCharConn); flyCharConn = nil
     flyCharConn = lp.CharacterAdded:Connect(function()
         task.defer(function()
