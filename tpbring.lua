@@ -781,7 +781,7 @@ return function(C, R, UI)
             if m and m.Parent and rec then
                 local targetXZ = entry.targetXZ
                 local waveIndex = airDroppingCount
-		local waveY = math.sin(waveIndex * 0.8) * 4
+		local waveY = math.sin(waveIndex * 2.5) * 1.5
 		local dropPos = Vector3.new(
     		targetXZ and targetXZ.X or dropTarget.X,
     		dropTarget.Y + SCRAPPER_CHUTE_ABOVE + waveY,
