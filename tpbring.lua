@@ -175,23 +175,23 @@ return function(C, R, UI)
     local CURRENT_RUN_ID = nil
     local CURRENT_MODE   = nil
 
-    local running        = false
-    local hb             = nil
-    local orb            = nil
-    local orbTouch       = nil
-    local touchConn      = nil
-    local orbPosVec      = nil
-    local inflight       = {}
-    local releaseQueue   = {}
-    local releaseAcc     = 0.0
-    local activeCount    = 0
-    local unstickConn    = nil
-    local preclaimConn   = nil
-    local finalized      = {}
-    local fruitNudged    = {}
-    local dropStacks     = {}
-    local pendingRetry   = {}
-    local charAddedConn  = nil
+    local running      = false
+    local hb           = nil
+    local orb          = nil
+    local orbTouch     = nil
+    local touchConn    = nil
+    local orbPosVec    = nil
+    local inflight     = {}
+    local releaseQueue = {}
+    local releaseAcc   = 0.0
+    local activeCount  = 0
+    local unstickConn  = nil
+    local preclaimConn = nil
+    local finalized    = {}
+    local fruitNudged  = {}
+    local dropStacks   = {}
+    local pendingRetry = {}
+    local charAddedConn = nil
 
     local airDropQueue     = {}
     local airDroppingCount = 0
@@ -724,35 +724,34 @@ return function(C, R, UI)
 
     local function airDropSpreadOffset(index)
         local ang = (index - 1) * 2.399963229728653
-        local rad = AIR_DROP_SPREAD_RADIUS * math.sqrt(math.max(index - 1, 0) + 1)
-        rad = math.min(rad, AIR_DROP_SPREAD_RADIUS * 3)
+        local rad = math.min(AIR_DROP_SPREAD_RADIUS * 3, AIR_DROP_SPREAD_RADIUS * math.sqrt(index))
         return Vector3.new(math.cos(ang) * rad, 0, math.sin(ang) * rad)
     end
 
     local function processAirDropQueue()
-    if not (running and isAirMode() and orbPosVec) then return end
-    while airDroppingCount < MAX_AIR_DROPPING and #airDropQueue > 0 do
-        local entry = table.remove(airDropQueue, 1)
-        local m = entry and entry.model
-        local rec = m and inflight[m]
-        if m and m.Parent and rec then
-            local queueIndex = airDroppingCount + 1
-            local spread = airDropSpreadOffset(queueIndex)
-            local dropPos = orbPosVec + Vector3.new(spread.X, AIR_RELEASE_UP, spread.Z)
-            setPivot(m, CFrame.new(dropPos))
-            zeroAssembly(m)
-            setCollideFromSnapshot(rec.snap)
-            setAnchored(m, false)
-            for _,p in ipairs(allParts(m)) do
-                p.AssemblyLinearVelocity  = Vector3.new()
-                p.AssemblyAngularVelocity = Vector3.new()
-                pcall(function() p:SetNetworkOwner(nil) end)
-                pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
+        if not (running and isAirMode() and orbPosVec) then return end
+        while airDroppingCount < MAX_AIR_DROPPING and #airDropQueue > 0 do
+            local entry = table.remove(airDropQueue, 1)
+            local m = entry and entry.model
+            local rec = m and inflight[m]
+            if m and m.Parent and rec then
+                local spread = airDropSpreadOffset(airDroppingCount + 1)
+                local dropPos = orbPosVec + Vector3.new(spread.X, AIR_RELEASE_UP, spread.Z)
+                setPivot(m, CFrame.new(dropPos))
+                zeroAssembly(m)
+                setCollideFromSnapshot(rec.snap)
+                setAnchored(m, false)
+                for _,p in ipairs(allParts(m)) do
+                    p.AssemblyLinearVelocity  = Vector3.new()
+                    p.AssemblyAngularVelocity = Vector3.new()
+                    pcall(function() p:SetNetworkOwner(nil) end)
+                    pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
+                end
+                tryStopDrag(m, rec)
+                rec.dropping   = true
+                rec.droppingAt = os.clock()
+                airDroppingCount = airDroppingCount + 1
             end
-            tryStopDrag(m, rec)
-            rec.dropping   = true
-            rec.droppingAt = os.clock()
-            airDroppingCount = airDroppingCount + 1
         end
     end
 
@@ -1244,8 +1243,8 @@ return function(C, R, UI)
             local rec = releaseQueue[i]
             if rec and rec.model and rec.model.Parent then releaseOne(rec) end
         end
-        releaseQueue   = {}
-        airDropQueue   = {}
+        releaseQueue     = {}
+        airDropQueue     = {}
         airDroppingCount = 0
         for m,rec in pairs(inflight) do abortRestore(m, rec) end
         inflight       = {}
