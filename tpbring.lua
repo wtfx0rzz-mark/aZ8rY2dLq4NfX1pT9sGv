@@ -154,7 +154,7 @@ return function(C, R, UI)
     local AIR_DROP_TIMEOUT_S      = 2.25
     local AIR_RETRY_PUSH_DOWN_VY  = -80
 
-    local MAX_AIR_DROPPING        = 20
+    local MAX_AIR_DROPPING        = MAX_CONCURRENT-1
     local AIR_DROP_SPREAD_RADIUS  = 0.6
 
     local SCRAPPER_CHUTE_ABOVE    = 12
@@ -781,7 +781,7 @@ return function(C, R, UI)
             if m and m.Parent and rec then
                 local targetXZ = entry.targetXZ
                 local waveIndex = airDroppingCount
-		local waveY = math.sin(waveIndex * 10) * .3
+		local waveY = math.sin(waveIndex * 50) * .05
 		local dropPos = Vector3.new(
     		targetXZ and targetXZ.X or dropTarget.X,
     		dropTarget.Y + SCRAPPER_CHUTE_ABOVE + waveY,
