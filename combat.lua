@@ -15,7 +15,6 @@ return function(C, R, UI)
     C.State  = C.State  or { Toggles = {} }
     C.State.Toggles = C.State.Toggles or {}
     if C.State.AuraRadius == nil then C.State.AuraRadius = 75 end
-    if C.State.CultistAuraMax == nil then C.State.CultistAuraMax = 5 end
     C.Config = C.Config or {}
 
     local TUNE = C.Config
@@ -44,10 +43,23 @@ return function(C, R, UI)
         return (C and C.State and C.State.Toggles and C.State.Toggles[key]) == true
     end
 
+    --------------------------------------------------------------------
+    -- AURA VISUAL (CIRCLE)
+    --------------------------------------------------------------------
+
     local auraVis = {
-        enabled = false, conn = nil, charConn = nil, gui = nil, folder = nil,
-        anchor = nil, adorn = nil, character = nil, hrp = nil, acc = 0,
-        _groundRoot = nil, _groundLastTryAt = 0,
+        enabled = false,
+        conn = nil,
+        charConn = nil,
+        gui = nil,
+        folder = nil,
+        anchor = nil,
+        adorn = nil,
+        character = nil,
+        hrp = nil,
+        acc = 0,
+        _groundRoot = nil,
+        _groundLastTryAt = 0,
     }
 
     local function auraVis_getPlayerGui()
@@ -75,6 +87,7 @@ return function(C, R, UI)
     function auraVis:ensure()
         local pg = auraVis_getPlayerGui()
         if not pg then return false end
+
         if not self.gui or not self.gui.Parent then
             local g = Instance.new("ScreenGui")
             g.Name = "CombatAuraCircleGui"
@@ -85,6 +98,7 @@ return function(C, R, UI)
             g.Parent = pg
             self.gui = g
         end
+
         if not self.folder or not self.folder.Parent then
             local rf = WS:FindFirstChild("__Aura__")
             if not rf then
@@ -94,9 +108,11 @@ return function(C, R, UI)
             end
             self.folder = rf
         end
+
         if not self.anchor or not self.anchor.Parent then
             local oldAnchor = self.folder:FindFirstChild("AuraAnchor_" .. tostring(lp.UserId))
             if oldAnchor then pcall(function() oldAnchor:Destroy() end) end
+
             local a = Instance.new("Part")
             a.Name = "AuraAnchor_" .. tostring(lp.UserId)
             a.Anchored = true
@@ -108,6 +124,7 @@ return function(C, R, UI)
             a.Parent = self.folder
             self.anchor = a
         end
+
         if not self.adorn or not self.adorn.Parent then
             local ad = Instance.new("CylinderHandleAdornment")
             ad.Name = "AuraRing"
@@ -122,6 +139,7 @@ return function(C, R, UI)
             ad.Parent = self.gui
             self.adorn = ad
         end
+
         return true
     end
 
@@ -144,8 +162,9 @@ return function(C, R, UI)
     function auraVis:refreshCharRefs()
         local ch = lp.Character
         if not ch then return end
+        local hrp = ch:FindFirstChild("HumanoidRootPart")
         self.character = ch
-        self.hrp = ch:FindFirstChild("HumanoidRootPart")
+        self.hrp = hrp
     end
 
     function auraVis:_resolveGroundRoot()
@@ -153,6 +172,7 @@ return function(C, R, UI)
         if self._groundRoot and self._groundRoot.Parent then return self._groundRoot end
         if (now - (self._groundLastTryAt or 0)) < 1.0 then return nil end
         self._groundLastTryAt = now
+
         local map = WS:FindFirstChild("Map")
         if not map then return nil end
         local ground = map:FindFirstChild("Ground")
@@ -164,14 +184,19 @@ return function(C, R, UI)
     function auraVis:_groundYAtXZ(x, z, fallbackY)
         local ground = self:_resolveGroundRoot()
         if not ground then return fallbackY end
+
         local origin = Vector3.new(x, (fallbackY or 0) + 200, z)
         local dir = Vector3.new(0, -600, 0)
+
         local rp = RaycastParams.new()
         rp.FilterType = Enum.RaycastFilterType.Include
         rp.FilterDescendantsInstances = { ground }
         rp.IgnoreWater = true
+
         local res = WS:Raycast(origin, dir, rp)
-        if res and res.Position then return res.Position.Y end
+        if res and res.Position then
+            return res.Position.Y
+        end
         return fallbackY
     end
 
@@ -184,22 +209,30 @@ return function(C, R, UI)
     end
 
     function auraVis:start()
-        if self.enabled then self:applyRadius(C.State.AuraRadius); return end
+        if self.enabled then
+            self:applyRadius(C.State.AuraRadius)
+            return
+        end
         self.enabled = true
         self:cleanupLegacy()
-        if not self:ensure() then self.enabled = false; return end
+        if not self:ensure() then
+            self.enabled = false
+            return
+        end
         self:refreshCharRefs()
         self:applyRadius(C.State.AuraRadius)
         self.acc = 0
+
         if self.charConn then pcall(function() self.charConn:Disconnect() end) end
         self.charConn = lp.CharacterAdded:Connect(function(ch)
             self.character = ch
             self.hrp = ch:WaitForChild("HumanoidRootPart")
         end)
+
         if self.conn then pcall(function() self.conn:Disconnect() end) end
         self.conn = Run.Heartbeat:Connect(function(dt)
             if not self.enabled then return end
-            self.acc = self.acc + dt
+            self.acc += dt
             if self.acc >= 0.05 then
                 self.acc = 0
                 self:updateAnchor()
@@ -223,48 +256,70 @@ return function(C, R, UI)
     end
 
     local function syncAuraVisualRadius()
-        if auraVis.enabled then auraVis:applyRadius(C.State.AuraRadius) end
+        if auraVis.enabled then
+            auraVis:applyRadius(C.State.AuraRadius)
+        end
     end
+
+    --------------------------------------------------------------------
+    -- CHARACTER AURA (SELF-CONTAINED)
+    --------------------------------------------------------------------
 
     local CharacterAura = {}
     CharacterAura.running = false
-    CharacterAura._gen = 0
 
     do
         local lastHitAt = setmetatable({}, { __mode = "k" })
         local characterHitSeq = 0
 
         local CHAR_WEAPON_PREF = {
-            { "Admin Axe",         0.5  },
-            { "Cultist King Mace", 1.0  },
-            { "Obsidiron Hammer",  1.0  },
+            { "Admin Axe",         0.5 },
+            { "Cultist King Mace", 1.0 },
+            { "Obsidiron Hammer",  1.0 },
             { "Infernal Sword",    0.50 },
-            { "Morningstar",       1.0  },
-            { "Scythe",            0.7  },
+            { "Morningstar",       1.0 },
+            { "Scythe",            0.7 },
             { "Poison Claws",      0.15 },
-            { "Ice Sword",         0.5  },
-            { "Katana",            0.4  },
-            { "Trident",           0.6  },
+            { "Ice Sword",         0.5 },
+            { "Katana",            0.4 },
+            { "Trident",           0.6 },
             { "Shadow Dagger",     0.325},
             { "Poison Spear",      0.45 },
             { "Spear",             0.45 },
-            { "Strong Axe",        0.5  },
-            { "Chainsaw",          0.5  },
-            { "Ice Axe",           0.5  },
-            { "Good Axe",          0.5  },
-            { "Old Axe",           0.5  },
+            { "Strong Axe",        0.5 },
+            { "Chainsaw",          0.5 },
+            { "Ice Axe",           0.5 },
+            { "Good Axe",          0.5 },
+            { "Old Axe",           0.5 },
         }
+
+        local CHAR_WEAPON_SET = {}
+        for _, pair in ipairs(CHAR_WEAPON_PREF) do
+            CHAR_WEAPON_SET[pair[1]] = true
+        end
 
         local function char_findItem(name)
             if not (lp and name) then return nil end
             local inv = lp:FindFirstChild("Inventory")
-            if inv then local it = inv:FindFirstChild(name); if it then return it end end
+            if inv then
+                local it = inv:FindFirstChild(name)
+                if it then return it end
+            end
             local bp = lp:FindFirstChild("Backpack")
-            if bp then local it = bp:FindFirstChild(name); if it then return it end end
+            if bp then
+                local it = bp:FindFirstChild(name)
+                if it then return it end
+            end
             local sg = lp:FindFirstChild("StarterGear")
-            if sg then local it = sg:FindFirstChild(name); if it then return it end end
+            if sg then
+                local it = sg:FindFirstChild(name)
+                if it then return it end
+            end
             local ch = lp.Character
-            if ch then local it = ch:FindFirstChild(name); if it then return it end end
+            if ch then
+                local it = ch:FindFirstChild(name)
+                if it then return it end
+            end
             return nil
         end
 
@@ -284,7 +339,9 @@ return function(C, R, UI)
 
         local function char_ensureEquipped(wantedName)
             if not wantedName then return nil end
-            if char_equippedToolName() == wantedName then return char_findItem(wantedName) end
+            if char_equippedToolName() == wantedName then
+                return char_findItem(wantedName)
+            end
             local tool = char_findItem(wantedName)
             if tool then
                 char_SafeEquip(tool)
@@ -302,10 +359,14 @@ return function(C, R, UI)
         local function char_bestAvailableWeapon()
             for _, pair in ipairs(CHAR_WEAPON_PREF) do
                 local name, cd = pair[1], pair[2]
-                if char_findItem(name) then return name, (tonumber(cd) or TUNE.CHAR_DEBOUNCE_SEC) end
+                if char_findItem(name) then
+                    return name, (tonumber(cd) or TUNE.CHAR_DEBOUNCE_SEC)
+                end
             end
             for _, n in ipairs(TUNE.ChopPrefer) do
-                if char_findItem(n) then return n, TUNE.CHAR_DEBOUNCE_SEC end
+                if char_findItem(n) then
+                    return n, TUNE.CHAR_DEBOUNCE_SEC
+                end
             end
             return nil, nil
         end
@@ -349,13 +410,15 @@ return function(C, R, UI)
         end
 
         local function char_computeImpactCFrame(hitPart)
-            if not (hitPart and hitPart:IsA("BasePart")) then return CFrame.new() end
+            if not (hitPart and hitPart:IsA("BasePart")) then
+                return CFrame.new()
+            end
             local rot = hitPart.CFrame - hitPart.CFrame.Position
             return CFrame.new(hitPart.Position + Vector3.new(0, 0.02, 0)) * rot
         end
 
         local function char_nextHitId()
-            characterHitSeq = characterHitSeq + 1
+            characterHitSeq += 1
             return tostring(characterHitSeq) .. "_" .. TUNE.UID_SUFFIX
         end
 
@@ -374,7 +437,10 @@ return function(C, R, UI)
         local function char_markHitWithWeapon(target, weaponName)
             if not (target and weaponName) then return end
             local bucket = lastHitAt[target]
-            if type(bucket) ~= "table" then bucket = {}; lastHitAt[target] = bucket end
+            if type(bucket) ~= "table" then
+                bucket = {}
+                lastHitAt[target] = bucket
+            end
             bucket[weaponName] = os.clock()
         end
 
@@ -385,14 +451,17 @@ return function(C, R, UI)
             dmg:InvokeServer(targetModel, tool, hitId, impactCF)
         end
 
-        local function char_collectCharactersInRadius(charsFolder, origin, radius, cultistOnly)
+        local function char_collectCharactersInRadius(charsFolder, origin, radius)
             local out = {}
             if not charsFolder or not origin or not radius or radius <= 0 then return out end
+
             local params = OverlapParams.new()
             params.FilterType = Enum.RaycastFilterType.Include
             params.FilterDescendantsInstances = { charsFolder }
+
             local parts = WS:GetPartBoundsInRadius(origin, radius, params)
             if not parts then return out end
+
             local seen = {}
             for _, part in ipairs(parts) do
                 if part and part:IsA("BasePart") then
@@ -403,13 +472,13 @@ return function(C, R, UI)
                             local nameLower = n:lower()
                             if string.find(nameLower, "horse", 1, true) then break end
                             if n == "Deer" or n == "Ram" or n == "Owl" or n == "Pelt Trader" or n == "Furniture Trader" or n == "Horse" then break end
-                            if cultistOnly and not string.find(nameLower, "cultist", 1, true) then break end
                             seen[mdl] = true
                             out[#out + 1] = mdl
                         until true
                     end
                 end
             end
+
             if TUNE.CHAR_SORT then
                 table.sort(out, function(a, b)
                     local pa, pb = char_charDistancePart(a), char_charDistancePart(b)
@@ -419,14 +488,7 @@ return function(C, R, UI)
                     return da < db
                 end)
             end
-            if cultistOnly then
-                local liveMax = math.clamp(tonumber(C.State.CultistAuraMax) or 5, 1, 10)
-                if #out > liveMax then
-                    local trimmed = table.create(liveMax)
-                    for i = 1, liveMax do trimmed[i] = out[i] end
-                    return trimmed
-                end
-            end
+
             return out
         end
 
@@ -442,8 +504,13 @@ return function(C, R, UI)
 
         local function char_chopWave(targetModels)
             if not CharacterAura.running then return end
+
             local toolName, cd = char_bestAvailableWeapon()
-            if not toolName then task.wait(0.2); return end
+            if not toolName then
+                task.wait(0.2)
+                return
+            end
+
             if not char_hasHittableTarget(targetModels, toolName, cd) then
                 local soonest = math.huge
                 for _, mdl in ipairs(targetModels) do
@@ -452,15 +519,25 @@ return function(C, R, UI)
                         if waitFor and waitFor < soonest then soonest = waitFor end
                     end
                 end
-                if soonest < math.huge then task.wait(math.max(0.02, soonest)) else task.wait(0.1) end
+                if soonest < math.huge then
+                    task.wait(math.max(0.02, soonest))
+                else
+                    task.wait(0.1)
+                end
                 return
             end
+
             local tool = char_ensureEquipped(toolName)
-            if not tool then task.wait(0.2); return end
+            if not tool then
+                task.wait(0.2)
+                return
+            end
+
             local cap = math.min(#targetModels, TUNE.CHAR_MAX_PER_WAVE)
             local anySent = false
             local soonest = math.huge
             local hitsLaunched = 0
+
             for i = 1, cap do
                 if not CharacterAura.running then return end
                 local mdl = targetModels[i]
@@ -473,12 +550,16 @@ return function(C, R, UI)
                             local hitId = char_nextHitId()
                             char_markHitWithWeapon(mdl, toolName)
                             anySent = true
-                            hitsLaunched = hitsLaunched + 1
+                            hitsLaunched += 1
+
                             task.spawn(function()
                                 if not (CharacterAura.running and mdl and mdl.Parent) then return end
-                                pcall(function() char_HitTarget(mdl, tool, hitId, impactCF) end)
+                                pcall(function()
+                                    char_HitTarget(mdl, tool, hitId, impactCF)
+                                end)
                             end)
-                            if TUNE.CHAR_HIT_STEP_WAIT and TUNE.CHAR_HIT_STEP_WAIT > 0 then
+
+                            if (TUNE.CHAR_HIT_STEP_WAIT and TUNE.CHAR_HIT_STEP_WAIT > 0) then
                                 task.wait(TUNE.CHAR_HIT_STEP_WAIT)
                             else
                                 if hitsLaunched % 6 == 0 then task.wait() end
@@ -489,59 +570,68 @@ return function(C, R, UI)
                     end
                 end
             end
+
             if anySent then
                 local waitT = cd
-                if soonest < math.huge then waitT = math.min(cd, soonest) end
+                if soonest < math.huge then
+                    waitT = math.min(cd, soonest)
+                end
                 task.wait(math.max(0.02, waitT))
             else
-                if soonest < math.huge then task.wait(math.max(0.02, soonest)) else task.wait(0.15) end
-            end
-        end
-
-        local function char_runLoop(myGen, cultistOnly)
-            while CharacterAura.running and CharacterAura._gen == myGen do
-                local key = cultistOnly and "CultistAura" or "CharacterAura"
-                if not __enabled(key) then
-                    CharacterAura.running = false
-                    break
-                end
-                local ch = lp.Character
-                if not ch then
-                    ch = lp.CharacterAdded:Wait()
-                    if not (CharacterAura.running and CharacterAura._gen == myGen) then break end
-                    if not __enabled(key) then CharacterAura.running = false; break end
-                end
-                local hrp = ch:FindFirstChild("HumanoidRootPart")
-                if not hrp then
-                    task.wait(0.2)
+                if soonest < math.huge then
+                    task.wait(math.max(0.02, soonest))
                 else
-                    local origin = char_getRayOriginFromChar(ch) or hrp.Position
-                    local radius = tonumber(C.State.AuraRadius) or 75
-                    local charsFolder = WS:FindFirstChild("Characters")
-                    local targets = char_collectCharactersInRadius(charsFolder, origin, radius, cultistOnly)
-                    if #targets > 0 then
-                        char_chopWave(targets)
-                    else
-                        task.wait(0.1)
-                    end
+                    task.wait(0.15)
                 end
             end
-            if CharacterAura._gen == myGen then CharacterAura.running = false end
         end
 
-        function CharacterAura.Start(cultistOnly)
+        function CharacterAura.Start()
             if CharacterAura.running then return end
             CharacterAura.running = true
-            CharacterAura._gen = CharacterAura._gen + 1
-            local myGen = CharacterAura._gen
-            task.spawn(function() char_runLoop(myGen, cultistOnly) end)
+            task.spawn(function()
+                while CharacterAura.running do
+                    if not __enabled("CharacterAura") then
+                        CharacterAura.running = false
+                        break
+                    end
+
+                    local ch = lp.Character
+                    if not ch then
+                        ch = lp.CharacterAdded:Wait()
+                        if not CharacterAura.running then break end
+                        if not __enabled("CharacterAura") then
+                            CharacterAura.running = false
+                            break
+                        end
+                    end
+
+                    local hrp = ch:FindFirstChild("HumanoidRootPart")
+                    if not hrp then
+                        task.wait(0.2)
+                    else
+                        local origin = (char_getRayOriginFromChar(ch) or hrp.Position)
+                        local radius = tonumber(C.State.AuraRadius) or 75
+                        local charsFolder = WS:FindFirstChild("Characters")
+                        local targets = char_collectCharactersInRadius(charsFolder, origin, radius)
+                        if #targets > 0 then
+                            char_chopWave(targets)
+                        else
+                            task.wait(0.1)
+                        end
+                    end
+                end
+            end)
         end
 
         function CharacterAura.Stop()
             CharacterAura.running = false
-            CharacterAura._gen = CharacterAura._gen + 1
         end
     end
+
+    --------------------------------------------------------------------
+    -- SMALL TREE AURA (SELF-CONTAINED)
+    --------------------------------------------------------------------
 
     local SmallTreeAura = {}
     SmallTreeAura.running = false
@@ -549,9 +639,14 @@ return function(C, R, UI)
 
     do
         local TREE_NAMES = {
-            ["Small Tree"] = true, ["Snowy Small Tree"] = true, ["Small Webbed Tree"] = true,
-            ["Christmas Pine"] = true, ["Northern Pine"] = true, ["Brightwood Tree"] = true
+            ["Small Tree"] = true,
+            ["Snowy Small Tree"] = true,
+            ["Small Webbed Tree"] = true,
+            ["Christmas Pine"] = true,
+            ["Northern Pine"] = true,
+            ["Brightwood Tree"] = true
         }
+
         local TreeImpactCF  = setmetatable({}, { __mode = "k" })
         local TreeHitSeed   = setmetatable({}, { __mode = "k" })
         local TreeLastHitAt = setmetatable({}, { __mode = "k" })
@@ -559,13 +654,25 @@ return function(C, R, UI)
         local function st_findItem(name)
             if not (lp and name) then return nil end
             local inv = lp:FindFirstChild("Inventory")
-            if inv then local it = inv:FindFirstChild(name); if it then return it end end
+            if inv then
+                local it = inv:FindFirstChild(name)
+                if it then return it end
+            end
             local bp = lp:FindFirstChild("Backpack")
-            if bp then local it = bp:FindFirstChild(name); if it then return it end end
+            if bp then
+                local it = bp:FindFirstChild(name)
+                if it then return it end
+            end
             local sg = lp:FindFirstChild("StarterGear")
-            if sg then local it = sg:FindFirstChild(name); if it then return it end end
+            if sg then
+                local it = sg:FindFirstChild(name)
+                if it then return it end
+            end
             local ch = lp.Character
-            if ch then local it = ch:FindFirstChild(name); if it then return it end end
+            if ch then
+                local it = ch:FindFirstChild(name)
+                if it then return it end
+            end
             return nil
         end
 
@@ -585,7 +692,9 @@ return function(C, R, UI)
 
         local function st_ensureEquipped(wantedName)
             if not wantedName then return nil end
-            if st_equippedToolName() == wantedName then return st_findItem(wantedName) end
+            if st_equippedToolName() == wantedName then
+                return st_findItem(wantedName)
+            end
             local tool = st_findItem(wantedName)
             if tool then
                 st_SafeEquip(tool)
@@ -626,7 +735,9 @@ return function(C, R, UI)
         local function st_isSmallTreeModel(model)
             if not (model and model:IsA("Model")) then return false end
             local name = model.Name
-            if TREE_NAMES[name] then return st_bestTreeHitPart(model) ~= nil end
+            if TREE_NAMES[name] then
+                return st_bestTreeHitPart(model) ~= nil
+            end
             if type(name) ~= "string" then return false end
             local lower = name:lower()
             if lower:find("small", 1, true) and lower:find("tree", 1, true) then
@@ -638,7 +749,11 @@ return function(C, R, UI)
         local function st_findTreeModelFromPart(part)
             local current = part and part.Parent
             while current do
-                if current:IsA("Model") and st_isSmallTreeModel(current) then return current end
+                if current:IsA("Model") then
+                    if st_isSmallTreeModel(current) then
+                        return current
+                    end
+                end
                 current = current.Parent
             end
             return nil
@@ -664,11 +779,14 @@ return function(C, R, UI)
                     if n and n > maxN then maxN = n end
                 end
             end
-            return tostring(maxN + 1) .. "_" .. TUNE.UID_SUFFIX
+            local nextN = maxN + 1
+            return tostring(nextN) .. "_" .. TUNE.UID_SUFFIX
         end
 
         local function st_computeImpactCFrame(hitPart)
-            if not (hitPart and hitPart:IsA("BasePart")) then return CFrame.new() end
+            if not (hitPart and hitPart:IsA("BasePart")) then
+                return CFrame.new()
+            end
             local rot = hitPart.CFrame - hitPart.CFrame.Position
             return CFrame.new(hitPart.Position + Vector3.new(0, 0.02, 0)) * rot
         end
@@ -683,7 +801,10 @@ return function(C, R, UI)
 
         local function st_impactCFForTree(treeModel, hitPart)
             local base = TreeImpactCF[treeModel]
-            if not base then base = st_computeImpactCFrame(hitPart); TreeImpactCF[treeModel] = base end
+            if not base then
+                base = st_computeImpactCFrame(hitPart)
+                TreeImpactCF[treeModel] = base
+            end
             local k = (TreeHitSeed[treeModel] or 0) + 1
             TreeHitSeed[treeModel] = k
             return st_jittered(base, k)
@@ -699,15 +820,21 @@ return function(C, R, UI)
         local function st_collectSmallTreesInRadius(origin, radius)
             local out = {}
             if not origin or not radius or radius <= 0 then return out end
+
             local roots = { WS, RS:FindFirstChild("Assets"), RS:FindFirstChild("CutsceneSets") }
             local includeRoots = {}
-            for _, r in ipairs(roots) do if r then includeRoots[#includeRoots + 1] = r end end
+            for _, r in ipairs(roots) do
+                if r then includeRoots[#includeRoots + 1] = r end
+            end
             if #includeRoots == 0 then includeRoots[1] = WS end
+
             local params = OverlapParams.new()
             params.FilterType = Enum.RaycastFilterType.Include
             params.FilterDescendantsInstances = includeRoots
+
             local parts = WS:GetPartBoundsInRadius(origin, radius, params)
             if not parts then return out end
+
             local seen = {}
             for _, part in ipairs(parts) do
                 if part and part:IsA("BasePart") then
@@ -718,6 +845,7 @@ return function(C, R, UI)
                     end
                 end
             end
+
             table.sort(out, function(a, b)
                 local pa, pb = st_bestTreeHitPart(a), st_bestTreeHitPart(b)
                 local da = pa and (pa.Position - origin).Magnitude or math.huge
@@ -725,6 +853,7 @@ return function(C, R, UI)
                 if da == db then return (a.Name or "") < (b.Name or "") end
                 return da < db
             end)
+
             return out
         end
 
@@ -743,7 +872,8 @@ return function(C, R, UI)
             local now = os.clock()
             for _, mdl in ipairs(targets) do
                 if mdl and mdl.Parent then
-                    if (now - (TreeLastHitAt[mdl] or 0)) >= swingDelay then return true end
+                    local last = TreeLastHitAt[mdl] or 0
+                    if (now - last) >= swingDelay then return true end
                 end
             end
             return false
@@ -751,8 +881,13 @@ return function(C, R, UI)
 
         local function st_chopWaveTrees(targetModels, swingDelay)
             swingDelay = tonumber(swingDelay) or 0.5
+
             local toolName = st_pickToolName()
-            if not toolName then task.wait(0.35); return end
+            if not toolName then
+                task.wait(0.35)
+                return
+            end
+
             if not st_hasHittableTree(targetModels, swingDelay) then
                 local now = os.clock()
                 local soonest = math.huge
@@ -765,17 +900,25 @@ return function(C, R, UI)
                 task.wait(soonest < math.huge and math.max(0.02, soonest) or 0.15)
                 return
             end
+
             local tool = st_ensureEquipped(toolName)
-            if not tool then task.wait(0.35); return end
+            if not tool then
+                task.wait(0.35)
+                return
+            end
+
             local now = os.clock()
             local anySent = false
             local soonest = math.huge
+
             for _, mdl in ipairs(targetModels) do
                 if mdl and mdl.Parent then
-                    local elapsed = now - (TreeLastHitAt[mdl] or 0)
+                    local last = TreeLastHitAt[mdl] or 0
+                    local elapsed = now - last
                     if elapsed >= swingDelay then
                         TreeLastHitAt[mdl] = now
                         anySent = true
+
                         task.spawn(function()
                             if not SmallTreeAura.running then return end
                             if not (mdl and mdl.Parent) then return end
@@ -792,14 +935,21 @@ return function(C, R, UI)
                         end)
                     else
                         local remain = swingDelay - elapsed
-                        if remain > 0 and remain < soonest then soonest = remain end
+                        if remain > 0 and remain < soonest then
+                            soonest = remain
+                        end
                     end
                 end
             end
+
             if anySent then
                 task.wait(0.05)
             else
-                if soonest < math.huge then task.wait(math.max(0.02, soonest)) else task.wait(0.15) end
+                if soonest < math.huge then
+                    task.wait(math.max(0.02, soonest))
+                else
+                    task.wait(0.15)
+                end
             end
         end
 
@@ -808,18 +958,26 @@ return function(C, R, UI)
             SmallTreeAura.running = true
             task.spawn(function()
                 while SmallTreeAura.running do
-                    if not __enabled("SmallTreeAura") then SmallTreeAura.running = false; break end
+                    if not __enabled("SmallTreeAura") then
+                        SmallTreeAura.running = false
+                        break
+                    end
+
                     local ch = lp.Character
                     if not ch then
                         ch = lp.CharacterAdded:Wait()
                         if not SmallTreeAura.running then break end
-                        if not __enabled("SmallTreeAura") then SmallTreeAura.running = false; break end
+                        if not __enabled("SmallTreeAura") then
+                            SmallTreeAura.running = false
+                            break
+                        end
                     end
+
                     local hrp = ch:FindFirstChild("HumanoidRootPart")
                     if not hrp then
                         task.wait(0.2)
                     else
-                        local origin = st_getRayOriginFromChar(ch) or hrp.Position
+                        local origin = (st_getRayOriginFromChar(ch) or hrp.Position)
                         local radius = tonumber(C.State.AuraRadius) or 75
                         local allTrees = st_collectSmallTreesInRadius(origin, radius)
                         local total = #allTrees
@@ -846,12 +1004,21 @@ return function(C, R, UI)
         end
     end
 
+    --------------------------------------------------------------------
+    -- BIG TREE AURA (SELF-CONTAINED)
+    --------------------------------------------------------------------
+
     local BigTreeAura = {}
     BigTreeAura.running = false
     BigTreeAura._cursor = 1
 
     do
-        local BIG_TREE_NAMES = { TreeBig1 = true, TreeBig2 = true, TreeBig3 = true }
+        local BIG_TREE_NAMES = {
+            TreeBig1 = true,
+            TreeBig2 = true,
+            TreeBig3 = true,
+        }
+
         local TreeImpactCF  = setmetatable({}, { __mode = "k" })
         local TreeHitSeed   = setmetatable({}, { __mode = "k" })
         local TreeLastHitAt = setmetatable({}, { __mode = "k" })
@@ -868,13 +1035,25 @@ return function(C, R, UI)
         local function bt_findItem(name)
             if not (lp and name) then return nil end
             local inv = lp:FindFirstChild("Inventory")
-            if inv then local it = inv:FindFirstChild(name); if it then return it end end
+            if inv then
+                local it = inv:FindFirstChild(name)
+                if it then return it end
+            end
             local bp = lp:FindFirstChild("Backpack")
-            if bp then local it = bp:FindFirstChild(name); if it then return it end end
+            if bp then
+                local it = bp:FindFirstChild(name)
+                if it then return it end
+            end
             local sg = lp:FindFirstChild("StarterGear")
-            if sg then local it = sg:FindFirstChild(name); if it then return it end end
+            if sg then
+                local it = sg:FindFirstChild(name)
+                if it then return it end
+            end
             local ch = lp.Character
-            if ch then local it = ch:FindFirstChild(name); if it then return it end end
+            if ch then
+                local it = ch:FindFirstChild(name)
+                if it then return it end
+            end
             return nil
         end
 
@@ -905,7 +1084,9 @@ return function(C, R, UI)
 
         local function bt_ensureEquipped(wantedName)
             if not wantedName then return nil end
-            if bt_equippedToolName() == wantedName then return bt_findItem(wantedName) end
+            if bt_equippedToolName() == wantedName then
+                return bt_findItem(wantedName)
+            end
             local tool = bt_findItem(wantedName)
             if tool then
                 bt_SafeEquip(tool)
@@ -946,9 +1127,13 @@ return function(C, R, UI)
         local function bt_findTreeModelFromPart(part)
             local current = part and part.Parent
             while current do
-                if current:IsA("Model") and bt_isBigTreeName(current.Name) then
-                    local p = current.Parent
-                    if not (p and p.Name == "Snare Trap") then return current end
+                if current:IsA("Model") then
+                    if bt_isBigTreeName(current.Name) then
+                        local p = current.Parent
+                        if not (p and p.Name == "Snare Trap") then
+                            return current
+                        end
+                    end
                 end
                 current = current.Parent
             end
@@ -975,11 +1160,14 @@ return function(C, R, UI)
                     if n and n > maxN then maxN = n end
                 end
             end
-            return tostring(maxN + 1) .. "_" .. TUNE.UID_SUFFIX
+            local nextN = maxN + 1
+            return tostring(nextN) .. "_" .. TUNE.UID_SUFFIX
         end
 
         local function bt_computeImpactCFrame(hitPart)
-            if not (hitPart and hitPart:IsA("BasePart")) then return CFrame.new() end
+            if not (hitPart and hitPart:IsA("BasePart")) then
+                return CFrame.new()
+            end
             local rot = hitPart.CFrame - hitPart.CFrame.Position
             return CFrame.new(hitPart.Position + Vector3.new(0, 0.02, 0)) * rot
         end
@@ -994,7 +1182,10 @@ return function(C, R, UI)
 
         local function bt_impactCFForTree(treeModel, hitPart)
             local base = TreeImpactCF[treeModel]
-            if not base then base = bt_computeImpactCFrame(hitPart); TreeImpactCF[treeModel] = base end
+            if not base then
+                base = bt_computeImpactCFrame(hitPart)
+                TreeImpactCF[treeModel] = base
+            end
             local k = (TreeHitSeed[treeModel] or 0) + 1
             TreeHitSeed[treeModel] = k
             return bt_jittered(base, k)
@@ -1010,15 +1201,21 @@ return function(C, R, UI)
         local function bt_getBigTreesInRadius(origin, radius)
             local out = {}
             if not origin or not radius or radius <= 0 then return out end
+
             local roots = { WS, RS:FindFirstChild("Assets"), RS:FindFirstChild("CutsceneSets") }
             local includeRoots = {}
-            for _, r in ipairs(roots) do if r then includeRoots[#includeRoots + 1] = r end end
+            for _, r in ipairs(roots) do
+                if r then includeRoots[#includeRoots + 1] = r end
+            end
             if #includeRoots == 0 then includeRoots[1] = WS end
+
             local params = OverlapParams.new()
             params.FilterType = Enum.RaycastFilterType.Include
             params.FilterDescendantsInstances = includeRoots
+
             local parts = WS:GetPartBoundsInRadius(origin, radius, params)
             if not parts then return out end
+
             local seen = {}
             for _, part in ipairs(parts) do
                 if part and part:IsA("BasePart") then
@@ -1029,6 +1226,7 @@ return function(C, R, UI)
                     end
                 end
             end
+
             table.sort(out, function(a, b)
                 local pa, pb = bt_bestTreeHitPart(a), bt_bestTreeHitPart(b)
                 local da = pa and (pa.Position - origin).Magnitude or math.huge
@@ -1036,6 +1234,7 @@ return function(C, R, UI)
                 if da == db then return (a.Name or "") < (b.Name or "") end
                 return da < db
             end)
+
             return out
         end
 
@@ -1043,7 +1242,8 @@ return function(C, R, UI)
             local now = os.clock()
             for _, mdl in ipairs(targets) do
                 if mdl and mdl.Parent then
-                    if (now - (TreeLastHitAt[mdl] or 0)) >= swingDelay then return true end
+                    local last = TreeLastHitAt[mdl] or 0
+                    if (now - last) >= swingDelay then return true end
                 end
             end
             return false
@@ -1051,8 +1251,13 @@ return function(C, R, UI)
 
         local function bt_chopWaveTrees(targetModels, swingDelay)
             swingDelay = tonumber(swingDelay) or 0.5
+
             local toolName = bt_hasBigTreeTool()
-            if not toolName then task.wait(0.5); return end
+            if not toolName then
+                task.wait(0.5)
+                return
+            end
+
             if not bt_hasHittableTree(targetModels, swingDelay) then
                 local now = os.clock()
                 local soonest = math.huge
@@ -1065,17 +1270,25 @@ return function(C, R, UI)
                 task.wait(soonest < math.huge and math.max(0.02, soonest) or 0.15)
                 return
             end
+
             local tool = bt_ensureEquipped(toolName)
-            if not tool then task.wait(0.35); return end
+            if not tool then
+                task.wait(0.35)
+                return
+            end
+
             local now = os.clock()
             local anySent = false
             local soonest = math.huge
+
             for _, mdl in ipairs(targetModels) do
                 if mdl and mdl.Parent then
-                    local elapsed = now - (TreeLastHitAt[mdl] or 0)
+                    local last = TreeLastHitAt[mdl] or 0
+                    local elapsed = now - last
                     if elapsed >= swingDelay then
                         TreeLastHitAt[mdl] = now
                         anySent = true
+
                         task.spawn(function()
                             if not BigTreeAura.running then return end
                             if not (mdl and mdl.Parent) then return end
@@ -1092,14 +1305,21 @@ return function(C, R, UI)
                         end)
                     else
                         local remain = swingDelay - elapsed
-                        if remain > 0 and remain < soonest then soonest = remain end
+                        if remain > 0 and remain < soonest then
+                            soonest = remain
+                        end
                     end
                 end
             end
+
             if anySent then
                 task.wait(0.05)
             else
-                if soonest < math.huge then task.wait(math.max(0.02, soonest)) else task.wait(0.15) end
+                if soonest < math.huge then
+                    task.wait(math.max(0.02, soonest))
+                else
+                    task.wait(0.15)
+                end
             end
         end
 
@@ -1108,18 +1328,26 @@ return function(C, R, UI)
             BigTreeAura.running = true
             task.spawn(function()
                 while BigTreeAura.running do
-                    if not __enabled("BigTreeAura") then BigTreeAura.running = false; break end
+                    if not __enabled("BigTreeAura") then
+                        BigTreeAura.running = false
+                        break
+                    end
+
                     local ch = lp.Character
                     if not ch then
                         ch = lp.CharacterAdded:Wait()
                         if not BigTreeAura.running then break end
-                        if not __enabled("BigTreeAura") then BigTreeAura.running = false; break end
+                        if not __enabled("BigTreeAura") then
+                            BigTreeAura.running = false
+                            break
+                        end
                     end
+
                     local hrp = ch:FindFirstChild("HumanoidRootPart")
                     if not hrp then
                         task.wait(0.2)
                     else
-                        local origin = bt_getRayOriginFromChar(ch) or hrp.Position
+                        local origin = (bt_getRayOriginFromChar(ch) or hrp.Position)
                         local radius = tonumber(C.State.AuraRadius) or 75
                         local allTrees = bt_getBigTreesInRadius(origin, radius)
                         local total = #allTrees
@@ -1145,6 +1373,10 @@ return function(C, R, UI)
             BigTreeAura.running = false
         end
     end
+
+    --------------------------------------------------------------------
+    -- TRAP AURA + MANUAL CONTROLS (SELF-CONTAINED)
+    --------------------------------------------------------------------
 
     local TrapAura = {}
     TrapAura.running = false
@@ -1176,18 +1408,25 @@ return function(C, R, UI)
         end
 
         local function ta_getTrapPart(trap)
-            if trap:IsA("Model") then return trap.PrimaryPart or trap:FindFirstChildWhichIsA("BasePart")
-            elseif trap:IsA("BasePart") then return trap end
+            if trap:IsA("Model") then
+                return trap.PrimaryPart or trap:FindFirstChildWhichIsA("BasePart")
+            elseif trap:IsA("BasePart") then
+                return trap
+            end
             return nil
         end
 
         local function ta_getAllBearTraps()
             local now = os.clock()
-            if trapCache and (now - trapCacheAt) < 2.0 then return trapCache end
+            if trapCache and (now - trapCacheAt) < 2.0 then
+                return trapCache
+            end
             trapCacheAt = now
             trapCache = {}
+
             local root = ta_trapsRoot()
             if not root then return trapCache end
+
             for _, d in ipairs(root:GetDescendants()) do
                 if d:IsA("Model") and (d.Name == "Bear Trap" or d.Name == "Volcanic Bear Trap") then
                     trapCache[#trapCache + 1] = d
@@ -1199,11 +1438,13 @@ return function(C, R, UI)
         local function ta_moveTrapToCF(trap, cf, setNow)
             if not trap or not trap.Parent or not cf then return end
             ta_resolveTrapRemotes()
+
             task.spawn(function()
                 if TRAP_REMOTES.StartDrag then pcall(function() TRAP_REMOTES.StartDrag:FireServer(trap) end) end
                 task.wait(0.03)
                 pcall(function()
-                    if trap:IsA("Model") then trap:PivotTo(cf)
+                    if trap:IsA("Model") then
+                        trap:PivotTo(cf)
                     else
                         local bp = trap:FindFirstChildWhichIsA("BasePart")
                         if bp then bp.CFrame = cf end
@@ -1245,11 +1486,14 @@ return function(C, R, UI)
         local function ta_collectCharactersInRadius(charsFolder, origin, radius)
             local out = {}
             if not charsFolder or not origin or not radius or radius <= 0 then return out end
+
             local params = OverlapParams.new()
             params.FilterType = Enum.RaycastFilterType.Include
             params.FilterDescendantsInstances = { charsFolder }
+
             local parts = WS:GetPartBoundsInRadius(origin, radius, params)
             if not parts then return out end
+
             local seen = {}
             for _, part in ipairs(parts) do
                 if part and part:IsA("BasePart") then
@@ -1266,6 +1510,7 @@ return function(C, R, UI)
                     end
                 end
             end
+
             table.sort(out, function(a, b)
                 local pa, pb = ta_charDistancePart(a), ta_charDistancePart(b)
                 local da = pa and (pa.Position - origin).Magnitude or math.huge
@@ -1273,6 +1518,7 @@ return function(C, R, UI)
                 if da == db then return (a.Name or "") < (b.Name or "") end
                 return da < db
             end)
+
             return out
         end
 
@@ -1280,12 +1526,18 @@ return function(C, R, UI)
             if not trap or not mdl or not mdl.Parent then return end
             local root = ta_charDistancePart(mdl)
             if not root then return end
+
             local now = os.clock()
-            if now - (lastTrapUse[trap] or 0) < trapCooldownSec then return end
-            if now - (lastCharSnap[mdl] or 0) < charCooldownSec then return end
+            local lt = lastTrapUse[trap] or 0
+            if now - lt < trapCooldownSec then return end
+            local lc = lastCharSnap[mdl] or 0
+            if now - lc < charCooldownSec then return end
+
             lastTrapUse[trap] = now
             lastCharSnap[mdl] = now
-            ta_moveTrapToCF(trap, root.CFrame * CFrame.new(0, -3, 0), true)
+
+            local targetCF = root.CFrame * CFrame.new(0, -3, 0)
+            ta_moveTrapToCF(trap, targetCF, true)
         end
 
         local function ta_lockTrapsAroundPlayer(traps, hrp)
@@ -1293,28 +1545,44 @@ return function(C, R, UI)
             local n = #traps
             if n == 0 then return end
             local center = hrp.Position
+            local radius = 6
+            local height = 2
             for i, trap in ipairs(traps) do
                 if trap and trap.Parent then
                     local t = (i - 1) / n * math.pi * 2
-                    local offset = Vector3.new(math.cos(t) * 6, 2, math.sin(t) * 6)
-                    ta_moveTrapToCF(trap, CFrame.new(center + offset, center), false)
+                    local offset = Vector3.new(math.cos(t) * radius, height, math.sin(t) * radius)
+                    local pos = center + offset
+                    local cf = CFrame.new(pos, center)
+                    ta_moveTrapToCF(trap, cf, false)
                 end
             end
         end
 
-        local trapPanelGui, selectedTrap, trapLabel
+        local trapPanelGui
+        local selectedTrap
+        local trapLabel
+
+        local function ta_destroyTrapPanel()
+            if trapPanelGui then
+                trapPanelGui:Destroy()
+                trapPanelGui = nil
+                trapLabel = nil
+                selectedTrap = nil
+            end
+        end
 
         local function ta_updateTrapLabel()
             if not trapLabel then return end
             if selectedTrap and selectedTrap.Parent then
+                local txt = "Selected trap: Bear Trap"
                 local tp = ta_getTrapPart(selectedTrap)
                 local ch = lp.Character
                 local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
                 if tp and hrp then
-                    trapLabel.Text = string.format("Selected trap: Bear Trap (%.0f studs)", (tp.Position - hrp.Position).Magnitude)
-                else
-                    trapLabel.Text = "Selected trap: Bear Trap"
+                    local d = (tp.Position - hrp.Position).Magnitude
+                    txt = string.format("Selected trap: Bear Trap (%.0f studs)", d)
                 end
+                trapLabel.Text = txt
             else
                 trapLabel.Text = "Selected trap: <none>"
             end
@@ -1324,13 +1592,20 @@ return function(C, R, UI)
             local traps = ta_getAllBearTraps()
             local ch = lp.Character or lp.CharacterAdded:Wait()
             local hrp = ch:FindFirstChild("HumanoidRootPart")
-            if not hrp or #traps == 0 then selectedTrap = nil; ta_updateTrapLabel(); return end
+            if not hrp or #traps == 0 then
+                selectedTrap = nil
+                ta_updateTrapLabel()
+                return
+            end
             local best, bestDist
             for _, t in ipairs(traps) do
                 local tp = ta_getTrapPart(t)
                 if tp then
                     local d = (tp.Position - hrp.Position).Magnitude
-                    if not bestDist or d < bestDist then bestDist = d; best = t end
+                    if not bestDist or d < bestDist then
+                        bestDist = d
+                        best = t
+                    end
                 end
             end
             selectedTrap = best
@@ -1343,21 +1618,26 @@ return function(C, R, UI)
             local ch = lp.Character or lp.CharacterAdded:Wait()
             local hrp = ch:FindFirstChild("HumanoidRootPart")
             if not hrp then return end
-            ta_moveTrapToCF(selectedTrap, hrp.CFrame * CFrame.new(0, -2, -3), false)
+            local cf = hrp.CFrame * CFrame.new(0, -2, -3)
+            ta_moveTrapToCF(selectedTrap, cf, false)
             ta_updateTrapLabel()
         end
 
         local function ta_sendTrapToNearestCharacter()
             if not (selectedTrap and selectedTrap.Parent) then ta_selectNearestTrap() end
             if not (selectedTrap and selectedTrap.Parent) then return end
+
             local ch = lp.Character or lp.CharacterAdded:Wait()
             local hrp = ch:FindFirstChild("HumanoidRootPart")
             if not hrp then return end
+
             local origin = ta_getRayOriginFromChar(ch) or hrp.Position
             local charsFolder = WS:FindFirstChild("Characters")
             if not charsFolder then return end
+
             local targets = ta_collectCharactersInRadius(charsFolder, origin, TRAP_MAX_RADIUS)
             if #targets == 0 then return end
+
             ta_moveTrapUnderCharacter(selectedTrap, targets[1])
             ta_updateTrapLabel()
         end
@@ -1366,21 +1646,28 @@ return function(C, R, UI)
             if not (selectedTrap and selectedTrap.Parent) then ta_selectNearestTrap() end
             if not (selectedTrap and selectedTrap.Parent) then return end
             ta_resolveTrapRemotes()
-            if TRAP_REMOTES.SetTrap then pcall(function() TRAP_REMOTES.SetTrap:FireServer(selectedTrap) end) end
+            if TRAP_REMOTES.SetTrap then
+                pcall(function() TRAP_REMOTES.SetTrap:FireServer(selectedTrap) end)
+            end
         end
 
         local function ta_createTrapPanel()
             if trapPanelGui then trapPanelGui:Destroy() end
             trapPanelGui, trapLabel, selectedTrap = nil, nil, nil
+
             local player = lp or Players.LocalPlayer
             if not player then return end
             local playerGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
             if not playerGui then return end
+
             trapPanelGui = Instance.new("ScreenGui")
             trapPanelGui.Name = "TrapManualControls"
             trapPanelGui.ResetOnSpawn = false
             trapPanelGui.Parent = playerGui
+
             local frame = Instance.new("Frame")
+            frame.Name = "TrapPanel"
+            frame.Parent = trapPanelGui
             frame.Size = UDim2.new(0, 220, 0, 150)
             frame.Position = UDim2.new(1, -230, 1, -170)
             frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
@@ -1388,8 +1675,10 @@ return function(C, R, UI)
             frame.BorderSizePixel = 0
             frame.Active = true
             frame.Draggable = true
-            frame.Parent = trapPanelGui
+
             trapLabel = Instance.new("TextLabel")
+            trapLabel.Name = "TrapLabel"
+            trapLabel.Parent = frame
             trapLabel.Size = UDim2.new(1, -8, 0, 24)
             trapLabel.Position = UDim2.new(0, 4, 0, 4)
             trapLabel.BackgroundTransparency = 1
@@ -1398,9 +1687,10 @@ return function(C, R, UI)
             trapLabel.Font = Enum.Font.SourceSansBold
             trapLabel.TextXAlignment = Enum.TextXAlignment.Left
             trapLabel.Text = "Selected trap: <none>"
-            trapLabel.Parent = frame
+
             local function makeButton(yOffset, text, callback)
                 local btn = Instance.new("TextButton")
+                btn.Parent = frame
                 btn.Size = UDim2.new(1, -8, 0, 26)
                 btn.Position = UDim2.new(0, 4, 0, yOffset)
                 btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
@@ -1409,14 +1699,16 @@ return function(C, R, UI)
                 btn.Font = Enum.Font.SourceSansBold
                 btn.Text = text
                 btn.AutoButtonColor = true
-                btn.Parent = frame
                 btn.MouseButton1Click:Connect(function() callback() end)
                 return btn
             end
-            makeButton(32,  "Select nearest trap", ta_selectNearestTrap)
-            makeButton(62,  "Bring trap to me",    ta_bringTrapToPlayer)
-            makeButton(92,  "Send to nearest",     ta_sendTrapToNearestCharacter)
-            makeButton(122, "Set trap now",        ta_setTrapNow)
+
+            local baseY = 32
+            makeButton(baseY,      "Select nearest trap", ta_selectNearestTrap)
+            makeButton(baseY + 30, "Bring trap to me",    ta_bringTrapToPlayer)
+            makeButton(baseY + 60, "Send to nearest",     ta_sendTrapToNearestCharacter)
+            makeButton(baseY + 90, "Set trap now",        ta_setTrapNow)
+
             ta_updateTrapLabel()
         end
 
@@ -1426,13 +1718,21 @@ return function(C, R, UI)
             task.spawn(function()
                 ta_resolveTrapRemotes()
                 while TrapAura.running do
-                    if not __enabled("TrapAura") then TrapAura.running = false; break end
+                    if not __enabled("TrapAura") then
+                        TrapAura.running = false
+                        break
+                    end
+
                     local ch = lp.Character
                     if not ch then
                         ch = lp.CharacterAdded:Wait()
                         if not TrapAura.running then break end
-                        if not __enabled("TrapAura") then TrapAura.running = false; break end
+                        if not __enabled("TrapAura") then
+                            TrapAura.running = false
+                            break
+                        end
                     end
+
                     local hrp = ch:FindFirstChild("HumanoidRootPart")
                     if not hrp then
                         task.wait(0.25)
@@ -1442,15 +1742,18 @@ return function(C, R, UI)
                             task.wait(1.5)
                         else
                             local origin = ta_getRayOriginFromChar(ch) or hrp.Position
-                            local radius = math.min(tonumber(C.State.AuraRadius) or 75, TRAP_MAX_RADIUS)
+                            local configured = tonumber(C.State.AuraRadius) or 75
+                            local radius = math.min(configured, TRAP_MAX_RADIUS)
+
                             local charsFolder = WS:FindFirstChild("Characters")
                             local targets = ta_collectCharactersInRadius(charsFolder, origin, radius)
                             if #targets > 0 then
                                 local idx = 1
                                 for _, trap in ipairs(traps) do
                                     if idx > #targets then break end
-                                    ta_moveTrapUnderCharacter(trap, targets[idx])
+                                    local mdl = targets[idx]
                                     idx = idx + 1
+                                    ta_moveTrapUnderCharacter(trap, mdl)
                                 end
                                 task.wait(0.25)
                             else
@@ -1463,19 +1766,34 @@ return function(C, R, UI)
             end)
         end
 
-        function TrapAura.Stop() TrapAura.running = false end
-        function TrapAura.CreatePanel() ta_createTrapPanel() end
+        function TrapAura.Stop()
+            TrapAura.running = false
+        end
+
+        function TrapAura.CreatePanel()
+            ta_createTrapPanel()
+        end
+
         function TrapAura.DestroyPanel()
-            if trapPanelGui then trapPanelGui:Destroy(); trapPanelGui = nil; trapLabel = nil; selectedTrap = nil end
+            if trapPanelGui then
+                trapPanelGui:Destroy()
+                trapPanelGui = nil
+                trapLabel = nil
+                selectedTrap = nil
+            end
         end
     end
+
+    --------------------------------------------------------------------
+    -- UI WIRING
+    --------------------------------------------------------------------
 
     CombatTab:Toggle({
         Title = "Kill Aura",
         Value = C.State.Toggles.CharacterAura or false,
         Callback = function(on)
             C.State.Toggles.CharacterAura = on
-            if on then CharacterAura.Start(false) else CharacterAura.Stop() end
+            if on then CharacterAura.Start() else CharacterAura.Stop() end
         end
     })
 
@@ -1494,7 +1812,8 @@ return function(C, R, UI)
         Value = C.State.Toggles.BigTreeAura or false,
         Callback = function(on)
             if on then
-                if BigTreeAura.HasTool() then
+                local bt = BigTreeAura.HasTool()
+                if bt then
                     C.State.Toggles.BigTreeAura = true
                     BigTreeAura.Start()
                 else
@@ -1525,41 +1844,6 @@ return function(C, R, UI)
         end
     })
 
-    CombatTab:Section({ Title = "EndGame" })
-
-    CombatTab:Toggle({
-        Title = "Cultists Only",
-        Value = C.State.Toggles.CultistAura or false,
-        Callback = function(on)
-            C.State.Toggles.CultistAura = on
-            if on then CharacterAura.Start(true) else CharacterAura.Stop() end
-        end
-    })
-
-    CombatTab:Slider({
-        Title = "Max Concurrent",
-        Value = { Min = 1, Max = 10, Default = tonumber(C.State.CultistAuraMax) or 5 },
-        Callback = function(v)
-            local nv = v
-            if type(v) == "table" then
-                nv = v.Value or v.Current or v.CurrentValue or v.Default or v.min or v.max
-            end
-            nv = tonumber(nv)
-            if nv then C.State.CultistAuraMax = math.clamp(nv, 1, 10) end
-        end
-    })
-
-    CombatTab:Toggle({
-        Title = "Show Aura Circle",
-        Value = C.State.Toggles.DrawAuraCircle or false,
-        Callback = function(on)
-            C.State.Toggles.DrawAuraCircle = on
-            if on then auraVis:start() else auraVis:stop() end
-        end
-    })
-
-    CombatTab:Section({ Title = "Trap Control" })
-
     CombatTab:Toggle({
         Title = "Trap Aura",
         Value = C.State.Toggles.TrapAura or false,
@@ -1578,11 +1862,28 @@ return function(C, R, UI)
         end
     })
 
-    __COMBAT._watchdogRunning = true
+    CombatTab:Toggle({
+        Title = "Show Aura Circle",
+        Value = C.State.Toggles.DrawAuraCircle or false,
+        Callback = function(on)
+            C.State.Toggles.DrawAuraCircle = on
+            if on then
+                auraVis:start()
+            else
+                auraVis:stop()
+            end
+        end
+    })
+
+    __COMBAT._watchdogRunning = false
     __COMBAT._watchdogConn = nil
+    __COMBAT._watchdogThread = nil
+
+    __COMBAT._watchdogRunning = true
     __COMBAT._watchdogThread = task.spawn(function()
         local inv = lp:WaitForChild("Inventory", 10)
         if not inv then return end
+
         local function check()
             if not (__COMBAT._watchdogRunning and _G[__COMBAT_KEY] == __COMBAT) then return end
             if C.State.Toggles.BigTreeAura and not BigTreeAura.HasTool() then
@@ -1592,31 +1893,38 @@ return function(C, R, UI)
                 pcall(function() if bigToggle and bigToggle.SetValue then bigToggle:SetValue(false) end end)
             end
         end
+
         if __COMBAT._watchdogConn then pcall(function() __COMBAT._watchdogConn:Disconnect() end) end
         __COMBAT._watchdogConn = inv.ChildRemoved:Connect(check)
+
         while __COMBAT._watchdogRunning and _G[__COMBAT_KEY] == __COMBAT do
             task.wait(2.0)
             check()
         end
+
         if __COMBAT._watchdogConn then pcall(function() __COMBAT._watchdogConn:Disconnect() end) end
         __COMBAT._watchdogConn = nil
     end)
 
     __COMBAT.Destroy = function()
         pcall(function() __COMBAT._watchdogRunning = false end)
-        pcall(function() if __COMBAT._watchdogConn then __COMBAT._watchdogConn:Disconnect() end end)
+        pcall(function()
+            if __COMBAT._watchdogConn then __COMBAT._watchdogConn:Disconnect() end
+        end)
         __COMBAT._watchdogConn = nil
+
         pcall(function() C.State.Toggles.CharacterAura = false end)
-        pcall(function() C.State.Toggles.CultistAura = false end)
         pcall(function() C.State.Toggles.SmallTreeAura = false end)
         pcall(function() C.State.Toggles.BigTreeAura = false end)
         pcall(function() C.State.Toggles.TrapAura = false end)
         pcall(function() C.State.Toggles.TrapManualControls = false end)
         pcall(function() C.State.Toggles.DrawAuraCircle = false end)
+
         pcall(function() CharacterAura.Stop() end)
         pcall(function() SmallTreeAura.Stop() end)
         pcall(function() BigTreeAura.Stop() end)
         pcall(function() TrapAura.Stop() end)
+
         pcall(function() TrapAura.DestroyPanel() end)
         pcall(function() auraVis:stop() end)
         pcall(function() auraVis:cleanupLegacy() end)
@@ -1625,8 +1933,7 @@ return function(C, R, UI)
     if C.State.Toggles.SmallTreeAura then SmallTreeAura.Start() end
     if C.State.Toggles.BigTreeAura then BigTreeAura.Start() end
     if C.State.Toggles.TrapAura then TrapAura.Start() end
-    if C.State.Toggles.CharacterAura then CharacterAura.Start(false) end
-    if C.State.Toggles.CultistAura then CharacterAura.Start(true) end
+    if C.State.Toggles.CharacterAura then CharacterAura.Start() end
     if C.State.Toggles.TrapManualControls then TrapAura.CreatePanel() end
     if C.State.Toggles.DrawAuraCircle then auraVis:start() else auraVis:cleanupLegacy() end
 end
