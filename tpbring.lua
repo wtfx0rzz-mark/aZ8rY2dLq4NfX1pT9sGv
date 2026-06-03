@@ -157,6 +157,8 @@ return function(C, R, UI)
     local MAX_AIR_DROPPING        = MAX_CONCURRENT
     local AIR_DROP_SPREAD_RADIUS  = 0.6
 
+    local SCRAPPER_CHUTE_ABOVE    = 12
+
     local INFLT_ATTR = "OrbInFlightAt"
     local JOB_ATTR   = "OrbJob"
     local DONE_ATTR  = "OrbDelivered"
@@ -196,6 +198,44 @@ return function(C, R, UI)
     local airDropQueue     = {}
     local airDroppingCount = 0
 
+    local cachedScrapperChute = nil
+    local function getScrapperChute()
+        if cachedScrapperChute and cachedScrapperChute.Parent then
+            return cachedScrapperChute
+        end
+        cachedScrapperChute = nil
+        local scr = WS:FindFirstChild("Map") and WS.Map:FindFirstChild("Campground") and WS.Map.Campground:FindFirstChild("Scrapper")
+        if not scr then return nil end
+        for _, child in ipairs(scr:GetDescendants()) do
+            if child.Name == "Chute" and child:IsA("BasePart") and child.Material == Enum.Material.DiamondPlate then
+                cachedScrapperChute = child
+                return child
+            end
+        end
+        return nil
+    end
+
+    local function scrapperChuteTargetPos()
+        local chute = getScrapperChute()
+        if not chute then return nil end
+        return chute.Position + Vector3.new(0, SCRAPPER_CHUTE_ABOVE, 0)
+    end
+
+    local function randomPosInChute()
+        local chute = getScrapperChute()
+        if not chute then return nil end
+        local cf   = chute.CFrame
+        local size = chute.Size
+        local rx = (math.random() - 0.5) * size.X * 0.8
+        local rz = (math.random() - 0.5) * size.Z * 0.8
+        local worldOffset = cf:VectorToWorldSpace(Vector3.new(rx, 0, rz))
+        return Vector3.new(
+            chute.Position.X + worldOffset.X,
+            chute.Position.Y + SCRAPPER_CHUTE_ABOVE,
+            chute.Position.Z + worldOffset.Z
+        )
+    end
+
     local junkItems = {
         "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
         "UFO Junk","UFO Component"
@@ -228,8 +268,8 @@ return function(C, R, UI)
     local fuelModeSet  = { ["Coal"] = true, ["Fuel Canister"] = true, ["Oil Barrel"] = true, ["Log"] = true }
     local scrapModeSet = {}
     for k,v in pairs(junkSet) do if v then scrapModeSet[k] = true end end
-    scrapModeSet["Log"]              = true
-    scrapModeSet["Cultist Gem"]      = true
+    scrapModeSet["Log"]               = true
+    scrapModeSet["Cultist Gem"]       = true
     scrapModeSet["Gem of the Forest"] = true
     local logOnlySet   = { ["Log"] = true }
 
@@ -459,6 +499,10 @@ return function(C, R, UI)
         return CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs"
     end
 
+    local function isScrapperMode()
+        return CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs"
+    end
+
     local function markDoneThisRun(m)
         if not (m and m.Parent) then return end
         pcall(function()
@@ -626,14 +670,6 @@ return function(C, R, UI)
         return cf.Position + Vector3.new(0, ORB_HEIGHT + 3, 0)
     end
 
-    local function scrapperOrbPos()
-        local scr = WS:FindFirstChild("Map") and WS.Map:FindFirstChild("Campground") and WS.Map.Campground:FindFirstChild("Scrapper")
-        if not scr then return nil end
-        local mp = mainPart(scr)
-        local cf = (mp and mp.CFrame) or scr:GetPivot()
-        return cf.Position + Vector3.new(0, ORB_HEIGHT, 0)
-    end
-
     local function noticeOrbPos()
         local map = WS:FindFirstChild("Map")
         if not map then return nil end
@@ -726,21 +762,29 @@ return function(C, R, UI)
         markForConfirm(m)
     end
 
-    local function airDropSpreadOffset(index)
-        local ang = (index - 1) * 2.399963229728653
-        local rad = math.min(AIR_DROP_SPREAD_RADIUS * 3, AIR_DROP_SPREAD_RADIUS * math.sqrt(index))
-        return Vector3.new(math.cos(ang) * rad, 0, math.sin(ang) * rad)
-    end
-
     local function processAirDropQueue()
-        if not (running and isAirMode() and orbPosVec) then return end
+        if not (running and isAirMode()) then return end
+        local dropTarget = nil
+        if isScrapperMode() then
+            local chute = getScrapperChute()
+            if not chute then return end
+            dropTarget = chute.Position
+        else
+            if not orbPosVec then return end
+            dropTarget = orbPosVec
+        end
+
         while airDroppingCount < MAX_AIR_DROPPING and #airDropQueue > 0 do
             local entry = table.remove(airDropQueue, 1)
             local m = entry and entry.model
             local rec = m and inflight[m]
             if m and m.Parent and rec then
-                local spread = airDropSpreadOffset(airDroppingCount + 1)
-                local dropPos = orbPosVec + Vector3.new(spread.X, AIR_RELEASE_UP, spread.Z)
+                local targetXZ = entry.targetXZ
+                local dropPos = Vector3.new(
+                    targetXZ and targetXZ.X or dropTarget.X,
+                    dropTarget.Y + SCRAPPER_CHUTE_ABOVE,
+                    targetXZ and targetXZ.Z or dropTarget.Z
+                )
                 setPivot(m, CFrame.new(dropPos))
                 zeroAssembly(m)
                 setCollideFromSnapshot(rec.snap)
@@ -879,17 +923,23 @@ return function(C, R, UI)
 
         if info then tryStopDrag(m, info) end
 
-        if rec and rec.dropKind == "air" and orbPosVec then
-            local info = inflight[m]
+        if rec and rec.dropKind == "air" then
             if info then
                 if info.airQueued or info.dropping or info.released then
                     return
                 end
                 info.airQueued = true
-                info.staged = true
-                info.stagedAt = os.clock()
+                info.staged    = true
+                info.stagedAt  = os.clock()
             end
-            airDropQueue[#airDropQueue+1] = { model = m }
+            local targetXZ = nil
+            if isScrapperMode() then
+                local pos = randomPosInChute()
+                if pos then
+                    targetXZ = Vector3.new(pos.X, 0, pos.Z)
+                end
+            end
+            airDropQueue[#airDropQueue+1] = { model = m, targetXZ = targetXZ }
             return
         end
 
@@ -975,6 +1025,12 @@ return function(C, R, UI)
 
         local off = landingOffset(m, jobId)
         local function target()
+            if isScrapperMode() then
+                local chute = getScrapperChute()
+                if chute then
+                    return chute.Position + Vector3.new(off.X, SCRAPPER_CHUTE_ABOVE + HOVER_ABOVE_ORB, off.Z)
+                end
+            end
             return Vector3.new(destBaseVec.X + off.X, destBaseVec.Y + HOVER_ABOVE_ORB, destBaseVec.Z + off.Z)
         end
 
@@ -1113,6 +1169,12 @@ return function(C, R, UI)
             local m = list[i]
             if m and m.Parent and not inflight[m] then
                 local dest = orbPosVec
+                if isScrapperMode() then
+                    local chute = getScrapperChute()
+                    if chute then
+                        dest = chute.Position + Vector3.new(0, SCRAPPER_CHUTE_ABOVE, 0)
+                    end
+                end
                 if dest then
                     startConveyor(m, jobId, dest, "main", isAirMode() and "air" or "ground")
                 end
@@ -1169,8 +1231,51 @@ return function(C, R, UI)
     end
 
     local function checkAirDeliveries()
-        if not (running and isAirMode() and orbTouch and orbTouch.Parent) then return end
+        if not (running and isAirMode()) then return end
         local now = os.clock()
+
+        if isScrapperMode() then
+            local chute = getScrapperChute()
+            if not chute then return end
+            local chuteCF   = chute.CFrame
+            local chuteSize = chute.Size
+            local halfX = chuteSize.X * 0.5 + 1.0
+            local halfZ = chuteSize.Z * 0.5 + 1.0
+            local chuteY = chute.Position.Y
+
+            for m,rec in pairs(inflight) do
+                if rec and rec.dropKind == "air" and rec.dropping and m and m.Parent then
+                    local mp = mainPart(m)
+                    if mp then
+                        local localP = chuteCF:PointToObjectSpace(mp.Position)
+                        local inBounds = math.abs(localP.X) <= halfX and math.abs(localP.Z) <= halfZ and mp.Position.Y <= chuteY + 3
+                        if inBounds then
+                            finalizeAirDelivery(m, rec)
+                        else
+                            local t0 = rec.droppingAt or now
+                            if (now - t0) >= AIR_DROP_TIMEOUT_S then
+                                local pos = randomPosInChute()
+                                if pos then
+                                    setPivot(m, CFrame.new(pos))
+                                    zeroAssembly(m)
+                                    setAnchored(m, false)
+                                    for _,p in ipairs(allParts(m)) do
+                                        p.CanCollide = false
+                                        p.AssemblyLinearVelocity = Vector3.new(0, AIR_RETRY_PUSH_DOWN_VY, 0)
+                                        pcall(function() p:SetNetworkOwner(nil) end)
+                                        pcall(function() if p.SetNetworkOwnershipAuto then p:SetNetworkOwnershipAuto() end end)
+                                    end
+                                    rec.droppingAt = now
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            return
+        end
+
+        if not (orbTouch and orbTouch.Parent) then return end
         local touchPos = orbTouch.Position
         local rad = (AIR_TOUCH_ORB_SIZE * 0.5) + 1.25
         local rad2 = rad * rad
@@ -1205,7 +1310,7 @@ return function(C, R, UI)
     end
 
     local function processPendingRetries()
-        if not (running and orbPosVec and isAirMode()) then pendingRetry = {} return end
+        if not (running and isAirMode()) then pendingRetry = {} return end
         local now = os.clock()
         for m,info in pairs(pendingRetry) do
             if not (m and m.Parent) then
@@ -1223,7 +1328,14 @@ return function(C, R, UI)
                         if not mp then
                             pendingRetry[m] = nil
                         else
-                            local base = orbPosVec
+                            local base = nil
+                            if isScrapperMode() then
+                                local chute = getScrapperChute()
+                                if chute then base = chute.Position + Vector3.new(0, SCRAPPER_CHUTE_ABOVE, 0) end
+                            else
+                                base = orbPosVec
+                            end
+                            if not base then pendingRetry[m] = nil continue end
                             local v = Vector3.new(mp.Position.X-base.X, 0, mp.Position.Z-base.Z)
                             if v.Magnitude < 0.2 then v = Vector3.new(1,0,0) else v = v.Unit end
                             local away = base + v*RETRY_PUSH_BACK + Vector3.new(0, AIR_RELEASE_UP, 0)
@@ -1344,6 +1456,7 @@ return function(C, R, UI)
         preclaimedAt     = {}
         airDropQueue     = {}
         airDroppingCount = 0
+        cachedScrapperChute = nil
 
         CURRENT_MODE   = mode
         CURRENT_RUN_ID = tostring(os.clock())
@@ -1360,13 +1473,27 @@ return function(C, R, UI)
 
         if mode == "fuel" or mode == "scrap" or mode == "scrap_logs" or mode == "all" then
             local pos, color, touch
-            if     mode == "fuel"       then pos = campfireOrbPos() color = Color3.fromRGB(255,200,50)  touch = true
-            elseif mode == "scrap"      then pos = scrapperOrbPos() color = Color3.fromRGB(120,255,160) touch = true
-            elseif mode == "scrap_logs" then pos = scrapperOrbPos() color = Color3.fromRGB(120,255,160) touch = true
-            elseif mode == "all"        then pos = noticeOrbPos()   color = Color3.fromRGB(100,200,255) touch = false
+            if mode == "fuel" then
+                pos   = campfireOrbPos()
+                color = Color3.fromRGB(255,200,50)
+                touch = true
+            elseif mode == "scrap" or mode == "scrap_logs" then
+                local chute = getScrapperChute()
+                if not chute then CURRENT_MODE = nil CURRENT_RUN_ID = nil return end
+                pos   = chute.Position + Vector3.new(0, SCRAPPER_CHUTE_ABOVE, 0)
+                color = Color3.fromRGB(120,255,160)
+                touch = false
+            elseif mode == "all" then
+                pos   = noticeOrbPos()
+                color = Color3.fromRGB(100,200,255)
+                touch = false
             end
             if not pos then CURRENT_MODE = nil CURRENT_RUN_ID = nil return end
-            spawnOrbAt(pos, color, touch)
+            if mode ~= "scrap" and mode ~= "scrap_logs" then
+                spawnOrbAt(pos, color, touch)
+            else
+                orbPosVec = pos
+            end
             setUnstickEnabled(mode == "all")
         elseif mode == "orbs" then
             local any = false
@@ -1427,10 +1554,10 @@ return function(C, R, UI)
         end)
     end
 
-    tab:Toggle({ Title = "Send Fuel to Campfire",       Value = false, Callback = function(s) if s then startMode("fuel")       elseif CURRENT_MODE == "fuel"       then startMode(nil) end end })
-    tab:Toggle({ Title = "Send Scrap to Scrapper",      Value = false, Callback = function(s) if s then startMode("scrap")      elseif CURRENT_MODE == "scrap"      then startMode(nil) end end })
-    tab:Toggle({ Title = "Send Logs to Scrapper",       Value = false, Callback = function(s) if s then startMode("scrap_logs") elseif CURRENT_MODE == "scrap_logs" then startMode(nil) end end })
-    tab:Toggle({ Title = "Send All Items to NoticeBoard", Value = false, Callback = function(s) if s then startMode("all")      elseif CURRENT_MODE == "all"        then startMode(nil) end end })
+    tab:Toggle({ Title = "Send Fuel to Campfire",         Value = false, Callback = function(s) if s then startMode("fuel")       elseif CURRENT_MODE == "fuel"       then startMode(nil) end end })
+    tab:Toggle({ Title = "Send Scrap to Scrapper",        Value = false, Callback = function(s) if s then startMode("scrap")      elseif CURRENT_MODE == "scrap"      then startMode(nil) end end })
+    tab:Toggle({ Title = "Send Logs to Scrapper",         Value = false, Callback = function(s) if s then startMode("scrap_logs") elseif CURRENT_MODE == "scrap_logs" then startMode(nil) end end })
+    tab:Toggle({ Title = "Send All Items to NoticeBoard",  Value = false, Callback = function(s) if s then startMode("all")       elseif CURRENT_MODE == "all"        then startMode(nil) end end })
 
     tab:Section({ Title = "Bring to Orbs (Level 4 Fire Edge)" })
 
@@ -1480,17 +1607,25 @@ return function(C, R, UI)
     if charAddedConn then pcall(function() charAddedConn:Disconnect() end) charAddedConn = nil end
     charAddedConn = Players.LocalPlayer.CharacterAdded:Connect(function()
         if not (running and CURRENT_MODE) then return end
+        cachedScrapperChute = nil
         if CURRENT_MODE == "fuel" or CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs" or CURRENT_MODE == "all" then
             local pos
-            if     CURRENT_MODE == "fuel"       then pos = campfireOrbPos()
-            elseif CURRENT_MODE == "scrap"      then pos = scrapperOrbPos()
-            elseif CURRENT_MODE == "scrap_logs" then pos = scrapperOrbPos()
-            elseif CURRENT_MODE == "all"        then pos = noticeOrbPos() end
+            if CURRENT_MODE == "fuel" then
+                pos = campfireOrbPos()
+            elseif CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs" then
+                local chute = getScrapperChute()
+                if chute then pos = chute.Position + Vector3.new(0, SCRAPPER_CHUTE_ABOVE, 0) end
+            elseif CURRENT_MODE == "all" then
+                pos = noticeOrbPos()
+            end
             if pos then
-                local color = (CURRENT_MODE == "fuel" and Color3.fromRGB(255,200,50))
-                    or ((CURRENT_MODE == "scrap" or CURRENT_MODE == "scrap_logs") and Color3.fromRGB(120,255,160))
-                    or Color3.fromRGB(100,200,255)
-                spawnOrbAt(pos, color, CURRENT_MODE ~= "all")
+                if CURRENT_MODE == "fuel" then
+                    spawnOrbAt(pos, Color3.fromRGB(255,200,50), true)
+                elseif CURRENT_MODE == "all" then
+                    spawnOrbAt(pos, Color3.fromRGB(100,200,255), false)
+                else
+                    orbPosVec = pos
+                end
             end
         elseif CURRENT_MODE == "orbs" then
             destroyOrb()
