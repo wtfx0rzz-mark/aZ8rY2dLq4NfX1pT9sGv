@@ -15,6 +15,7 @@ return function(C, R, UI)
     C.State  = C.State  or { Toggles = {} }
     C.State.Toggles = C.State.Toggles or {}
     if C.State.AuraRadius == nil then C.State.AuraRadius = 75 end
+    if C.State.CultistAuraMax == nil then C.State.CultistAuraMax = 5 end
     C.Config = C.Config or {}
 
     local TUNE = C.Config
@@ -267,6 +268,7 @@ return function(C, R, UI)
 
     local CharacterAura = {}
     CharacterAura.running = false
+    CharacterAura._gen = 0
 
     do
         local lastHitAt = setmetatable({}, { __mode = "k" })
@@ -451,7 +453,7 @@ return function(C, R, UI)
             dmg:InvokeServer(targetModel, tool, hitId, impactCF)
         end
 
-        local function char_collectCharactersInRadius(charsFolder, origin, radius)
+        local function char_collectCharactersInRadius(charsFolder, origin, radius, cultistOnly, maxCount)
             local out = {}
             if not charsFolder or not origin or not radius or radius <= 0 then return out end
 
@@ -472,6 +474,7 @@ return function(C, R, UI)
                             local nameLower = n:lower()
                             if string.find(nameLower, "horse", 1, true) then break end
                             if n == "Deer" or n == "Ram" or n == "Owl" or n == "Pelt Trader" or n == "Furniture Trader" or n == "Horse" then break end
+                            if cultistOnly and not string.find(nameLower, "cultist", 1, true) then break end
                             seen[mdl] = true
                             out[#out + 1] = mdl
                         until true
@@ -487,6 +490,14 @@ return function(C, R, UI)
                     if da == db then return (a.Name or "") < (b.Name or "") end
                     return da < db
                 end)
+            end
+
+            if maxCount and maxCount > 0 and #out > maxCount then
+                local trimmed = table.create(maxCount)
+                for i = 1, maxCount do
+                    trimmed[i] = out[i]
+                end
+                return trimmed
             end
 
             return out
@@ -586,46 +597,57 @@ return function(C, R, UI)
             end
         end
 
-        function CharacterAura.Start()
-            if CharacterAura.running then return end
-            CharacterAura.running = true
-            task.spawn(function()
-                while CharacterAura.running do
-                    if not __enabled("CharacterAura") then
+        local function char_runLoop(myGen, cultistOnly, maxCount)
+            while CharacterAura.running and CharacterAura._gen == myGen do
+                local key = cultistOnly and "CultistAura" or "CharacterAura"
+                if not __enabled(key) then
+                    CharacterAura.running = false
+                    break
+                end
+
+                local ch = lp.Character
+                if not ch then
+                    ch = lp.CharacterAdded:Wait()
+                    if not (CharacterAura.running and CharacterAura._gen == myGen) then break end
+                    if not __enabled(key) then
                         CharacterAura.running = false
                         break
                     end
+                end
 
-                    local ch = lp.Character
-                    if not ch then
-                        ch = lp.CharacterAdded:Wait()
-                        if not CharacterAura.running then break end
-                        if not __enabled("CharacterAura") then
-                            CharacterAura.running = false
-                            break
-                        end
-                    end
-
-                    local hrp = ch:FindFirstChild("HumanoidRootPart")
-                    if not hrp then
-                        task.wait(0.2)
+                local hrp = ch:FindFirstChild("HumanoidRootPart")
+                if not hrp then
+                    task.wait(0.2)
+                else
+                    local origin = (char_getRayOriginFromChar(ch) or hrp.Position)
+                    local radius = tonumber(C.State.AuraRadius) or 75
+                    local charsFolder = WS:FindFirstChild("Characters")
+                    local targets = char_collectCharactersInRadius(charsFolder, origin, radius, cultistOnly, maxCount)
+                    if #targets > 0 then
+                        char_chopWave(targets)
                     else
-                        local origin = (char_getRayOriginFromChar(ch) or hrp.Position)
-                        local radius = tonumber(C.State.AuraRadius) or 75
-                        local charsFolder = WS:FindFirstChild("Characters")
-                        local targets = char_collectCharactersInRadius(charsFolder, origin, radius)
-                        if #targets > 0 then
-                            char_chopWave(targets)
-                        else
-                            task.wait(0.1)
-                        end
+                        task.wait(0.1)
                     end
                 end
+            end
+            if CharacterAura._gen == myGen then
+                CharacterAura.running = false
+            end
+        end
+
+        function CharacterAura.Start(cultistOnly, maxCount)
+            if CharacterAura.running then return end
+            CharacterAura.running = true
+            CharacterAura._gen += 1
+            local myGen = CharacterAura._gen
+            task.spawn(function()
+                char_runLoop(myGen, cultistOnly, maxCount)
             end)
         end
 
         function CharacterAura.Stop()
             CharacterAura.running = false
+            CharacterAura._gen += 1
         end
     end
 
@@ -1793,7 +1815,11 @@ return function(C, R, UI)
         Value = C.State.Toggles.CharacterAura or false,
         Callback = function(on)
             C.State.Toggles.CharacterAura = on
-            if on then CharacterAura.Start() else CharacterAura.Stop() end
+            if on then
+                CharacterAura.Start(false, nil)
+            else
+                CharacterAura.Stop()
+            end
         end
     })
 
@@ -1844,6 +1870,51 @@ return function(C, R, UI)
         end
     })
 
+    CombatTab:Section({ Title = "EndGame" })
+
+    CombatTab:Toggle({
+        Title = "Cultists Only",
+        Value = C.State.Toggles.CultistAura or false,
+        Callback = function(on)
+            C.State.Toggles.CultistAura = on
+            if on then
+                CharacterAura.Start(true, tonumber(C.State.CultistAuraMax) or 5)
+            else
+                CharacterAura.Stop()
+            end
+        end
+    })
+
+    CombatTab:Slider({
+        Title = "Max Concurrent",
+        Value = { Min = 1, Max = 10, Default = tonumber(C.State.CultistAuraMax) or 5 },
+        Callback = function(v)
+            local nv = v
+            if type(v) == "table" then
+                nv = v.Value or v.Current or v.CurrentValue or v.Default or v.min or v.max
+            end
+            nv = tonumber(nv)
+            if nv then
+                C.State.CultistAuraMax = math.clamp(nv, 1, 10)
+            end
+        end
+    })
+
+    CombatTab:Toggle({
+        Title = "Show Aura Circle",
+        Value = C.State.Toggles.DrawAuraCircle or false,
+        Callback = function(on)
+            C.State.Toggles.DrawAuraCircle = on
+            if on then
+                auraVis:start()
+            else
+                auraVis:stop()
+            end
+        end
+    })
+
+    CombatTab:Section({ Title = "Trap Control" })
+
     CombatTab:Toggle({
         Title = "Trap Aura",
         Value = C.State.Toggles.TrapAura or false,
@@ -1859,19 +1930,6 @@ return function(C, R, UI)
         Callback = function(on)
             C.State.Toggles.TrapManualControls = on
             if on then TrapAura.CreatePanel() else TrapAura.DestroyPanel() end
-        end
-    })
-
-    CombatTab:Toggle({
-        Title = "Show Aura Circle",
-        Value = C.State.Toggles.DrawAuraCircle or false,
-        Callback = function(on)
-            C.State.Toggles.DrawAuraCircle = on
-            if on then
-                auraVis:start()
-            else
-                auraVis:stop()
-            end
         end
     })
 
@@ -1914,6 +1972,7 @@ return function(C, R, UI)
         __COMBAT._watchdogConn = nil
 
         pcall(function() C.State.Toggles.CharacterAura = false end)
+        pcall(function() C.State.Toggles.CultistAura = false end)
         pcall(function() C.State.Toggles.SmallTreeAura = false end)
         pcall(function() C.State.Toggles.BigTreeAura = false end)
         pcall(function() C.State.Toggles.TrapAura = false end)
@@ -1933,7 +1992,8 @@ return function(C, R, UI)
     if C.State.Toggles.SmallTreeAura then SmallTreeAura.Start() end
     if C.State.Toggles.BigTreeAura then BigTreeAura.Start() end
     if C.State.Toggles.TrapAura then TrapAura.Start() end
-    if C.State.Toggles.CharacterAura then CharacterAura.Start() end
+    if C.State.Toggles.CharacterAura then CharacterAura.Start(false, nil) end
+    if C.State.Toggles.CultistAura then CharacterAura.Start(true, tonumber(C.State.CultistAuraMax) or 5) end
     if C.State.Toggles.TrapManualControls then TrapAura.CreatePanel() end
     if C.State.Toggles.DrawAuraCircle then auraVis:start() else auraVis:cleanupLegacy() end
 end
