@@ -730,14 +730,12 @@ return function(C, R, UI)
     end
 
     local function processAirDropQueue()
-        if not (running and isAirMode() and orbPosVec) then return end
-        while airDroppingCount < MAX_AIR_DROPPING and #airDropQueue > 0 do
-            local entry = table.remove(airDropQueue, 1)
-            local m = entry and entry.model
-            local rec = m and inflight[m]
-            if not (m and m.Parent and rec) then
-                goto continue
-            end
+    if not (running and isAirMode() and orbPosVec) then return end
+    while airDroppingCount < MAX_AIR_DROPPING and #airDropQueue > 0 do
+        local entry = table.remove(airDropQueue, 1)
+        local m = entry and entry.model
+        local rec = m and inflight[m]
+        if m and m.Parent and rec then
             local queueIndex = airDroppingCount + 1
             local spread = airDropSpreadOffset(queueIndex)
             local dropPos = orbPosVec + Vector3.new(spread.X, AIR_RELEASE_UP, spread.Z)
@@ -754,9 +752,7 @@ return function(C, R, UI)
             tryStopDrag(m, rec)
             rec.dropping   = true
             rec.droppingAt = os.clock()
-            rec.snap       = rec.snap
             airDroppingCount = airDroppingCount + 1
-            ::continue::
         end
     end
 
