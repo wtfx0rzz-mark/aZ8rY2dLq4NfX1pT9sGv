@@ -4,7 +4,7 @@ local lp = Players.LocalPlayer
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
 local Window = WindUI:CreateWindow({
-    Title = "Checkm8",
+    Title = "99 Nights",
     Icon = "moon",
     Author = "1337b00g",
     Folder = "1337b00g",
