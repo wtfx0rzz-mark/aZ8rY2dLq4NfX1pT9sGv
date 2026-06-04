@@ -85,7 +85,12 @@ return function(C, R, UI)
         "Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"
     }
 
-    local characterTargets = { "Kiwi" }
+    local characterTargets = { "Kiwi", "Furniture Trader", "Wolf", "Mossy Wolf", "Hellephant" }
+
+    local characterTargetSet = {}
+    for _, n in ipairs(characterTargets) do
+        characterTargetSet[n] = true
+    end
 
     local function isForestGemName(n)
         local l = string.lower(n or "")
@@ -616,9 +621,9 @@ return function(C, R, UI)
                     end
 
                     local charsFolder = charactersRootOrNil()
-                    if charsFolder and selChars["Kiwi"] then
+                    if charsFolder then
                         for _, m in ipairs(charsFolder:GetChildren()) do
-                            if m and m:IsA("Model") and m.Name == "Kiwi" then
+                            if m and m:IsA("Model") and characterTargetSet[m.Name] and selChars[m.Name] then
                                 local mp = mainPart(m)
                                 if mp then
                                     local pos = mp.Position
