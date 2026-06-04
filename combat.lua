@@ -20,7 +20,7 @@ return function(C, R, UI)
     local TUNE = C.Config
     TUNE.CHOP_SWING_DELAY         = TUNE.CHOP_SWING_DELAY         or 0.50
     TUNE.TREE_NAME                = TUNE.TREE_NAME                or "Small Tree"
-    TUNE.UID_SUFFIX               = TUNE.UID_SUFFIX               or "0000000000"
+    TUNE.UID_SUFFIX               = TUNE.UID_SUFFIX               or tostring(lp.UserId)
     TUNE.ChopPrefer               = TUNE.ChopPrefer               or { "Admin Axe", "Chainsaw", "Strong Axe", "Ice Axe", "Good Axe", "Old Axe" }
     TUNE.MAX_TARGETS_PER_WAVE     = TUNE.MAX_TARGETS_PER_WAVE     or 20
     TUNE.CHAR_MAX_PER_WAVE        = TUNE.CHAR_MAX_PER_WAVE        or 20
