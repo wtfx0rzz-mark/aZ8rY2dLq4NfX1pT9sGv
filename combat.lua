@@ -418,7 +418,7 @@ return function(C, R, UI)
         end
 
         local function char_nextHitId()
-            characterHitSeq += 1
+            characterHitSeq = characterHitSeq + 1
             return tostring(characterHitSeq) .. "_" .. TUNE.UID_SUFFIX
         end
 
@@ -551,7 +551,7 @@ return function(C, R, UI)
                             local hitId = char_nextHitId()
                             char_markHitWithWeapon(mdl, toolName)
                             anySent = true
-                            hitsLaunched += 1
+                            hitsLaunched = hitsLaunched + 1
 
                             task.spawn(function()
                                 if not (CharacterAura.running and mdl and mdl.Parent) then return end
@@ -1786,6 +1786,180 @@ return function(C, R, UI)
     end
 
     --------------------------------------------------------------------
+    -- AUTO RESET TRAPS (SELF-CONTAINED)
+    --------------------------------------------------------------------
+
+    local AutoResetTraps = {}
+
+    do
+        local art_conns = {}
+        local art_structWatchConn = nil
+        local art_lastReset = {}
+        local art_generation = {}
+        local ART_COOLDOWN = 1.2
+        local ART_COOLDOWN_BACKOFF = 2.0
+        local ART_SNAP_BACKOFF_THRESHOLD = 5
+
+        local art_setTrapRemote = nil
+
+        local function art_resolveRemote()
+            if art_setTrapRemote and art_setTrapRemote.Parent then return art_setTrapRemote end
+            local re = RS:FindFirstChild("RemoteEvents")
+            if not re then return nil end
+            art_setTrapRemote = re:FindFirstChild("RequestSetTrap") or re:FindFirstChild("SetTrap")
+            return art_setTrapRemote
+        end
+
+        local function art_isTrap(inst)
+            return inst:IsA("Model") and (inst.Name == "Bear Trap" or inst.Name == "Volcanic Bear Trap")
+        end
+
+        local function art_watchTrap(trap)
+            local id = trap:GetDebugId()
+            if art_conns[id] then return end
+
+            art_generation[id] = 0
+            art_lastReset[id] = 0
+
+            local wasSet = trap:GetAttribute("TrapSet") == true
+            local consecutiveSnaps = 0
+            local inBackoff = false
+
+            local function getCooldown()
+                if inBackoff then return ART_COOLDOWN_BACKOFF end
+                return ART_COOLDOWN
+            end
+
+            local function attemptReset(attempt, gen)
+                if art_generation[id] ~= gen then return end
+                if not (trap and trap.Parent) then return end
+
+                local now = os.clock()
+                local cd = getCooldown()
+                local elapsed = now - (art_lastReset[id] or 0)
+                if elapsed < cd then
+                    task.delay(cd - elapsed, function() attemptReset(attempt, gen) end)
+                    return
+                end
+
+                if art_generation[id] ~= gen then return end
+
+                local remote = art_resolveRemote()
+                if not remote then
+                    task.delay(1.0, function() attemptReset(attempt, gen) end)
+                    return
+                end
+
+                art_lastReset[id] = os.clock()
+
+                local ok = pcall(function() remote:FireServer(trap) end)
+                if ok then
+                    task.delay(0.5, function()
+                        if art_generation[id] ~= gen then return end
+                        if not (trap and trap.Parent) then return end
+                        if trap:GetAttribute("TrapSet") == true then
+                            consecutiveSnaps = 0
+                            inBackoff = false
+                        else
+                            task.delay(getCooldown(), function() attemptReset(attempt + 1, gen) end)
+                        end
+                    end)
+                else
+                    art_lastReset[id] = 0
+                    task.delay(0.4, function() attemptReset(attempt + 1, gen) end)
+                end
+            end
+
+            local attrConn = trap.AttributeChanged:Connect(function(attr)
+                if attr ~= "TrapSet" then return end
+                local val = trap:GetAttribute("TrapSet")
+                if wasSet and val == false then
+                    consecutiveSnaps = consecutiveSnaps + 1
+                    if consecutiveSnaps >= ART_SNAP_BACKOFF_THRESHOLD and not inBackoff then
+                        inBackoff = true
+                    end
+                    art_generation[id] = (art_generation[id] or 0) + 1
+                    local gen = art_generation[id]
+                    task.delay(0.1, function() attemptReset(1, gen) end)
+                elseif not wasSet and val == true then
+                    art_generation[id] = (art_generation[id] or 0) + 1
+                end
+                wasSet = val == true
+            end)
+
+            local cleanupConn
+            cleanupConn = trap.AncestryChanged:Connect(function(_, newParent)
+                if newParent == nil then
+                    art_generation[id] = (art_generation[id] or 0) + 1
+                    pcall(function() attrConn:Disconnect() end)
+                    pcall(function() cleanupConn:Disconnect() end)
+                    art_conns[id] = nil
+                    art_lastReset[id] = nil
+                    art_generation[id] = nil
+                end
+            end)
+
+            art_conns[id] = { attr = attrConn, ancestry = cleanupConn }
+
+            if not wasSet then
+                art_generation[id] = 1
+                task.delay(0.1, function() attemptReset(1, 1) end)
+            end
+        end
+
+        local function art_getAllTraps()
+            local out = {}
+            local root = WS:FindFirstChild("Structures") or WS
+            for _, d in ipairs(root:GetDescendants()) do
+                if art_isTrap(d) then out[#out + 1] = d end
+            end
+            return out
+        end
+
+        function AutoResetTraps.Start()
+            for _, conns in pairs(art_conns) do
+                pcall(function() conns.attr:Disconnect() end)
+                pcall(function() conns.ancestry:Disconnect() end)
+            end
+            art_conns = {}
+            art_lastReset = {}
+            art_generation = {}
+            if art_structWatchConn then
+                pcall(function() art_structWatchConn:Disconnect() end)
+                art_structWatchConn = nil
+            end
+
+            for _, trap in ipairs(art_getAllTraps()) do
+                art_watchTrap(trap)
+            end
+
+            local structRoot = WS:FindFirstChild("Structures") or WS
+            art_structWatchConn = structRoot.DescendantAdded:Connect(function(desc)
+                if not __enabled("AutoResetTraps") then return end
+                if art_isTrap(desc) then
+                    task.defer(function()
+                        if desc and desc.Parent then art_watchTrap(desc) end
+                    end)
+                end
+            end)
+        end
+
+        function AutoResetTraps.Stop()
+            if art_structWatchConn then
+                pcall(function() art_structWatchConn:Disconnect() end)
+                art_structWatchConn = nil
+            end
+            for _, conns in pairs(art_conns) do
+                pcall(function() conns.attr:Disconnect() end)
+                pcall(function() conns.ancestry:Disconnect() end)
+            end
+            art_conns = {}
+            art_lastReset = {}
+            art_generation = {}
+        end
+    end
+
+    --------------------------------------------------------------------
     -- UI WIRING
     --------------------------------------------------------------------
 
@@ -1837,6 +2011,15 @@ return function(C, R, UI)
         end
     })
 
+    CombatTab:Toggle({
+        Title = "Auto Reset Traps",
+        Value = C.State.Toggles.AutoResetTraps or false,
+        Callback = function(on)
+            C.State.Toggles.AutoResetTraps = on
+            if on then AutoResetTraps.Start() else AutoResetTraps.Stop() end
+        end
+    })
+
     CombatTab:Slider({
         Title = "Distance",
         Value = { Min = 0, Max = 200, Default = 75 },
@@ -1876,11 +2059,7 @@ return function(C, R, UI)
         Value = C.State.Toggles.DrawAuraCircle or false,
         Callback = function(on)
             C.State.Toggles.DrawAuraCircle = on
-            if on then
-                auraVis:start()
-            else
-                auraVis:stop()
-            end
+            if on then auraVis:start() else auraVis:stop() end
         end
     })
 
@@ -1925,6 +2104,7 @@ return function(C, R, UI)
         pcall(function() C.State.Toggles.CharacterAura = false end)
         pcall(function() C.State.Toggles.SmallTreeAura = false end)
         pcall(function() C.State.Toggles.BigTreeAura = false end)
+        pcall(function() C.State.Toggles.AutoResetTraps = false end)
         pcall(function() C.State.Toggles.TrapAura = false end)
         pcall(function() C.State.Toggles.TrapManualControls = false end)
         pcall(function() C.State.Toggles.DrawAuraCircle = false end)
@@ -1932,6 +2112,7 @@ return function(C, R, UI)
         pcall(function() CharacterAura.Stop() end)
         pcall(function() SmallTreeAura.Stop() end)
         pcall(function() BigTreeAura.Stop() end)
+        pcall(function() AutoResetTraps.Stop() end)
         pcall(function() TrapAura.Stop() end)
 
         pcall(function() TrapAura.DestroyPanel() end)
@@ -1941,6 +2122,7 @@ return function(C, R, UI)
 
     if C.State.Toggles.SmallTreeAura then SmallTreeAura.Start() end
     if C.State.Toggles.BigTreeAura then BigTreeAura.Start() end
+    if C.State.Toggles.AutoResetTraps then AutoResetTraps.Start() end
     if C.State.Toggles.TrapAura then TrapAura.Start() end
     if C.State.Toggles.CharacterAura then CharacterAura.Start() end
     if C.State.Toggles.TrapManualControls then TrapAura.CreatePanel() end
