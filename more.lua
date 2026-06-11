@@ -1917,6 +1917,50 @@ return function(C, R, UI)
                 return true
             end
 
+            local function scrapIsForestFragment(m)
+                return m and m.Name == "Gem of the Forest Fragment"
+            end
+
+            local function scrapperFragmentDropCF()
+                local map  = WS:FindFirstChild("Map")
+                local camp = map and map:FindFirstChild("Campground")
+                local scr  = camp and camp:FindFirstChild("Scrapper")
+                if not scr then return nil end
+                local mp = mainPart(scr)
+                local cf = (mp and mp.CFrame) or (scr:IsA("Model") and scr:GetPivot()) or nil
+                if not cf then return nil end
+                return CFrame.new(cf.Position + Vector3.new(8, 5, 0))
+            end
+
+            local function scrapDropForestFragment(m)
+                if not (m and m.Parent) then return false end
+                scrapSevereExternalWelds(m)
+                local r = scrapGetRemotes()
+                local started = scrapSafeStartDrag(r, m)
+                if started then scrapDragStarted[m] = true end
+                Run.Heartbeat:Wait()
+                task.wait(DRAG_SETTLE)
+                local destCF = scrapperFragmentDropCF()
+                if not destCF then scrapStopIfDragging(r, m); return false end
+                local snap = scrapSetCollide(m, false)
+                scrapZeroAssembly(m)
+                if m:IsA("Model") then
+                    m:PivotTo(destCF)
+                else
+                    local p = mainPart(m)
+                    if p then p.CFrame = destCF end
+                end
+                scrapSetCollide(m, true, snap)
+                scrapStopIfDragging(r, m)
+                for _, p in ipairs(scrapGetAllParts(m)) do
+                    p.Anchored = false
+                    p.AssemblyLinearVelocity  = Vector3.new()
+                    p.AssemblyAngularVelocity = Vector3.new()
+                end
+                scrapRefreshPrompts(m)
+                return true
+            end
+
             local function scrapDropAtScrapper(m)
                 if not (m and m.Parent) then return false end
                 if not scrapGetChute() then return false end
@@ -2037,7 +2081,11 @@ return function(C, R, UI)
                     if m and m.Parent then
                         active += 1
                         task.spawn(function()
-                            scrapDropAtScrapper(m)
+                            if scrapIsForestFragment(m) then
+                                scrapDropForestFragment(m)
+                            else
+                                scrapDropAtScrapper(m)
+                            end
                             active -= 1
                         end)
                     end
@@ -2076,7 +2124,11 @@ return function(C, R, UI)
                             task.spawn(function()
                                 task.wait(0.2)
                                 if not (inst and inst.Parent) then return end
-                                scrapDropAtScrapper(inst)
+                                if scrapIsForestFragment(inst) then
+                                    scrapDropForestFragment(inst)
+                                else
+                                    scrapDropAtScrapper(inst)
+                                end
                                 task.delay(30, function() descSeen[inst] = nil end)
                             end)
                         end)
