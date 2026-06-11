@@ -822,16 +822,9 @@ return function(C, R, UI)
             local out = {}
             if not origin or not radius or radius <= 0 then return out end
 
-            local roots = { WS, RS:FindFirstChild("Assets"), RS:FindFirstChild("CutsceneSets") }
-            local includeRoots = {}
-            for _, r in ipairs(roots) do
-                if r then includeRoots[#includeRoots + 1] = r end
-            end
-            if #includeRoots == 0 then includeRoots[1] = WS end
-
             local params = OverlapParams.new()
             params.FilterType = Enum.RaycastFilterType.Include
-            params.FilterDescendantsInstances = includeRoots
+            params.FilterDescendantsInstances = { WS }
 
             local parts = WS:GetPartBoundsInRadius(origin, radius, params)
             if not parts then return out end
@@ -1203,16 +1196,9 @@ return function(C, R, UI)
             local out = {}
             if not origin or not radius or radius <= 0 then return out end
 
-            local roots = { WS, RS:FindFirstChild("Assets"), RS:FindFirstChild("CutsceneSets") }
-            local includeRoots = {}
-            for _, r in ipairs(roots) do
-                if r then includeRoots[#includeRoots + 1] = r end
-            end
-            if #includeRoots == 0 then includeRoots[1] = WS end
-
             local params = OverlapParams.new()
             params.FilterType = Enum.RaycastFilterType.Include
-            params.FilterDescendantsInstances = includeRoots
+            params.FilterDescendantsInstances = { WS }
 
             local parts = WS:GetPartBoundsInRadius(origin, radius, params)
             if not parts then return out end
@@ -1387,8 +1373,8 @@ return function(C, R, UI)
         local trapCache, trapCacheAt = nil, 0
         local trapCooldownSec = 2.0
         local charCooldownSec = 2.0
-        local lastTrapUse = {}
-        local lastCharSnap = {}
+        local lastTrapUse = setmetatable({}, { __mode = "k" })
+        local lastCharSnap = setmetatable({}, { __mode = "k" })
 
         local function ta_trapsRoot()
             return WS:FindFirstChild("Structures") or WS:FindFirstChild("structures") or WS
@@ -1553,8 +1539,11 @@ return function(C, R, UI)
                     local t = (i - 1) / n * math.pi * 2
                     local offset = Vector3.new(math.cos(t) * radius, height, math.sin(t) * radius)
                     local pos = center + offset
-                    local cf = CFrame.new(pos, center)
-                    ta_moveTrapToCF(trap, cf, false)
+                    local tp = ta_getTrapPart(trap)
+                    if not tp or (tp.Position - pos).Magnitude > 1.5 then
+                        local cf = CFrame.new(pos, center)
+                        ta_moveTrapToCF(trap, cf, false)
+                    end
                 end
             end
         end
@@ -1796,7 +1785,7 @@ return function(C, R, UI)
         local art_structWatchConn = nil
         local art_lastReset = {}
         local art_generation = {}
-        local ART_COOLDOWN = 1.2
+        local ART_COOLDOWN = 2.0
         local ART_COOLDOWN_BACKOFF = 2.0
         local ART_SNAP_BACKOFF_THRESHOLD = 5
 
