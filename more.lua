@@ -1761,6 +1761,13 @@ return function(C, R, UI)
             local SCRAP_BRING_INTERVAL = 120
             local DRAG_SETTLE          = 0.06
             local scrapDragStarted     = setmetatable({}, { __mode = "k" })
+            local SCRAP_CHUTE_ABOVE        = 12
+            local SCRAP_DROP_TIMEOUT_S     = 2.25
+            local SCRAP_CONFIRM_S          = 2.0
+            local SCRAP_RETRY_PUSH_DOWN_VY = -80
+            local SCRAP_MAX_DROP_ATTEMPTS  = 6
+            local SCRAP_FAIL_BACKOFF_S     = 300
+            local scrapFailedAt            = setmetatable({}, { __mode = "k" })
 
             local function scrapGetRemotes()
                 refreshRoots()
@@ -1854,55 +1861,164 @@ return function(C, R, UI)
                 end
             end
 
-            local function scrapperDropCF()
-                local map  = WS:FindFirstChild("Map")
+            local scrapCachedChute = nil
+
+            local function scrapGetChute()
+                if scrapCachedChute and scrapCachedChute.Parent then
+                    return scrapCachedChute
+                end
+                scrapCachedChute = nil
+                local map = WS:FindFirstChild("Map")
                 local camp = map and map:FindFirstChild("Campground")
-                local scr  = camp and camp:FindFirstChild("Scrapper")
+                local scr = camp and camp:FindFirstChild("Scrapper")
                 if not scr then return nil end
-                local mp = mainPart(scr)
-                local cf = (mp and mp.CFrame) or (scr:IsA("Model") and scr:GetPivot()) or nil
-                if not cf then return nil end
-                return CFrame.new(cf.Position + Vector3.new(0, 5, 0))
+                for _, child in ipairs(scr:GetDescendants()) do
+                    if child.Name == "Chute" and child:IsA("BasePart") and child.Material == Enum.Material.DiamondPlate then
+                        scrapCachedChute = child
+                        return child
+                    end
+                end
+                return nil
             end
 
-            local function scrapperFragmentDropCF()
-                local map  = WS:FindFirstChild("Map")
-                local camp = map and map:FindFirstChild("Campground")
-                local scr  = camp and camp:FindFirstChild("Scrapper")
-                if not scr then return nil end
-                local mp = mainPart(scr)
-                local cf = (mp and mp.CFrame) or (scr:IsA("Model") and scr:GetPivot()) or nil
-                if not cf then return nil end
-                return CFrame.new(cf.Position + Vector3.new(8, 5, 0))
+            local function scrapRandomPosInChute()
+                local chute = scrapGetChute()
+                if not chute then return nil end
+                local cf = chute.CFrame
+                local size = chute.Size
+                local rx = (math.random() - 0.5) * size.X * 0.8
+                local rz = (math.random() - 0.5) * size.Z * 0.8
+                local worldOffset = cf:VectorToWorldSpace(Vector3.new(rx, 0, rz))
+                return Vector3.new(
+                    chute.Position.X + worldOffset.X,
+                    chute.Position.Y + SCRAP_CHUTE_ABOVE,
+                    chute.Position.Z + worldOffset.Z
+                )
             end
 
-            local function scrapDropAtScrapper(m, useFragmentOffset)
+            local function scrapInChuteBounds(m)
+                local chute = scrapGetChute()
+                if not chute then return false end
+                local mp = mainPart(m)
+                if not mp then return false end
+                local halfX = chute.Size.X * 0.5 + 1.0
+                local halfZ = chute.Size.Z * 0.5 + 1.0
+                local localP = chute.CFrame:PointToObjectSpace(mp.Position)
+                return math.abs(localP.X) <= halfX and math.abs(localP.Z) <= halfZ and mp.Position.Y <= chute.Position.Y + 3
+            end
+
+            local function scrapOnFailBackoff(m)
+                local t = scrapFailedAt[m]
+                if not t then return false end
+                if (os.clock() - t) >= SCRAP_FAIL_BACKOFF_S then
+                    scrapFailedAt[m] = nil
+                    return false
+                end
+                return true
+            end
+
+            local function scrapDropAtScrapper(m)
                 if not (m and m.Parent) then return false end
+                if not scrapGetChute() then return false end
+
+                local items = itemsFolder()
+                local function scrapConsumed()
+                    if not (m and m.Parent) then return true end
+                    if items and not m:IsDescendantOf(items) then return true end
+                    return false
+                end
+
                 scrapSevereExternalWelds(m)
                 local r = scrapGetRemotes()
                 local started = scrapSafeStartDrag(r, m)
                 if started then scrapDragStarted[m] = true end
                 Run.Heartbeat:Wait()
                 task.wait(DRAG_SETTLE)
-                local destCF = useFragmentOffset and scrapperFragmentDropCF() or scrapperDropCF()
-                if not destCF then scrapStopIfDragging(r, m); return false end
+
                 local snap = scrapSetCollide(m, false)
-                scrapZeroAssembly(m)
-                if m:IsA("Model") then
-                    m:PivotTo(destCF)
+                local delivered = false
+
+                for attempt = 1, SCRAP_MAX_DROP_ATTEMPTS do
+                    if scrapConsumed() then
+                        delivered = true
+                        break
+                    end
+
+                    local dropPos = scrapRandomPosInChute()
+                    if not dropPos then break end
+
+                    scrapZeroAssembly(m)
+                    if m:IsA("Model") then
+                        m:PivotTo(CFrame.new(dropPos))
+                    else
+                        local p = mainPart(m)
+                        if p then p.CFrame = CFrame.new(dropPos) end
+                    end
+
+                    if attempt == 1 then
+                        scrapSetCollide(m, true, snap)
+                        for _, p in ipairs(scrapGetAllParts(m)) do
+                            p.Anchored = false
+                            p.AssemblyLinearVelocity  = Vector3.new()
+                            p.AssemblyAngularVelocity = Vector3.new()
+                        end
+                    else
+                        for _, p in ipairs(scrapGetAllParts(m)) do
+                            p.Anchored = false
+                            p.CanCollide = false
+                            p.AssemblyLinearVelocity  = Vector3.new(0, SCRAP_RETRY_PUSH_DOWN_VY, 0)
+                            p.AssemblyAngularVelocity = Vector3.new()
+                        end
+                    end
+
+                    local landed = false
+                    local t0 = os.clock()
+                    while os.clock() - t0 < SCRAP_DROP_TIMEOUT_S do
+                        if scrapConsumed() then
+                            delivered = true
+                            break
+                        end
+                        if scrapInChuteBounds(m) then
+                            landed = true
+                            break
+                        end
+                        Run.Heartbeat:Wait()
+                    end
+                    if delivered then break end
+
+                    if landed then
+                        local t1 = os.clock()
+                        while os.clock() - t1 < SCRAP_CONFIRM_S do
+                            if scrapConsumed() then
+                                delivered = true
+                                break
+                            end
+                            Run.Heartbeat:Wait()
+                        end
+                        if delivered then break end
+                    end
+                end
+
+                if m and m.Parent then
+                    scrapSetCollide(m, true, snap)
+                    scrapStopIfDragging(r, m)
+                    for _, p in ipairs(scrapGetAllParts(m)) do
+                        p.Anchored = false
+                        p.AssemblyLinearVelocity  = Vector3.new()
+                        p.AssemblyAngularVelocity = Vector3.new()
+                    end
+                    scrapRefreshPrompts(m)
                 else
-                    local p = mainPart(m)
-                    if p then p.CFrame = destCF end
+                    scrapStopIfDragging(r, m)
                 end
-                scrapSetCollide(m, true, snap)
-                scrapStopIfDragging(r, m)
-                for _, p in ipairs(scrapGetAllParts(m)) do
-                    p.Anchored = false
-                    p.AssemblyLinearVelocity  = Vector3.new()
-                    p.AssemblyAngularVelocity = Vector3.new()
+
+                if delivered then
+                    scrapFailedAt[m] = nil
+                elseif m and m.Parent then
+                    scrapFailedAt[m] = os.clock()
                 end
-                scrapRefreshPrompts(m)
-                return true
+
+                return delivered
             end
 
             local function scrapRunPass(selectedSet)
@@ -1910,7 +2026,7 @@ return function(C, R, UI)
                 if not items then return end
                 local queue, seen = {}, {}
                 for _, m in ipairs(items:GetChildren()) do
-                    if m:IsA("Model") and not seen[m] and selectedSet[m.Name] then
+                    if m:IsA("Model") and not seen[m] and selectedSet[m.Name] and not scrapOnFailBackoff(m) then
                         seen[m] = true
                         queue[#queue+1] = m
                     end
@@ -1921,7 +2037,7 @@ return function(C, R, UI)
                     if m and m.Parent then
                         active += 1
                         task.spawn(function()
-                            scrapDropAtScrapper(m, m.Name == "Gem of the Forest Fragment")
+                            scrapDropAtScrapper(m)
                             active -= 1
                         end)
                     end
@@ -1955,11 +2071,12 @@ return function(C, R, UI)
                             if not inst:IsA("Model") then return end
                             if descSeen[inst] then return end
                             if not selectedSet[inst.Name] then return end
+                            if scrapOnFailBackoff(inst) then return end
                             descSeen[inst] = true
                             task.spawn(function()
                                 task.wait(0.2)
                                 if not (inst and inst.Parent) then return end
-                                scrapDropAtScrapper(inst, inst.Name == "Gem of the Forest Fragment")
+                                scrapDropAtScrapper(inst)
                                 task.delay(30, function() descSeen[inst] = nil end)
                             end)
                         end)
