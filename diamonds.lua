@@ -56,7 +56,7 @@ return function(C, R, UI)
     local FIRE_COOLDOWN_S    = 0.35
     local MAX_FIRES_PER_SCAN = 8
 
-    local INPUT_BASE_INTERVAL_S = 5
+    local INPUT_BASE_INTERVAL_S = 120
     local AUTO_AFK_IDLE_S       = 300
 
     local function now() return os.clock() end
