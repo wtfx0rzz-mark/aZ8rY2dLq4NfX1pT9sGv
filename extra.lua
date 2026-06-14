@@ -339,6 +339,14 @@ return function(C, R, UI)
         return nil
     end
 
+    local function resolveStopDragRemote()
+        return getRemote("StopDraggingItem", "RequestStopDraggingItem", "StopDraggingItemRemote")
+    end
+
+    local function resolveStartDragRemote()
+        return getRemote("RequestStartDraggingItem", "StartDraggingItem")
+    end
+
     if _G.__AutoChestExtra and type(_G.__AutoChestExtra.Destroy) == "function" then
         pcall(function() _G.__AutoChestExtra.Destroy() end)
     end
@@ -390,8 +398,8 @@ return function(C, R, UI)
     local RF_Start = nil
     local RF_Stop = nil
     local function refreshDragRemotes()
-        RF_Start = getRemote("RequestStartDraggingItem","StartDraggingItem")
-        RF_Stop  = getRemote("RequestStopDraggingItem","StopDraggingItem","StopDraggingItemRemote")
+        RF_Start = resolveStartDragRemote()
+        RF_Stop  = resolveStopDragRemote()
     end
     refreshDragRemotes()
 
@@ -667,11 +675,15 @@ return function(C, R, UI)
     local DragActive = {}
 
     local function safeStopDrag(m)
+        refreshDragRemotes()
         if not (m and RF_Stop) then return false end
         return pcall(function() RF_Stop:FireServer(m) end)
     end
 
     local function finallyStopDrag(m)
+        safeStopDrag(m)
+        RunService.Heartbeat:Wait()
+        safeStopDrag(m)
         task.delay(0.05, function() pcall(safeStopDrag, m) end)
         task.delay(0.20, function() pcall(safeStopDrag, m) end)
         task.delay(0.45, function() pcall(safeStopDrag, m) end)
@@ -828,13 +840,23 @@ return function(C, R, UI)
 
     local function releaseAllCaptured()
         ensureHoverOff()
+        refreshDragRemotes()
         for i = #CapturedList, 1, -1 do
             local m = CapturedList[i]
             if m and m.Parent then
                 local snap = CapturedSnaps[m]
                 setAnchoredAny(m, false)
                 setNoCollideAny(m, false, snap)
-                finallyStopDrag(m)
+                if RF_Stop then
+                    pcall(function() RF_Stop:FireServer(m) end)
+                end
+                RunService.Heartbeat:Wait()
+                if RF_Stop then
+                    pcall(function() RF_Stop:FireServer(m) end)
+                end
+                task.delay(0.05, function() pcall(safeStopDrag, m) end)
+                task.delay(0.20, function() pcall(safeStopDrag, m) end)
+                task.delay(0.45, function() pcall(safeStopDrag, m) end)
                 dragUntrack(m)
             end
             CapturedSet[m] = nil
@@ -851,12 +873,6 @@ return function(C, R, UI)
         local ok, v = pcall(function() return chestModel:GetAttribute(UID_OPEN_KEY) end)
         return ok and v == true
     end
-
-    local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN
-    local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS
-    local CHEST_COLLECT_WINDOW_SECONDS = CHEST_COLLECT_WINDOW_SECONDS
-    local CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT = CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT
-    local CHEST_RETRY_WAIT_SECONDS = CHEST_RETRY_WAIT_SECONDS
 
     local firePromptLastAt = setmetatable({}, { __mode = "k" })
     local FIRE_PROMPT_COOLDOWN = 0.25
