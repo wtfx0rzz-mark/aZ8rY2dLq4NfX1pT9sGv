@@ -906,6 +906,7 @@ return function(C, R, UI)
             local soonest = math.huge
 
             for _, mdl in ipairs(targetModels) do
+                if not SmallTreeAura.running then return end
                 if mdl and mdl.Parent then
                     local last = TreeLastHitAt[mdl] or 0
                     local elapsed = now - last
@@ -1269,6 +1270,7 @@ return function(C, R, UI)
             local soonest = math.huge
 
             for _, mdl in ipairs(targetModels) do
+                if not BigTreeAura.running then return end
                 if mdl and mdl.Parent then
                     local last = TreeLastHitAt[mdl] or 0
                     local elapsed = now - last
