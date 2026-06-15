@@ -665,79 +665,51 @@ return function(C, R, UI)
         })
         task.defer(enableLostChild)
 
-        local godOn = false
-        local godHB = nil
-        local godLastHealth = nil
-        local godRecentUntil = 0
-        local godHealthConn = nil
-        local godCharConn = nil
-        local GOD_POST_DAMAGE_WINDOW = 8.0
-        local GOD_POST_DAMAGE_INTERVAL = 1.5
-        local GOD_IDLE_INTERVAL = 15.0
+        local projBlockOn = false
+        local projHooked = false
+        local projOldNamecall = nil
 
-        local function fireGod()
-            local f = RS:FindFirstChild("RemoteEvents")
-            local ev = f and f:FindFirstChild("DamagePlayer")
-            if ev and ev:IsA("RemoteEvent") then
-                pcall(function() ev:FireServer(-math.huge) end)
+        local function enableProjBlock()
+            if projBlockOn then return end
+            projBlockOn = true
+            if projHooked then return end
+
+            local ok = pcall(function()
+                local mt = getrawmetatable(game)
+                setreadonly(mt, false)
+                projOldNamecall = mt.__namecall
+                mt.__namecall = newcclosure(function(self, ...)
+                    local method = getnamecallmethod()
+                    if projBlockOn and method == "FireServer" and self.Name == "NPCProjectileDamagePlayer" then
+                        local a1 = (...)
+                        if a1 == lp.Character then
+                            return
+                        end
+                    end
+                    return projOldNamecall(self, ...)
+                end)
+                setreadonly(mt, true)
+            end)
+
+            if ok then
+                projHooked = true
+            else
+                projBlockOn = false
+                warn("[Auto] projectile block hook unavailable in this executor")
             end
         end
 
-        local function bindGodToHumanoid()
-            if godHealthConn then godHealthConn:Disconnect(); godHealthConn = nil end
-            local h = hum()
-            if not h then return end
-            godLastHealth = h.Health
-            godHealthConn = h.HealthChanged:Connect(function(newHealth)
-                if not godOn then return end
-                if typeof(newHealth) ~= "number" then return end
-                local last = godLastHealth
-                godLastHealth = newHealth
-                if last ~= nil and newHealth < last then
-                    godRecentUntil = os.clock() + GOD_POST_DAMAGE_WINDOW
-                    fireGod()
-                    task.defer(fireGod)
-                end
-            end)
-        end
-
-        local function enableGod()
-            if godOn then return end
-            godOn = true
-            bindGodToHumanoid()
-            if godCharConn then godCharConn:Disconnect(); godCharConn = nil end
-            godCharConn = lp.CharacterAdded:Connect(function()
-                task.wait(0.15)
-                if godOn then bindGodToHumanoid() end
-            end)
-            if godHB then godHB:Disconnect() end
-            local acc = 0
-            godHB = Run.Heartbeat:Connect(function(dt)
-                if not godOn then return end
-                acc += dt
-                local now = os.clock()
-                local interval = (now <= godRecentUntil) and GOD_POST_DAMAGE_INTERVAL or GOD_IDLE_INTERVAL
-                if acc >= interval then
-                    acc = 0
-                    fireGod()
-                end
-            end)
-        end
-        local function disableGod()
-            godOn = false
-            if godHB then godHB:Disconnect() godHB = nil end
-            if godHealthConn then godHealthConn:Disconnect() godHealthConn = nil end
-            if godCharConn then godCharConn:Disconnect() godCharConn = nil end
-            godLastHealth = nil
-            godRecentUntil = 0
+        local function disableProjBlock()
+            projBlockOn = false
         end
         tab:Toggle({
-            Title = "Godmode",
-            Value = false,
+            Title = "Block Projectile Damage",
+            Value = true,
             Callback = function(state)
-                if state then enableGod() else disableGod() end
+                if state then enableProjBlock() else disableProjBlock() end
             end
         })
+        task.defer(enableProjBlock)
 
         local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.2
         local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
@@ -1692,10 +1664,6 @@ return function(C, R, UI)
             pcall(function() WS.StreamingPauseMode = Enum.StreamingPauseMode.Disabled end)
             if coinOn and not coinConn then enableCoin() end
             if chestFinderOn and enableChestFinder then enableChestFinder() end
-            if godOn then
-                task.wait(0.15)
-                bindGodToHumanoid()
-            end
             if autoLostEnabled then
                 task.wait(0.15)
                 for _,d in ipairs(WS:GetDescendants()) do trackLostModel(d) end
