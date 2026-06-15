@@ -733,12 +733,11 @@ return function(C, R, UI)
         end
         tab:Toggle({
             Title = "Godmode",
-            Value = true,
+            Value = false,
             Callback = function(state)
                 if state then enableGod() else disableGod() end
             end
         })
-        task.defer(enableGod)
 
         local INSTANT_HOLD, TRIGGER_COOLDOWN = 0.2, 0.2
         local EXCLUDE_NAME_SUBSTR = { "door", "closet", "gate", "hatch" }
