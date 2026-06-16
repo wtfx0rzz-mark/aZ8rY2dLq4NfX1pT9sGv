@@ -1224,10 +1224,224 @@ return function(C, R, UI)
         cfStartLoop()
     end
 
+    -- ============================================================
+    -- AUTO EAT
+    -- ============================================================
+
+    local AE_HUNGER_THRESHOLD = 50
+    local AE_HUNGER_FULL      = 100
+    local AE_WORLD_RADIUS     = 75
+    local AE_POST_EAT_WAIT    = 0.35
+    local AE_EQUIP_WAIT       = 0.5
+    local AE_POLL_INTERVAL    = 1
+    local AE_CROCKPOT_PERIOD  = 3.0
+
+    local aeRunning   = false
+    local aeThread    = nil
+
+    local TempStorage     = RS:WaitForChild("TempStorage")
+    local EquipItemHandle = RS:WaitForChild("RemoteEvents"):WaitForChild("EquipItemHandle")
+    local RequestConsumeItem = RS:WaitForChild("RemoteEvents"):WaitForChild("RequestConsumeItem")
+
+    local _aeCrockCache = { t = 0, parts = {} }
+
+    local function aeRefreshCrockpots()
+        if (os.clock() - (_aeCrockCache.t or 0)) < AE_CROCKPOT_PERIOD then return end
+        _aeCrockCache.t = os.clock()
+        _aeCrockCache.parts = {}
+        local seen = {}
+        local function scan(root)
+            if not root then return end
+            for _, d in ipairs(root:GetDescendants()) do
+                if d:IsA("Model") then
+                    local n = (d.Name or ""):lower()
+                    if n == "crockpot" or n == "crock pot" or n:find("crockpot", 1, true) or (n:find("crock", 1, true) and n:find("pot", 1, true)) then
+                        local mp = mainPart(d)
+                        if mp and mp.Parent and not seen[mp] then
+                            seen[mp] = true
+                            _aeCrockCache.parts[#_aeCrockCache.parts + 1] = mp
+                            if #_aeCrockCache.parts >= 8 then return end
+                        end
+                    end
+                end
+            end
+        end
+        scan(WS:FindFirstChild("Structures"))
+        if #_aeCrockCache.parts == 0 then scan(WS) end
+    end
+
+    local function aeIsWeldedOutside(m)
+        if not (m and m.Parent) then return false end
+        for _, d in ipairs(m:GetDescendants()) do
+            if d:IsA("WeldConstraint") then
+                local p0, p1 = d.Part0, d.Part1
+                if (p0 and not p0:IsDescendantOf(m)) or (p1 and not p1:IsDescendantOf(m)) then return true end
+            elseif d:IsA("JointInstance") then
+                local p0, p1 = d.Part0, d.Part1
+                if (p0 and not p0:IsDescendantOf(m)) or (p1 and not p1:IsDescendantOf(m)) then return true end
+            elseif d:IsA("Constraint") then
+                local a0, a1 = d.Attachment0, d.Attachment1
+                if (a0 and not a0:IsDescendantOf(m)) or (a1 and not a1:IsDescendantOf(m)) then return true end
+            end
+        end
+        return false
+    end
+
+    local function aeIsOnCrockpot(model)
+        if not (model and model.Parent) then return false end
+        local smp = mainPart(model)
+        if not smp then return false end
+        aeRefreshCrockpots()
+        if #_aeCrockCache.parts == 0 then return false end
+        local p = smp.Position
+        for _, cp in ipairs(_aeCrockCache.parts) do
+            if cp and cp.Parent then
+                local q = cp.Position
+                local dxz = (Vector3.new(p.X, 0, p.Z) - Vector3.new(q.X, 0, q.Z)).Magnitude
+                local dy = p.Y - q.Y
+                if dxz <= 2.2 and dy >= 0 and dy <= 5.0 then return true end
+            end
+        end
+        return false
+    end
+
+    local function aeGetHunger()
+        local ok, v = pcall(function()
+            return lp.PlayerGui.Interface.StatBars.HungerBar.Bar.Size.X.Scale * 100
+        end)
+        return ok and tonumber(v) or 100
+    end
+
+    local function aeIsFood(item)
+        if not item or not item.Parent then return false end
+        if item:GetAttribute("ToolName") == "Consumable" then return true end
+        if item:GetAttribute("PreparedMeal") == true then return true end
+        if tostring(item.Name):lower():find("cooked", 1, true) then return true end
+        return false
+    end
+
+    local function aeGetBestInventoryFood()
+        local inv = lp:FindFirstChild("Inventory")
+        if not inv then return nil end
+        local best, bestRestore = nil, -1
+        for _, item in ipairs(inv:GetChildren()) do
+            if item:IsA("Model") and aeIsFood(item) then
+                local restore = tonumber(item:GetAttribute("RestoreHunger")) or 0
+                if restore > bestRestore then
+                    best = item
+                    bestRestore = restore
+                end
+            end
+        end
+        return best
+    end
+
+    local function aeGetClosestWorldFood()
+        local ch = lp.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return nil end
+        local items = WS:FindFirstChild("Items")
+        if not items then return nil end
+        local best, bestDist = nil, math.huge
+        for _, item in ipairs(items:GetChildren()) do
+            if item:IsA("Model") and aeIsFood(item) and not aeIsWeldedOutside(item) and not aeIsOnCrockpot(item) then
+                local mp = mainPart(item)
+                if mp then
+                    local dist = (mp.Position - root.Position).Magnitude
+                    if dist <= AE_WORLD_RADIUS and dist < bestDist then
+                        best = item
+                        bestDist = dist
+                    end
+                end
+            end
+        end
+        return best
+    end
+
+    local function aeEatInventoryItem(item)
+        if not item or not item.Parent then return false end
+        local name = item.Name
+        pcall(function()
+            EquipItemHandle:FireServer("FireAllClients", item)
+        end)
+        task.wait(AE_EQUIP_WAIT)
+        local consumeTarget = TempStorage:FindFirstChild(name) or item
+        local ok = pcall(function()
+            RequestConsumeItem:InvokeServer(consumeTarget)
+        end)
+        task.wait(AE_POST_EAT_WAIT)
+        return ok
+    end
+
+    local function aeEatWorldItem(item)
+        if not item or not item.Parent then return false end
+        local tempItem = TempStorage:FindFirstChild(item.Name)
+        if not tempItem then return false end
+        local ok = pcall(function()
+            RequestConsumeItem:InvokeServer(tempItem)
+        end)
+        task.wait(AE_POST_EAT_WAIT)
+        return ok
+    end
+
+    local function aeEatOnce()
+        local inv = aeGetBestInventoryFood()
+        if inv then return aeEatInventoryItem(inv) end
+        local world = aeGetClosestWorldFood()
+        if world then return aeEatWorldItem(world) end
+        return false
+    end
+
+    local function aeWorker()
+        while aeRunning do
+            local hunger = aeGetHunger()
+            if hunger <= AE_HUNGER_THRESHOLD then
+                while aeRunning and aeGetHunger() < AE_HUNGER_FULL do
+                    local ok = aeEatOnce()
+                    if not ok then break end
+                    task.wait(AE_POST_EAT_WAIT)
+                end
+            end
+            task.wait(AE_POLL_INTERVAL)
+        end
+    end
+
+    local function aeStop()
+        aeRunning = false
+        if aeThread then
+            pcall(function() task.cancel(aeThread) end)
+            aeThread = nil
+        end
+    end
+
+    local function aeStart()
+        if aeRunning then return end
+        aeRunning = true
+        aeThread = task.spawn(aeWorker)
+    end
+
+    tab:Section({ Title = "Auto Eat" })
+
+    tab:Toggle({
+        Title    = "Auto Eat",
+        Default  = C.State.AutoEatEnabled and true or false,
+        Callback = function(state)
+            C.State.AutoEatEnabled = state and true or false
+            if state then aeStart() else aeStop() end
+        end
+    })
+
+    if C.State.AutoEatEnabled then
+        aeStart()
+    end
+
+    -- ============================================================
+
     if type(C.RegisterCleanup) == "function" then
         C.RegisterCleanup(function()
             stopLoop()
             cfStopLoop()
+            aeStop()
         end)
     end
 end
