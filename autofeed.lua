@@ -1231,7 +1231,6 @@ return function(C, R, UI)
     local AE_HUNGER_THRESHOLD = 50
     local AE_HUNGER_FULL      = 100
     local AE_WORLD_RADIUS     = 75
-    local AE_POST_EAT_WAIT    = 0.35
     local AE_EQUIP_WAIT       = 0.5
     local AE_POLL_INTERVAL    = 1
     local AE_CROCKPOT_PERIOD  = 3.0
@@ -1313,19 +1312,19 @@ return function(C, R, UI)
     end
 
     local function aeIsFood(item)
-    if not item or not item.Parent then return false end
-    local name = tostring(item.Name)
+        if not item or not item.Parent then return false end
+        local name = tostring(item.Name)
 
-    if name == "Bandage" or name == "MedKit" then return false end
+        if name == "Bandage" or name == "MedKit" then return false end
 
-    local restoreHealth = item:GetAttribute("RestoreHealth")
-    if restoreHealth and tonumber(restoreHealth) and tonumber(restoreHealth) < 0 then return false end
+        local restoreHealth = item:GetAttribute("RestoreHealth")
+        if restoreHealth and tonumber(restoreHealth) and tonumber(restoreHealth) < 0 then return false end
 
-    if item:GetAttribute("ToolName") == "Consumable" then return true end
-    if item:GetAttribute("PreparedMeal") == true then return true end
-    if name:lower():find("cooked", 1, true) then return true end
-    return false
-end
+        if item:GetAttribute("ToolName") == "Consumable" then return true end
+        if item:GetAttribute("PreparedMeal") == true then return true end
+        if name:lower():find("cooked", 1, true) then return true end
+        return false
+    end
 
     local function aeGetBestInventoryFood()
         local inv = lp:FindFirstChild("Inventory")
@@ -1376,49 +1375,39 @@ end
         local ok = pcall(function()
             RequestConsumeItem:InvokeServer(consumeTarget)
         end)
-        task.wait(AE_POST_EAT_WAIT)
         return ok
     end
 
     local function aeEatWorldItem(item)
-    if not item or not item.Parent then return false end
-    local ok = pcall(function()
-        RequestConsumeItem:InvokeServer(item)
-    end)
-    task.wait(AE_POST_EAT_WAIT)
-    return ok
-end
-
-    local function aeEatOnce()
-        local inv = aeGetBestInventoryFood()
-        if inv then return aeEatInventoryItem(inv) end
-        local world = aeGetClosestWorldFood()
-        if world then return aeEatWorldItem(world) end
-        return false
+        if not item or not item.Parent then return false end
+        local ok = pcall(function()
+            RequestConsumeItem:InvokeServer(item)
+        end)
+        return ok
     end
 
-   local function aeWorker()
-    while aeRunning do
-        local hunger = aeGetHunger()
-        if hunger <= AE_HUNGER_THRESHOLD then
-            while aeRunning and aeGetHunger() < AE_HUNGER_FULL do
-                local inv = aeGetBestInventoryFood()
-                if inv then
-                    local ok = aeEatInventoryItem(inv)
-                    if not ok then task.wait(1) end
-                else
-                    local world = aeGetClosestWorldFood()
-                    if world then
-                        aeEatWorldItem(world)
+    local function aeWorker()
+        while aeRunning do
+            local hunger = aeGetHunger()
+            if hunger <= AE_HUNGER_THRESHOLD then
+                while aeRunning and aeGetHunger() < AE_HUNGER_FULL do
+                    local inv = aeGetBestInventoryFood()
+                    if inv then
+                        local ok = aeEatInventoryItem(inv)
+                        if not ok then task.wait(1) end
                     else
-                        task.wait(0.5)
+                        local world = aeGetClosestWorldFood()
+                        if world then
+                            aeEatWorldItem(world)
+                        else
+                            task.wait(0.5)
+                        end
                     end
                 end
             end
+            task.wait(AE_POLL_INTERVAL)
         end
-        task.wait(AE_POLL_INTERVAL)
     end
-end
 
     local function aeStop()
         aeRunning = false
