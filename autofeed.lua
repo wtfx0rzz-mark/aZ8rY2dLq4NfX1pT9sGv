@@ -1465,23 +1465,9 @@ return function(C, R, UI)
     local AH_POST_HEAL_WAIT    = 0.35
 
     local ahRunning    = false
-    local ahThread     = nil
     local ahHealthConn = nil
     local ahCharConn   = nil
     local ahHealing    = false
-
-    local function ahGetHealth()
-        local ch = lp.Character
-        local h = ch and ch:FindFirstChildOfClass("Humanoid")
-        if not h then return 100 end
-        return h.MaxHealth > 0 and (h.Health / h.MaxHealth * 100) or 100
-    end
-
-    local function ahGetHealthRaw()
-        local ch = lp.Character
-        local h = ch and ch:FindFirstChildOfClass("Humanoid")
-        return h and h.Health or 100
-    end
 
     local function ahGetHealItem()
         local inv = lp:FindFirstChild("Inventory")
@@ -1491,8 +1477,8 @@ return function(C, R, UI)
         return nil
     end
 
-    local function ahHeal()
-        if ahHealing then return end
+    local function ahHeal(emergency)
+        if ahHealing and not emergency then return end
         local item = ahGetHealItem()
         if not item or not item.Parent then return end
         ahHealing = true
@@ -1513,9 +1499,9 @@ return function(C, R, UI)
         local h = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
         local maxHP = h and h.MaxHealth or 100
         local pct = (newHealth / maxHP) * 100
-        if newHealth <= AH_INSTANT_FLOOR then return true end
-        if pct <= AH_HEALTH_THRESHOLD then return true end
-        return false
+        if newHealth <= AH_INSTANT_FLOOR then return true, true end
+        if pct <= AH_HEALTH_THRESHOLD then return true, false end
+        return false, false
     end
 
     local function ahBindToHumanoid()
@@ -1526,11 +1512,11 @@ return function(C, R, UI)
         local ch = lp.Character
         local h = ch and ch:FindFirstChildOfClass("Humanoid")
         if not h then return end
-
         ahHealthConn = h.HealthChanged:Connect(function(newHealth)
             if not ahRunning then return end
-            if ahShouldHeal(newHealth) then
-                task.spawn(ahHeal)
+            local should, emergency = ahShouldHeal(newHealth)
+            if should then
+                task.spawn(function() ahHeal(emergency) end)
             end
         end)
     end
@@ -1568,14 +1554,14 @@ return function(C, R, UI)
 
     tab:Toggle({
         Title    = "Auto Heal (MedKit > Bandage)",
-        Default  = C.State.AutoHealEnabled,
+        Value    = (C.State.AutoHealEnabled ~= false),
         Callback = function(state)
             C.State.AutoHealEnabled = state and true or false
             if state then ahStart() else ahStop() end
         end
     })
 
-    if C.State.AutoHealEnabled then ahStart() end
+    if C.State.AutoHealEnabled ~= false then ahStart() end
 
     -- ============================================================
 
