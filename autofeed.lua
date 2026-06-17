@@ -1236,8 +1236,8 @@ return function(C, R, UI)
     local AE_POLL_INTERVAL    = 1
     local AE_CROCKPOT_PERIOD  = 3.0
 
-    local aeRunning   = false
-    local aeThread    = nil
+    local aeRunning = false
+    local aeThread  = nil
 
     local TempStorage        = RS:WaitForChild("TempStorage")
     local EquipItemHandle    = RS:WaitForChild("RemoteEvents"):WaitForChild("EquipItemHandle")
@@ -1371,14 +1371,10 @@ return function(C, R, UI)
     local function aeEatInventoryItem(item)
         if not item or not item.Parent then return false end
         local name = item.Name
-        pcall(function()
-            EquipItemHandle:FireServer("FireAllClients", item)
-        end)
+        pcall(function() EquipItemHandle:FireServer("FireAllClients", item) end)
         task.wait(AE_EQUIP_WAIT)
         local consumeTarget = TempStorage:FindFirstChild(name) or item
-        local ok = pcall(function()
-            RequestConsumeItem:InvokeServer(consumeTarget)
-        end)
+        local ok = pcall(function() RequestConsumeItem:InvokeServer(consumeTarget) end)
         task.wait(AE_POST_EAT_WAIT)
         return ok
     end
@@ -1386,9 +1382,7 @@ return function(C, R, UI)
     local function aeEatWorldItem(item)
         if not item or not item.Parent then return false end
         local target = TempStorage:FindFirstChild(item.Name) or item
-        local ok = pcall(function()
-            RequestConsumeItem:InvokeServer(target)
-        end)
+        local ok = pcall(function() RequestConsumeItem:InvokeServer(target) end)
         task.wait(AE_POST_EAT_WAIT)
         return ok
     end
@@ -1473,14 +1467,10 @@ return function(C, R, UI)
         if not item or not item.Parent then return end
         ahHealing = true
         local name = item.Name
-        pcall(function()
-            EquipItemHandle:FireServer("FireAllClients", item)
-        end)
+        pcall(function() EquipItemHandle:FireServer("FireAllClients", item) end)
         task.wait(AH_EQUIP_WAIT)
         local consumeTarget = TempStorage:FindFirstChild(name) or item
-        pcall(function()
-            RequestConsumeItem:InvokeServer(consumeTarget)
-        end)
+        pcall(function() RequestConsumeItem:InvokeServer(consumeTarget) end)
         task.wait(AH_POST_HEAL_WAIT)
         ahHealing = false
     end
@@ -1577,16 +1567,23 @@ return function(C, R, UI)
         return nil
     end
 
+    local ET_CAMPFIRE_RADIUS  = 80
+    local ET_HYSTERESIS       = 20
+
     local ET_HP_THRESHOLD     = C.State.EmergencyTpHpThreshold or 20
     local ET_HUNGER_THRESHOLD = C.State.EmergencyTpHungerThreshold or 10
+
     local etHpEnabled         = false
     local etHungerEnabled     = false
     local etHpConn            = nil
     local etHungerThread      = nil
-    local etCooldown          = false
     local _etCharConnHp       = nil
 
-    local ET_TP_ABOVE_Y   = 10
+    local etHpArmed           = true
+    local etHungerArmed       = true
+    local etHpRearmThread     = nil
+    local etHungerRearmThread = nil
+
     local ET_GROUND_PAD_Y = 3.5
     local ET_CF_OFFSET    = 6
     local ET_RAY_START    = 200
@@ -1627,8 +1624,6 @@ return function(C, R, UI)
         return CFrame.new(finalPos, center.Position)
     end
 
-    local ET_CAMPFIRE_RADIUS = 80
-
     local function etIsAtCampfire()
         local fire = findCampfire()
         if not fire then return false end
@@ -1638,22 +1633,6 @@ return function(C, R, UI)
         if not root then return false end
         local dxz = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(center.Position.X, 0, center.Position.Z)).Magnitude
         return dxz <= ET_CAMPFIRE_RADIUS
-    end
-    
-
-    local function etTeleportToCampfire()
-        if etCooldown then return end
-        if etIsAtCampfire() then return end
-        local cf = etGetCampfireCF()
-        if not cf then return end
-        etCooldown = true
-        local root = hrp()
-        if root then
-            root.CFrame = cf
-        end
-        task.delay(3, function()
-            etCooldown = false
-        end)
     end
 
     local function etGetHealthPct()
@@ -1670,6 +1649,69 @@ return function(C, R, UI)
         return ok and tonumber(v) or 100
     end
 
+    local function etDoTeleport()
+        local cf = etGetCampfireCF()
+        if not cf then return end
+        local root = hrp()
+        if root then
+            root.CFrame = cf
+        end
+    end
+
+    local function etStartHpRearm()
+        if etHpRearmThread then
+            pcall(function() task.cancel(etHpRearmThread) end)
+            etHpRearmThread = nil
+        end
+        etHpRearmThread = task.spawn(function()
+            while etHpEnabled do
+                local pct = etGetHealthPct()
+                if pct >= (ET_HP_THRESHOLD + ET_HYSTERESIS) then
+                    etHpArmed = true
+                    etHpRearmThread = nil
+                    return
+                end
+                task.wait(1)
+            end
+            etHpRearmThread = nil
+        end)
+    end
+
+    local function etStartHungerRearm()
+        if etHungerRearmThread then
+            pcall(function() task.cancel(etHungerRearmThread) end)
+            etHungerRearmThread = nil
+        end
+        etHungerRearmThread = task.spawn(function()
+            while etHungerEnabled do
+                local pct = etGetHungerPct()
+                if pct >= (ET_HUNGER_THRESHOLD + ET_HYSTERESIS) then
+                    etHungerArmed = true
+                    etHungerRearmThread = nil
+                    return
+                end
+                task.wait(1)
+            end
+            etHungerRearmThread = nil
+        end)
+    end
+
+    local function etTeleportForHp()
+        if not etHpArmed then return end
+        if etIsAtCampfire() then return end
+        etHpArmed = false
+        etDoTeleport()
+        etStartHpRearm()
+    end
+
+    local function etTeleportForHunger()
+        if not etHungerArmed then return end
+        if etIsAtCampfire() then return end
+        etHungerArmed = false
+        etDoTeleport()
+        etStartHungerRearm()
+    end
+
     local function etBindHp()
         if etHpConn then
             pcall(function() etHpConn:Disconnect() end)
@@ -1684,25 +1726,32 @@ return function(C, R, UI)
             if maxHP <= 0 then return end
             local pct = (newHealth / maxHP) * 100
             if pct <= ET_HP_THRESHOLD then
-                task.spawn(etTeleportToCampfire)
+                task.spawn(etTeleportForHp)
             end
         end)
     end
 
     local function etStartHp()
+        etHpArmed = true
         etBindHp()
         if not _etCharConnHp then
             _etCharConnHp = lp.CharacterAdded:Connect(function()
                 task.wait(0.15)
+                etHpArmed = true
                 if etHpEnabled then etBindHp() end
             end)
         end
     end
 
     local function etStopHp()
+        etHpEnabled = false
         if etHpConn then
             pcall(function() etHpConn:Disconnect() end)
             etHpConn = nil
+        end
+        if etHpRearmThread then
+            pcall(function() task.cancel(etHpRearmThread) end)
+            etHpRearmThread = nil
         end
     end
 
@@ -1710,7 +1759,7 @@ return function(C, R, UI)
         while etHungerEnabled do
             local pct = etGetHungerPct()
             if pct <= ET_HUNGER_THRESHOLD then
-                task.spawn(etTeleportToCampfire)
+                task.spawn(etTeleportForHunger)
             end
             task.wait(1)
         end
@@ -1721,6 +1770,7 @@ return function(C, R, UI)
             pcall(function() task.cancel(etHungerThread) end)
             etHungerThread = nil
         end
+        etHungerArmed = true
         etHungerEnabled = true
         etHungerThread = task.spawn(etHungerWorker)
     end
@@ -1730,6 +1780,10 @@ return function(C, R, UI)
         if etHungerThread then
             pcall(function() task.cancel(etHungerThread) end)
             etHungerThread = nil
+        end
+        if etHungerRearmThread then
+            pcall(function() task.cancel(etHungerRearmThread) end)
+            etHungerRearmThread = nil
         end
     end
 
@@ -1789,6 +1843,10 @@ return function(C, R, UI)
             ahStop()
             etStopHp()
             etStopHunger()
+            if _etCharConnHp then
+                pcall(function() _etCharConnHp:Disconnect() end)
+                _etCharConnHp = nil
+            end
         end)
     end
 end
