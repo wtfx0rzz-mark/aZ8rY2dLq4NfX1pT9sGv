@@ -30,10 +30,10 @@ return function(C, R, UI)
     local FINAL_DROP_HEIGHT = 4.0
 
     local PER_ITEM_ACTIVE_LIMIT = {
-        ["Biofuel"]      = 8,
-        ["Coal"]         = 4,
+        ["Biofuel"]       = 8,
+        ["Coal"]          = 4,
         ["Fuel Canister"] = 2,
-        ["Oil Barrel"]   = 1
+        ["Oil Barrel"]    = 1
     }
 
     local FUEL_PRIORITY = {
@@ -667,8 +667,8 @@ return function(C, R, UI)
     tab:Section({ Title = "Generator Auto Feed" })
 
     tab:Toggle({
-        Title   = "Auto Feed For Ammo",
-        Default = C.State.AutoFeedEnabled and true or false,
+        Title    = "Auto Feed For Ammo",
+        Default  = C.State.AutoFeedEnabled and true or false,
         Callback = function(state)
             C.State.AutoFeedEnabled = state and true or false
             if state then startLoop() else stopLoop() end
@@ -1239,8 +1239,8 @@ return function(C, R, UI)
     local aeRunning   = false
     local aeThread    = nil
 
-    local TempStorage     = RS:WaitForChild("TempStorage")
-    local EquipItemHandle = RS:WaitForChild("RemoteEvents"):WaitForChild("EquipItemHandle")
+    local TempStorage        = RS:WaitForChild("TempStorage")
+    local EquipItemHandle    = RS:WaitForChild("RemoteEvents"):WaitForChild("EquipItemHandle")
     local RequestConsumeItem = RS:WaitForChild("RemoteEvents"):WaitForChild("RequestConsumeItem")
 
     local _aeCrockCache = { t = 0, parts = {} }
@@ -1314,21 +1314,16 @@ return function(C, R, UI)
 
     local function aeIsFood(item)
         if not item or not item.Parent then return false end
-
         local name = tostring(item.Name)
-
         if name == "Bandage" or name == "MedKit" then return false end
         if name == "Morsel" or name == "Steak" then return false end
         if name == "Mackerel" or name == "Salmon" or name == "Swordfish" or name == "Shark" then return false end
         if name == "Acorn" then return false end
         if item:GetAttribute("FoodRot") ~= nil then return false end
-
         local restoreHealth = item:GetAttribute("RestoreHealth")
         if restoreHealth and tonumber(restoreHealth) and tonumber(restoreHealth) < 0 then return false end
-
         local restoreHunger = tonumber(item:GetAttribute("RestoreHunger"))
         if restoreHunger and restoreHunger > 0 then return true end
-
         if item:GetAttribute("ToolName") == "Consumable" then return true end
         if item:GetAttribute("PreparedMeal") == true then return true end
         if name:lower():find("cooked", 1, true) then return true end
@@ -1390,13 +1385,10 @@ return function(C, R, UI)
 
     local function aeEatWorldItem(item)
         if not item or not item.Parent then return false end
-
         local target = TempStorage:FindFirstChild(item.Name) or item
-
         local ok = pcall(function()
             RequestConsumeItem:InvokeServer(target)
         end)
-
         task.wait(AE_POST_EAT_WAIT)
         return ok
     end
@@ -1412,7 +1404,6 @@ return function(C, R, UI)
     local function aeWorker()
         while aeRunning do
             local hunger = aeGetHunger()
-
             if hunger <= AE_HUNGER_THRESHOLD then
                 while aeRunning and aeGetHunger() < AE_HUNGER_FULL do
                     local ok = aeEatOnce()
@@ -1420,7 +1411,6 @@ return function(C, R, UI)
                     task.wait(AE_POST_EAT_WAIT)
                 end
             end
-
             task.wait(AE_POLL_INTERVAL)
         end
     end
@@ -1459,10 +1449,10 @@ return function(C, R, UI)
     -- AUTO HEAL
     -- ============================================================
 
-    local AH_HEALTH_THRESHOLD  = 45
-    local AH_INSTANT_FLOOR     = 45
-    local AH_EQUIP_WAIT        = 0.1
-    local AH_POST_HEAL_WAIT    = 0.35
+    local AH_HEALTH_THRESHOLD = 45
+    local AH_INSTANT_FLOOR    = 45
+    local AH_EQUIP_WAIT       = 0.1
+    local AH_POST_HEAL_WAIT   = 0.35
 
     local ahRunning    = false
     local ahHealthConn = nil
@@ -1594,12 +1584,13 @@ return function(C, R, UI)
     local etHpConn            = nil
     local etHungerThread      = nil
     local etCooldown          = false
+    local _etCharConnHp       = nil
 
-    local ET_TP_ABOVE_Y    = 10
-    local ET_GROUND_PAD_Y  = 3.5
-    local ET_CF_OFFSET     = 6
-    local ET_RAY_START     = 200
-    local ET_RAY_DEPTH     = 1000
+    local ET_TP_ABOVE_Y   = 10
+    local ET_GROUND_PAD_Y = 3.5
+    local ET_CF_OFFSET    = 6
+    local ET_RAY_START    = 200
+    local ET_RAY_DEPTH    = 1000
 
     local function etGroundBelow(pos, excludeList)
         local params = RaycastParams.new()
@@ -1636,8 +1627,22 @@ return function(C, R, UI)
         return CFrame.new(finalPos, center.Position)
     end
 
+    local function etIsAtCampfire()
+        local map = WS:FindFirstChild("Map")
+        local campground = map and map:FindFirstChild("Campground")
+        local circle = campground and campground:FindFirstChild("alecCircle")
+        if not circle then return false end
+        local root = hrp()
+        if not root then return false end
+        local cp = circle.Position
+        local radius = math.max(circle.Size.X, circle.Size.Z) * 0.5
+        local dxz = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(cp.X, 0, cp.Z)).Magnitude
+        return dxz <= radius
+    end
+
     local function etTeleportToCampfire()
         if etCooldown then return end
+        if etIsAtCampfire() then return end
         local cf = etGetCampfireCF()
         if not cf then return end
         etCooldown = true
@@ -1726,8 +1731,6 @@ return function(C, R, UI)
             etHungerThread = nil
         end
     end
-
-    _etCharConnHp = nil
 
     tab:Section({ Title = "Emergency Teleport to Campfire" })
 
