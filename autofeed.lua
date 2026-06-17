@@ -1229,7 +1229,7 @@ return function(C, R, UI)
     -- ============================================================
 
     local AE_HUNGER_THRESHOLD = 50
-    local AE_HUNGER_FULL      = 100
+    local AE_HUNGER_FULL      = 99
     local AE_WORLD_RADIUS     = 75
     local AE_POST_EAT_WAIT    = 0.35
     local AE_EQUIP_WAIT       = 0.5
