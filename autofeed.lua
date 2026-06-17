@@ -1627,26 +1627,17 @@ return function(C, R, UI)
         return CFrame.new(finalPos, center.Position)
     end
 
+    local ET_CAMPFIRE_RADIUS = 80
+
     local function etIsAtCampfire()
-        local map = WS:FindFirstChild("Map")
-        local campground = map and map:FindFirstChild("Campground")
-        local circle = campground and campground:FindFirstChild("alecCircle")
-        if not circle then return false end
+        local fire = findCampfire()
+        if not fire then return false end
+        local center = fire:FindFirstChild("Center")
+        if not center then return false end
         local root = hrp()
         if not root then return false end
-        local cp
-        if circle:IsA("BasePart") then
-            cp = circle.Position
-        else
-            local pp = circle.PrimaryPart or circle:FindFirstChildWhichIsA("BasePart")
-            if not pp then return false end
-            cp = pp.Position
-        end
-        local sz = circle:IsA("BasePart") and circle.Size or (circle.PrimaryPart and circle.PrimaryPart.Size) or (circle:FindFirstChildWhichIsA("BasePart") and circle:FindFirstChildWhichIsA("BasePart").Size)
-        if not sz then return false end
-        local radius = math.max(sz.X, sz.Z) * 0.5
-        local dxz = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(cp.X, 0, cp.Z)).Magnitude
-        return dxz <= radius
+        local dxz = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(center.Position.X, 0, center.Position.Z)).Magnitude
+        return dxz <= ET_CAMPFIRE_RADIUS
     end
     
 
