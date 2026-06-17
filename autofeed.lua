@@ -1634,11 +1634,21 @@ return function(C, R, UI)
         if not circle then return false end
         local root = hrp()
         if not root then return false end
-        local cp = circle.Position
-        local radius = math.max(circle.Size.X, circle.Size.Z) * 0.5
+        local cp
+        if circle:IsA("BasePart") then
+            cp = circle.Position
+        else
+            local pp = circle.PrimaryPart or circle:FindFirstChildWhichIsA("BasePart")
+            if not pp then return false end
+            cp = pp.Position
+        end
+        local sz = circle:IsA("BasePart") and circle.Size or (circle.PrimaryPart and circle.PrimaryPart.Size) or (circle:FindFirstChildWhichIsA("BasePart") and circle:FindFirstChildWhichIsA("BasePart").Size)
+        if not sz then return false end
+        local radius = math.max(sz.X, sz.Z) * 0.5
         local dxz = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(cp.X, 0, cp.Z)).Magnitude
         return dxz <= radius
     end
+    
 
     local function etTeleportToCampfire()
         if etCooldown then return end
