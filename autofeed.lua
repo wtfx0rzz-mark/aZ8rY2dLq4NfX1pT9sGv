@@ -1446,20 +1446,20 @@ return function(C, R, UI)
 
     tab:Toggle({
         Title    = "Auto Eat",
-        Default  = C.State.AutoEatEnabled,
+        Value    = (C.State.AutoEatEnabled ~= false),
         Callback = function(state)
             C.State.AutoEatEnabled = state and true or false
             if state then aeStart() else aeStop() end
         end
     })
 
-    if C.State.AutoEatEnabled then aeStart() end
+    if C.State.AutoEatEnabled ~= false then aeStart() end
 
     -- ============================================================
     -- AUTO HEAL
     -- ============================================================
 
-    local AH_HEALTH_THRESHOLD  = 60
+    local AH_HEALTH_THRESHOLD  = 45
     local AH_INSTANT_FLOOR     = 45
     local AH_EQUIP_WAIT        = 0.1
     local AH_POST_HEAL_WAIT    = 0.35
