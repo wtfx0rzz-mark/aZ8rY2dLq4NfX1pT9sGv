@@ -1564,6 +1564,218 @@ return function(C, R, UI)
     if C.State.AutoHealEnabled ~= false then ahStart() end
 
     -- ============================================================
+    -- EMERGENCY TELEPORT
+    -- ============================================================
+
+    local function parseSliderNumber(v)
+        if type(v) == "number" then return v end
+        if type(v) == "string" then return tonumber(v) end
+        if type(v) ~= "table" then return nil end
+        local keys = { "Value", "value", "Current", "current", "CurrentValue", "currentValue", "Number", "number" }
+        for _, k in ipairs(keys) do
+            local n = tonumber(v[k])
+            if n then return n end
+        end
+        if type(v.Value) == "table" then
+            local n = tonumber(v.Value.Value) or tonumber(v.Value.Current) or tonumber(v.Value.CurrentValue)
+            if n then return n end
+        end
+        if #v >= 1 then
+            local n = tonumber(v[1])
+            if n then return n end
+        end
+        return nil
+    end
+
+    local ET_HP_THRESHOLD     = C.State.EmergencyTpHpThreshold or 20
+    local ET_HUNGER_THRESHOLD = C.State.EmergencyTpHungerThreshold or 10
+    local etHpEnabled         = false
+    local etHungerEnabled     = false
+    local etHpConn            = nil
+    local etHungerThread      = nil
+    local etCooldown          = false
+
+    local ET_TP_ABOVE_Y    = 10
+    local ET_GROUND_PAD_Y  = 3.5
+    local ET_CF_OFFSET     = 6
+    local ET_RAY_START     = 200
+    local ET_RAY_DEPTH     = 1000
+
+    local function etGroundBelow(pos, excludeList)
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        local ex = {}
+        local ch = lp.Character
+        if ch then ex[#ex + 1] = ch end
+        if excludeList then
+            for _, inst in ipairs(excludeList) do
+                if inst then ex[#ex + 1] = inst end
+            end
+        end
+        params.FilterDescendantsInstances = ex
+        local start = Vector3.new(pos.X, pos.Y + ET_RAY_START, pos.Z)
+        local hit = WS:Raycast(start, Vector3.new(0, -ET_RAY_DEPTH, 0), params)
+        return hit and hit.Position or pos
+    end
+
+    local function etGetCampfireCF()
+        local fire = findCampfire()
+        if not fire then return nil end
+        local center = fire:FindFirstChild("Center")
+        if not center then return fire:GetPivot() end
+        local look = center.CFrame.LookVector
+        local zone = fire:FindFirstChild("InnerTouchZone")
+        local offset = ET_CF_OFFSET
+        if zone and zone:IsA("BasePart") then
+            offset = math.max(zone.Size.X, zone.Size.Z) * 0.5 + 4
+        end
+        local desiredXZ = center.Position + look * offset
+        local g = etGroundBelow(desiredXZ, { fire })
+        local minY = math.max(g.Y + ET_GROUND_PAD_Y, center.Position.Y + 2)
+        local finalPos = Vector3.new(desiredXZ.X, minY, desiredXZ.Z)
+        return CFrame.new(finalPos, center.Position)
+    end
+
+    local function etTeleportToCampfire()
+        if etCooldown then return end
+        local cf = etGetCampfireCF()
+        if not cf then return end
+        etCooldown = true
+        local root = hrp()
+        if root then
+            root.CFrame = cf
+        end
+        task.delay(3, function()
+            etCooldown = false
+        end)
+    end
+
+    local function etGetHealthPct()
+        local ch = lp.Character
+        local h = ch and ch:FindFirstChildOfClass("Humanoid")
+        if not h or h.MaxHealth <= 0 then return 100 end
+        return (h.Health / h.MaxHealth) * 100
+    end
+
+    local function etGetHungerPct()
+        local ok, v = pcall(function()
+            return lp.PlayerGui.Interface.StatBars.HungerBar.Bar.Size.X.Scale * 100
+        end)
+        return ok and tonumber(v) or 100
+    end
+
+    local function etBindHp()
+        if etHpConn then
+            pcall(function() etHpConn:Disconnect() end)
+            etHpConn = nil
+        end
+        local ch = lp.Character
+        local h = ch and ch:FindFirstChildOfClass("Humanoid")
+        if not h then return end
+        etHpConn = h.HealthChanged:Connect(function(newHealth)
+            if not etHpEnabled then return end
+            local maxHP = h.MaxHealth
+            if maxHP <= 0 then return end
+            local pct = (newHealth / maxHP) * 100
+            if pct <= ET_HP_THRESHOLD then
+                task.spawn(etTeleportToCampfire)
+            end
+        end)
+    end
+
+    local function etStartHp()
+        etBindHp()
+        if not _etCharConnHp then
+            _etCharConnHp = lp.CharacterAdded:Connect(function()
+                task.wait(0.15)
+                if etHpEnabled then etBindHp() end
+            end)
+        end
+    end
+
+    local function etStopHp()
+        if etHpConn then
+            pcall(function() etHpConn:Disconnect() end)
+            etHpConn = nil
+        end
+    end
+
+    local function etHungerWorker()
+        while etHungerEnabled do
+            local pct = etGetHungerPct()
+            if pct <= ET_HUNGER_THRESHOLD then
+                task.spawn(etTeleportToCampfire)
+            end
+            task.wait(1)
+        end
+    end
+
+    local function etStartHunger()
+        if etHungerThread then
+            pcall(function() task.cancel(etHungerThread) end)
+            etHungerThread = nil
+        end
+        etHungerEnabled = true
+        etHungerThread = task.spawn(etHungerWorker)
+    end
+
+    local function etStopHunger()
+        etHungerEnabled = false
+        if etHungerThread then
+            pcall(function() task.cancel(etHungerThread) end)
+            etHungerThread = nil
+        end
+    end
+
+    _etCharConnHp = nil
+
+    tab:Section({ Title = "Emergency Teleport to Campfire" })
+
+    tab:Toggle({
+        Title    = "TP on Low HP",
+        Value    = false,
+        Callback = function(state)
+            etHpEnabled = state and true or false
+            C.State.EmergencyTpHpEnabled = etHpEnabled
+            if etHpEnabled then etStartHp() else etStopHp() end
+        end
+    })
+
+    tab:Slider({
+        Title = "HP Threshold (%)",
+        Value = { Min = 5, Max = 50, Default = ET_HP_THRESHOLD },
+        Callback = function(v)
+            local n = parseSliderNumber(v)
+            if not n then return end
+            n = math.clamp(math.floor(n / 5 + 0.5) * 5, 5, 50)
+            ET_HP_THRESHOLD = n
+            C.State.EmergencyTpHpThreshold = n
+        end
+    })
+
+    tab:Toggle({
+        Title    = "TP on Low Hunger",
+        Value    = false,
+        Callback = function(state)
+            etHungerEnabled = state and true or false
+            C.State.EmergencyTpHungerEnabled = etHungerEnabled
+            if state then etStartHunger() else etStopHunger() end
+        end
+    })
+
+    tab:Slider({
+        Title = "Hunger Threshold (%)",
+        Value = { Min = 5, Max = 50, Default = ET_HUNGER_THRESHOLD },
+        Callback = function(v)
+            local n = parseSliderNumber(v)
+            if not n then return end
+            n = math.clamp(math.floor(n / 5 + 0.5) * 5, 5, 50)
+            ET_HUNGER_THRESHOLD = n
+            C.State.EmergencyTpHungerThreshold = n
+        end
+    })
+
+    -- ============================================================
 
     if type(C.RegisterCleanup) == "function" then
         C.RegisterCleanup(function()
@@ -1571,6 +1783,8 @@ return function(C, R, UI)
             cfStopLoop()
             aeStop()
             ahStop()
+            etStopHp()
+            etStopHunger()
         end)
     end
 end
