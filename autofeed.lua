@@ -1381,15 +1381,13 @@ end
     end
 
     local function aeEatWorldItem(item)
-        if not item or not item.Parent then return false end
-        local tempItem = TempStorage:FindFirstChild(item.Name)
-        if not tempItem then return false end
-        local ok = pcall(function()
-            RequestConsumeItem:InvokeServer(tempItem)
-        end)
-        task.wait(AE_POST_EAT_WAIT)
-        return ok
-    end
+    if not item or not item.Parent then return false end
+    local ok = pcall(function()
+        RequestConsumeItem:InvokeServer(item)
+    end)
+    task.wait(AE_POST_EAT_WAIT)
+    return ok
+end
 
     local function aeEatOnce()
         local inv = aeGetBestInventoryFood()
@@ -1399,19 +1397,28 @@ end
         return false
     end
 
-    local function aeWorker()
-        while aeRunning do
-            local hunger = aeGetHunger()
-            if hunger <= AE_HUNGER_THRESHOLD then
-                while aeRunning and aeGetHunger() < AE_HUNGER_FULL do
-                    local ok = aeEatOnce()
-                    if not ok then break end
-                    task.wait(AE_POST_EAT_WAIT)
+   local function aeWorker()
+    while aeRunning do
+        local hunger = aeGetHunger()
+        if hunger <= AE_HUNGER_THRESHOLD then
+            while aeRunning and aeGetHunger() < AE_HUNGER_FULL do
+                local inv = aeGetBestInventoryFood()
+                if inv then
+                    local ok = aeEatInventoryItem(inv)
+                    if not ok then task.wait(1) end
+                else
+                    local world = aeGetClosestWorldFood()
+                    if world then
+                        aeEatWorldItem(world)
+                    else
+                        task.wait(0.5)
+                    end
                 end
             end
-            task.wait(AE_POLL_INTERVAL)
         end
+        task.wait(AE_POLL_INTERVAL)
     end
+end
 
     local function aeStop()
         aeRunning = false
