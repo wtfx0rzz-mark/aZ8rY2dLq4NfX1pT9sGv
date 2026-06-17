@@ -1313,19 +1313,27 @@ return function(C, R, UI)
     end
 
     local function aeIsFood(item)
-    if not item or not item.Parent then return false end
-    local name = tostring(item.Name)
+        if not item or not item.Parent then return false end
 
-    if name == "Bandage" or name == "MedKit" then return false end
+        local name = tostring(item.Name)
 
-    local restoreHealth = item:GetAttribute("RestoreHealth")
-    if restoreHealth and tonumber(restoreHealth) and tonumber(restoreHealth) < 0 then return false end
+        if name == "Bandage" or name == "MedKit" then return false end
+        if name == "Morsel" or name == "Steak" then return false end
+        if name == "Mackerel" or name == "Salmon" or name == "Swordfish" or name == "Shark" then return false end
+        if name == "Acorn" then return false end
+        if item:GetAttribute("FoodRot") ~= nil then return false end
 
-    if item:GetAttribute("ToolName") == "Consumable" then return true end
-    if item:GetAttribute("PreparedMeal") == true then return true end
-    if name:lower():find("cooked", 1, true) then return true end
-    return false
-end
+        local restoreHealth = item:GetAttribute("RestoreHealth")
+        if restoreHealth and tonumber(restoreHealth) and tonumber(restoreHealth) < 0 then return false end
+
+        local restoreHunger = tonumber(item:GetAttribute("RestoreHunger"))
+        if restoreHunger and restoreHunger > 0 then return true end
+
+        if item:GetAttribute("ToolName") == "Consumable" then return true end
+        if item:GetAttribute("PreparedMeal") == true then return true end
+        if name:lower():find("cooked", 1, true) then return true end
+        return false
+    end
 
     local function aeGetBestInventoryFood()
         local inv = lp:FindFirstChild("Inventory")
