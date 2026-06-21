@@ -731,7 +731,7 @@ return function(C, R, UI)
         end
 
         tab:Toggle({
-            Title = "Block Projectile Damage",
+            Title = "Godmode v2",
             Value = true,
             Callback = function(state)
                 if state then enableProjBlock() else disableProjBlock() end
