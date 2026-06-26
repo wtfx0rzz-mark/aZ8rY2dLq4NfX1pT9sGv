@@ -97,6 +97,18 @@ return function(C, R, UI)
     local TRAP_HEIGHT_OFFSET_DEFAULT = 0
     local trapHeightOffset = TRAP_HEIGHT_OFFSET_DEFAULT
 
+    -- shared state, must be declared before any function that closes over it
+    local running         = false
+    local desiredPerTarget = CFG.DesiredLogs
+
+    local active      = {}
+    local activeList  = {}
+    local activeByUid = {}
+    local countByUid  = {}
+    local targets     = {}
+
+    local selectedSet = {}
+
     -- ============================================================
     -- HELPERS
     -- ============================================================
@@ -690,20 +702,9 @@ return function(C, R, UI)
     -- LOG SMOG CORE
     -- ============================================================
 
-    local running = false
-    local desiredPerTarget = CFG.DesiredLogs
-
-    local active      = {}
-    local activeList  = {}
-    local activeByUid = {}
-    local countByUid  = {}
-    local targets     = {}
-
     local reconcileConn, hbConn = nil, nil
     local scanAt    = 0
     local scanCache = {}
-
-    local selectedSet = {}
 
     local function ensureUid(uid)
         if not activeByUid[uid] then activeByUid[uid] = {} end
