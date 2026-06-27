@@ -769,10 +769,8 @@ end
         if selectedSet["Mossy Coin"] and (nm == "Mossy Coin" or nm:match("^Mossy Coin%d+$")) then return true end
         if selectedSet["Cultist"] and m and m:IsA("Model") and l:find("cultist",1,true) and hasHumanoid(m) then return true end
         if selectedSet["Sapling"] and nm == "Sapling" then return true end
-        if selectedSet["Alpha Wolf Pelt"] and l:find("alpha",1,true) and l:find("wolf",1,true) then return true end
-        if selectedSet["Bear Pelt"] and l:find("bear",1,true) and not l:find("polar",1,true) then return true end
-        if selectedSet["Wolf Pelt"] and nm == "Wolf Pelt" then return true end
         if selectedSet["Bunny Foot"] and nm == "Bunny Foot" then return true end
+        if selectedSet["Wolf Pelt"] and nm == "Wolf Pelt" then return true end
         if selectedSet["Polar Bear Pelt"] and nm == "Polar Bear Pelt" then return true end
         if selectedSet["Arctic Fox Pelt"] and nm == "Arctic Fox Pelt" then return true end
         if selectedSet["Spear"] and l:find("spear",1,true) and not hasHumanoid(m) then return true end
@@ -814,12 +812,10 @@ end
     if isExcludedModel(m) then return false end
     if isLogWallBlocked(m, selectedSet) then return false end
     
-    -- Skip if this model has a parent model between it and Items folder
     if itemsFolder and m.Parent ~= itemsFolder then
         local parent = m.Parent
         while parent and parent ~= itemsFolder do
             if parent:IsA("Model") then
-                -- This model is inside another model, skip it
                 return false
             end
             parent = parent.Parent
