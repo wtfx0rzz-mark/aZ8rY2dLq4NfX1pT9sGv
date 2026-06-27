@@ -85,7 +85,7 @@ return function(C, R, UI)
         "Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt"
     }
 
-    local characterTargets = { "Kiwi", "Furniture Trader", "Wolf", "Mossy Wolf", "Hellephant" }
+    local characterTargets = { "Kiwi", "Furniture Trader", "Wolf", "Mossy Wolf", "Hellephant", "Sketchy Salesman" }
 
     local characterTargetSet = {}
     for _, n in ipairs(characterTargets) do
