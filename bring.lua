@@ -52,7 +52,7 @@ return function(C, R, UI)
         "Steak","Cooked Steak",
         "Ribs","Cooked Ribs","Cake","Berry",
         "Carrot",
-        "Chilli","Stew","Pumpkin","Hearty Stew","Corn","BBQ ribs","Apple","Mackerel","Salmon","Swordfish","Shark","Strawberry","Acorn"
+        "Chilli","Stew","Pumpkin","Hearty Stew","Corn","BBQ ribs","Apple","Mackerel","Salmon","Swordfish","Shark","Strawberry","Meat? Sandwich","Acorn"
     }
     local medicalItems = {"Bandage","MedKit"}
     local weaponsArmor = {
