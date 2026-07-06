@@ -43,7 +43,7 @@ return function(C, R, UI)
 
     local junkItems = {
         "Tyre","Bolt","Broken Fan","Broken Microwave","Sheet Metal","Old Radio","Washing Machine","Old Car Engine",
-        "Metal Chair","Cultist Prototype","Cultist Experiment","UFO Junk","UFO Component","Gears"
+        "Metal Chair","Cultist Prototype","Cultist Experiment","UFO Scrap","UFO Component","Gears"
     }
     local fuelItems = {"Log","Coal","Fuel Canister","Oil Barrel","Biofuel","Chair"}
     local foodItems = {
