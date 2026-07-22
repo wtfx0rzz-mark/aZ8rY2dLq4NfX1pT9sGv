@@ -1,4 +1,4 @@
--- autofeed.lua
+-- autofish.lua
 
 return function(C, R, UI)
     local function run()
