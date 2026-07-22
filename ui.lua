@@ -39,6 +39,7 @@ local Tabs = {
     Player   = Window:Tab({ Title = "Player",   Icon = "activity",   Desc = "Player options" }),
     Auto   = Window:Tab({ Title = "Auto",   Icon = "cpu",   Desc = "Automation" }),
     AutoFeed = Window:Tab({ Title = "Auto Feed", Icon = "diamond", Desc = "Auto Feed" }),
+    AutoFish = Window:Tab({ Title = "Auto Fish", Icon = "fish", Desc = "Auto Fish" }),
     Visuals   = Window:Tab({ Title = "Visuals",   Icon = "eye",   Desc = "Visuals" }),
     TPBring   = Window:Tab({ Title = "TPBring",   Icon = "backpack",   Desc = "TP Bring" }),
     Debug   = Window:Tab({ Title = "Debug",   Icon = "ant",   Desc = "Debug" }),
