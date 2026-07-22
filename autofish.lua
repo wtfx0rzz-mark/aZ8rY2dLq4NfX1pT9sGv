@@ -41,7 +41,7 @@ return function(C, R, UI)
             task.spawn(function()
                 local waited = 0
                 local checkInterval = 0.25
-                while waited < 10 do
+                while waited < 20 do
                     if myToken ~= recastToken or not autoRecastEnabled then
                         return
                     end
