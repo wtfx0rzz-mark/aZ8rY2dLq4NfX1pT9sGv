@@ -840,6 +840,10 @@ return function(C, R, UI)
         Value = (C.State.DiamondsAutoAfkAction == true),
         Callback = function(on)
             C.State.DiamondsAutoAfkAction = on and true or false
+            if not C.State.DiamondsAutoAfkAction and C.State.DiamondsJumpInput then
+                C.State.DiamondsJumpInput = false
+                diamondsJumpStop()
+            end
         end
     })
 
@@ -848,6 +852,12 @@ return function(C, R, UI)
         Value = (C.State.DiamondsAutoInput1Action == true),
         Callback = function(on)
             C.State.DiamondsAutoInput1Action = on and true or false
+            if not C.State.DiamondsAutoInput1Action
+                and C.State.DiamondsKey1Input
+                and not C.State._DiamondsKey1ManualOn then
+                C.State.DiamondsKey1Input = false
+                diamondsKey1Stop()
+            end
         end
     })
 
