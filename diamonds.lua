@@ -12,6 +12,7 @@ return function(C, R, UI)
     local PPS      = game:GetService("ProximityPromptService")
     local VIM      = game:GetService("VirtualInputManager")
     local VU       = game:GetService("VirtualUser")
+    local UIS      = game:GetService("UserInputService")
 
     local lp  = C.LocalPlayer or Players.LocalPlayer
     local tab = UI.Tabs.Diamonds
@@ -60,6 +61,19 @@ return function(C, R, UI)
     local AUTO_AFK_IDLE_S       = 300
 
     local function now() return os.clock() end
+
+    local lastRealInputAt = now()
+
+    UIS.TouchTap:Connect(function()
+        lastRealInputAt = now()
+    end)
+    UIS.InputBegan:Connect(function(input, gameProcessed)
+        if input.UserInputType == Enum.UserInputType.Touch
+            or input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.MouseButton2 then
+            lastRealInputAt = now()
+        end
+    end)
 
     local _seeded = false
     local function seedOnce()
@@ -753,6 +767,14 @@ return function(C, R, UI)
                         lastPos = pos
                     end
 
+                    if lastRealInputAt > lastMoveAt then
+                        lastMoveAt = lastRealInputAt
+                        if C.State.DiamondsKey1Input and not C.State._DiamondsKey1ManualOn then
+                            C.State.DiamondsKey1Input = false
+                            diamondsKey1Stop()
+                        end
+                    end
+
                     if not C.State.DiamondsKey1Input and not C.State._DiamondsKey1ManualOn then
                         local idleFor = now() - lastMoveAt
                         if idleFor >= AUTO_AFK_IDLE_S then
@@ -789,6 +811,14 @@ return function(C, R, UI)
                             end
                         end
                         lastPos = pos
+                    end
+
+                    if lastRealInputAt > lastMoveAt then
+                        lastMoveAt = lastRealInputAt
+                        if C.State.DiamondsJumpInput then
+                            C.State.DiamondsJumpInput = false
+                            diamondsJumpStop()
+                        end
                     end
 
                     if not C.State.DiamondsJumpInput then
