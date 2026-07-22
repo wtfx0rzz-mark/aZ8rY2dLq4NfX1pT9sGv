@@ -65,7 +65,7 @@ return function(C, R, UI)
         "Basketball","Blueprint","Diamond","Gem of the Forest Fragment","Gem of the Forest","Flashlight","Old Taming flute","Old Rod","Cultist Gem",
         "Tusk","Revolver Ammo","Rifle Ammo","Shotgun Ammo","Explosive Revolver Ammo","Explosive Rifle Ammo","Sacrifice Totem","Anvil Back","Anvil Front","Anvil Base","Armor Trim","Crystal Skull Key"
     }
-    local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt","Yo-yo","Blue Orchid","Pink Tulip","Yellow Peony","Red Rose","White Lily","Purple Carnation",}
+    local pelts = {"Bunny Foot","Wolf Pelt","Alpha Wolf Pelt","Bear Pelt","Scorpion Shell","Polar Bear Pelt","Arctic Fox Pelt","Dino Kid's Yoyo","Blue Orchid","Pink Tulip","Yellow Peony","Red Rose","White Lily","Purple Carnation","Dino Kid's Lunchbox"}
 
     local fuelSet, junkSet, cookSet, scrapAlso, foodSet = {}, {}, {}, {}, {}
     for _,n in ipairs(fuelItems) do fuelSet[n] = true end
