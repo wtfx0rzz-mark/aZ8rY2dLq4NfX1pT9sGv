@@ -239,11 +239,11 @@ return function(C, R, UI)
         local SAFE_DROP_UP         = 4.0
         local CAMPFIRE_TP_UP_NUDGE = 2.0
 
-        local function teleportSticky(cf, dropMode)
+        local function teleportSticky(cf, dropMode, skipNudge)
             local root = hrp()
             if not root then return end
             local ch   = lp.Character
-            local targetCF = cf + Vector3.new(0, TELEPORT_UP_NUDGE, 0)
+            local targetCF = skipNudge and cf or (cf + Vector3.new(0, TELEPORT_UP_NUDGE, 0))
 
             prefetchRing(targetCF)
             requestStreamAt(targetCF)
@@ -983,7 +983,7 @@ return function(C, R, UI)
             if returnCF then
                 pcall(function()
                     freshTemporalRunState()
-                    teleportSticky(returnCF, true)
+                    teleportSticky(returnCF, true, true)
                 end)
             end
 
