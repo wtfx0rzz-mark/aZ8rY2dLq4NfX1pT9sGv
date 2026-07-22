@@ -10,7 +10,7 @@ return function(C, R, UI)
         local playerGui = lp:WaitForChild("PlayerGui")
 
         local Tabs = (UI and UI.Tabs) or {}
-        local tab = Tabs.Auto
+        local tab = Tabs.AutoFish
         if not tab then return end
 
         local frame = playerGui:WaitForChild("Interface"):WaitForChild("FishingCatchFrame")
