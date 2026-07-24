@@ -727,6 +727,17 @@ end
         return false
     end
 
+    local function isNestedInsideAnotherModel(m, itemsFolder)
+        if not (m and itemsFolder) then return false end
+        if m.Parent == itemsFolder then return false end
+        local parent = m.Parent
+        while parent and parent ~= itemsFolder do
+            if parent:IsA("Model") then return true end
+            parent = parent.Parent
+        end
+        return false
+    end
+
     local function nameMatches(selectedSet, m)
         local itemsFolder = itemsRootOrNil()
         if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
@@ -811,17 +822,8 @@ end
     if itemsFolder and not m:IsDescendantOf(itemsFolder) then return false end
     if isExcludedModel(m) then return false end
     if isLogWallBlocked(m, selectedSet) then return false end
-    
-    if itemsFolder and m.Parent ~= itemsFolder then
-        local parent = m.Parent
-        while parent and parent ~= itemsFolder do
-            if parent:IsA("Model") then
-                return false
-            end
-            parent = parent.Parent
-        end
-    end
-    
+    if isNestedInsideAnotherModel(m, itemsFolder) then return false end
+
     local tIn = tonumber(m:GetAttribute(INFLT_ATTR))
     local jIn = m:GetAttribute(JOB_ATTR)
     if tIn and jIn and tostring(jIn) ~= tostring(jobId) and (now() - tIn) < STUCK_TTL then
@@ -1050,9 +1052,10 @@ end
                 for _,d in ipairs(desc) do
                     local m = nil
                     if d:IsA("Model") then
-                        if nameMatches(selectedSet, d) then m = d end
+                        if nameMatches(selectedSet, d) and not isNestedInsideAnotherModel(d, itemsFolder) then m = d end
                     elseif d:IsA("BasePart") then
                         m = nearestSelectedModelFromPart(d, selectedSet)
+                        if m and isNestedInsideAnotherModel(m, itemsFolder) then m = nil end
                     end
                     if m and not seenModel[m] and not alreadyMoved[m] then
                         seenModel[m] = true
