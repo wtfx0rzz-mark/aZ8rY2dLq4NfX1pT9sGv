@@ -1139,7 +1139,7 @@ return function(C, R, UI)
         if C.State.Toggles.Temporal == nil then C.State.Toggles.Temporal = false end
 
         tab:Toggle({
-            Title = "Auto Temporal Cycle",
+            Title = "Auto Temporal Extra Attack",
             Value = (C.State.Toggles.MoreTemporalTimer == true),
             Callback = function(state)
                 C.State.Toggles.MoreTemporalTimer = (state == true)
@@ -1148,7 +1148,7 @@ return function(C, R, UI)
         })
 
         tab:Toggle({
-            Title = "Temporal",
+            Title = "Quick Auto Temporal",
             Value = (C.State.Toggles.Temporal == true),
             Callback = function(state)
                 C.State.Toggles.Temporal = (state == true)
