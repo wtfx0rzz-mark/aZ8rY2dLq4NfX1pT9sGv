@@ -1023,6 +1023,7 @@ return function(C, R, UI)
             if BIG_TREE_NAMES[n] then return true end
             if type(n) ~= "string" then return false end
             if n:find("TreeBig%d+") then return true end
+            if n == "Beehive Birch Tree" then return true end
             return (n:match("^WebbedTreeBig%d*$") ~= nil)
                 or (n:match("^FairyTreeBig%d+$") ~= nil)
                 or (n:match("^Corrupted%s+TreeBig%d+$") ~= nil)
