@@ -1139,6 +1139,15 @@ return function(C, R, UI)
         if C.State.Toggles.Temporal == nil then C.State.Toggles.Temporal = false end
 
         tab:Toggle({
+            Title = "Auto Temporal Cycle",
+            Value = (C.State.Toggles.MoreTemporalTimer == true),
+            Callback = function(state)
+                C.State.Toggles.MoreTemporalTimer = (state == true)
+                if state then startTimer() else stopTimer() end
+            end
+        })
+
+        tab:Toggle({
             Title = "Temporal",
             Value = (C.State.Toggles.Temporal == true),
             Callback = function(state)
@@ -1154,16 +1163,7 @@ return function(C, R, UI)
         if C.State.Toggles.Temporal == true then
             watchTemporalCharged()
         end
-
-        tab:Toggle({
-            Title = "Auto Temporal Cycle",
-            Value = (C.State.Toggles.MoreTemporalTimer == true),
-            Callback = function(state)
-                C.State.Toggles.MoreTemporalTimer = (state == true)
-                if state then startTimer() else stopTimer() end
-            end
-        })
-
+        
         if C.State.Toggles.MoreTemporalTimer == true then
             startTimer()
         else
