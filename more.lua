@@ -1085,59 +1085,59 @@ return function(C, R, UI)
             end)
         end
 
-        local temporalWatchConn = nil
-        local temporalWatchThread = nil
-        local temporalWatchModel = nil
+        
+local temporalWatchConn = nil
+local temporalWatchThread = nil
+local temporalWatchModel = nil
 
-        local function runTemporal()
-            local machine = workspace.Structures["Temporal Accelerometer"]
-            local event = game:GetService("ReplicatedStorage").RemoteEvents.RequestActivateNightSkipMachine
-            event:FireServer(machine)
-        end
+local function runTemporal()
+    local machine = workspace.Structures["Temporal Accelerometer"]
+    local event = game:GetService("ReplicatedStorage").RemoteEvents.RequestActivateNightSkipMachine
+    event:FireServer(machine)
+end
 
-        local function stopTemporalWatch()
-            if temporalWatchConn then
-                pcall(function() temporalWatchConn:Disconnect() end)
-                temporalWatchConn = nil
-            end
+local function stopTemporalWatch()
+    if temporalWatchConn then
+        pcall(function() temporalWatchConn:Disconnect() end)
+        temporalWatchConn = nil
+    end
+    if temporalWatchThread then
+        pcall(function() task.cancel(temporalWatchThread) end)
+        temporalWatchThread = nil
+    end
+    temporalWatchModel = nil
+end
+
+local function watchTemporalCharged()
+    stopTemporalWatch()
+
+    local model = resolveAccelModel()
+    if not model then return end
+    temporalWatchModel = model
+
+    local function onChargedChanged()
+        if not (C.State.Toggles.Temporal == true) then return end
+        local charged = model:GetAttribute("Charged")
+        if not charged then
             if temporalWatchThread then
                 pcall(function() task.cancel(temporalWatchThread) end)
                 temporalWatchThread = nil
             end
-            temporalWatchModel = nil
-        end
-
-        local function watchTemporalCharged()
-            stopTemporalWatch()
-
-            local model = resolveAccelModel()
-            if not model then return end
-            temporalWatchModel = model
-
-            local function onChargedChanged()
-                if not (C.State.Toggles.Temporal == true) then return end
-                local charged = model:GetAttribute("Charged")
-                if charged == false then
-                    if temporalWatchThread then
-                        pcall(function() task.cancel(temporalWatchThread) end)
-                        temporalWatchThread = nil
-                    end
-                    temporalWatchThread = task.spawn(function()
-                        task.wait(10)
-                        temporalWatchThread = nil
-                        if C.State.Toggles.Temporal == true then
-                            runTemporal()
-                        end
-                    end)
+            temporalWatchThread = task.spawn(function()
+                task.wait(10)
+                temporalWatchThread = nil
+                if C.State.Toggles.Temporal == true then
+                    runTemporal()
                 end
-            end
-
-            temporalWatchConn = model:GetAttributeChangedSignal("Charged"):Connect(onChargedChanged)
-            onChargedChanged()
+            end)
         end
+    end
 
-        if C.State.Toggles.Temporal == nil then C.State.Toggles.Temporal = false end
+    temporalWatchConn = model:GetAttributeChangedSignal("Charged"):Connect(onChargedChanged)
+    onChargedChanged()
+end
 
+if C.State.Toggles.Temporal == nil then C.State.Toggles.Temporal = false end
         tab:Toggle({
             Title = "Auto Temporal Extra Attack",
             Value = (C.State.Toggles.MoreTemporalTimer == true),
