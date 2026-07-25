@@ -645,7 +645,8 @@ return function(C, R, UI)
             ["Small Webbed Tree"] = true,
             ["Christmas Pine"] = true,
             ["Northern Pine"] = true,
-            ["Brightwood Tree"] = true
+            ["Brightwood Tree"] = true,
+            ["Birch Tree"] = true
         }
 
         local TreeImpactCF  = setmetatable({}, { __mode = "k" })
