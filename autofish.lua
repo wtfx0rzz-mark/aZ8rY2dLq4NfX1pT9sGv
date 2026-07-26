@@ -134,6 +134,73 @@ return function(C, R, UI)
                 if state then enableAutoRecast() else disableAutoRecast() end
             end
         })
+
+        local tameFrame = playerGui:WaitForChild("Interface"):WaitForChild("TamingFluteFrame")
+        local tameTimingBarFrame = tameFrame.TimingBar
+        local tameBar = tameTimingBarFrame.Bar
+        local tameSuccessArea = tameTimingBarFrame.SuccessArea
+
+        local autoTameEnabled = false
+        local tameLastTapTime = 0
+        local TAME_TAP_MIN_INTERVAL_NORMAL = 0.05
+        local TAME_TAP_MIN_INTERVAL_RECOVERY = 0.03
+        local TAME_BOTTOM_MARGIN = 0.05
+        local tameLastBarY = nil
+
+        local tameConn = nil
+
+        local function enableAutoTame()
+            if tameConn then return end
+            autoTameEnabled = true
+            tameConn = RunService.Heartbeat:Connect(function()
+                if not autoTameEnabled then return end
+                if not tameFrame.Visible then
+                    tameLastBarY = nil
+                    return
+                end
+
+                local barY = tameBar.Position.Y.Scale
+                local areaTop = tameSuccessArea.Position.Y.Scale
+                local areaBottom = areaTop + tameSuccessArea.Size.Y.Scale
+                local falling = tameLastBarY ~= nil and barY > tameLastBarY
+
+                local belowZone = barY > areaBottom
+                local aboveZone = barY < areaTop
+                local nearBottomEdge = barY >= (areaBottom - TAME_BOTTOM_MARGIN) and barY <= areaBottom
+
+                if belowZone then
+                    if (tick() - tameLastTapTime) >= TAME_TAP_MIN_INTERVAL_RECOVERY then
+                        performTap()
+                        tameLastTapTime = tick()
+                    end
+                elseif aboveZone then
+                elseif falling and nearBottomEdge then
+                    if (tick() - tameLastTapTime) >= TAME_TAP_MIN_INTERVAL_NORMAL then
+                        performTap()
+                        tameLastTapTime = tick()
+                    end
+                end
+
+                tameLastBarY = barY
+            end)
+        end
+
+        local function disableAutoTame()
+            autoTameEnabled = false
+            if tameConn then
+                tameConn:Disconnect()
+                tameConn = nil
+            end
+            tameLastBarY = nil
+        end
+
+        tab:Toggle({
+            Title = "Auto Tame",
+            Value = false,
+            Callback = function(state)
+                if state then enableAutoTame() else disableAutoTame() end
+            end
+        })
     end
     local ok, err = pcall(run)
     if not ok then warn("[AutoFeed] module error: " .. tostring(err)) end
