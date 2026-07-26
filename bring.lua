@@ -61,7 +61,7 @@ return function(C, R, UI)
         "Sword","Ice Axe","Scythe","Thorn Body","Alien Armour","Corrupted Thorn Body","Impact Grenade","Dynamite","Corrupted Shotgun","Corrupted Revolver","Corrupted Thrown Axe","Blowpipe"
     }
     local ammoMisc = {
-        "Giant Sack","Infernal Sack","Good Sack","Mossy Coin","Cultist","Alien","Alien Elite","Sapling",
+        "Giant Sack","Infernal Sack","Good Sack","Mossy Coin","Cultist","Alien","Alien Elite","Sapling","Birch Sapling",
         "Basketball","Blueprint","Diamond","Gem of the Forest Fragment","Gem of the Forest","Flashlight","Old Taming flute","Old Rod","Cultist Gem",
         "Tusk","Revolver Ammo","Rifle Ammo","Shotgun Ammo","Explosive Revolver Ammo","Explosive Rifle Ammo","Sacrifice Totem","Anvil Back","Anvil Front","Anvil Base","Armor Trim","Crystal Skull Key"
     }
