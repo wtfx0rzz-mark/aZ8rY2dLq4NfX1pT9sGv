@@ -1598,10 +1598,10 @@ return function(C, R, UI)
         if not chestRunToggleObj then return false end
         _settingChestRunToggle = true
         local ok = pcall(function()
-            if chestRunToggleObj.SetValue then
-                chestRunToggleObj:SetValue(v)
-            elseif chestRunToggleObj.Set then
+            if chestRunToggleObj.Set then
                 chestRunToggleObj:Set(v)
+            elseif chestRunToggleObj.SetValue then
+                chestRunToggleObj:SetValue(v)
             elseif chestRunToggleObj.SetState then
                 chestRunToggleObj:SetState(v)
             elseif chestRunToggleObj.Update then
@@ -1996,31 +1996,19 @@ return function(C, R, UI)
     local quickChestsToggleObj = nil
     local _settingQuickChestsToggle = false
     local function setQuickChestsToggleUI(v)
-        if not quickChestsToggleObj then
-            warn("QuickChestsToggle: quickChestsToggleObj is nil, cannot set UI")
-            return false
-        end
+        if not quickChestsToggleObj then return false end
         _settingQuickChestsToggle = true
         local ok = pcall(function()
-            if quickChestsToggleObj.SetValue then
-                print("QuickChestsToggle: using SetValue")
-                quickChestsToggleObj:SetValue(v)
-            elseif quickChestsToggleObj.Set then
-                print("QuickChestsToggle: using Set")
+            if quickChestsToggleObj.Set then
                 quickChestsToggleObj:Set(v)
+            elseif quickChestsToggleObj.SetValue then
+                quickChestsToggleObj:SetValue(v)
             elseif quickChestsToggleObj.SetState then
-                print("QuickChestsToggle: using SetState")
                 quickChestsToggleObj:SetState(v)
             elseif quickChestsToggleObj.Update then
-                print("QuickChestsToggle: using Update")
                 quickChestsToggleObj:Update(v)
-            else
-                warn("QuickChestsToggle: no known set method found on toggle object")
             end
         end)
-        if not ok then
-            warn("QuickChestsToggle: pcall failed when setting UI value")
-        end
         _settingQuickChestsToggle = false
         return ok
     end
