@@ -6,7 +6,6 @@ return function(C, R, UI)
     local Players = game:GetService("Players")
     local RS = game:GetService("ReplicatedStorage")
     local WS = game:GetService("Workspace")
-    local PPS = game:GetService("ProximityPromptService")
     local RunService = game:GetService("RunService")
 
     local lp = C.LocalPlayer or Players.LocalPlayer
@@ -234,10 +233,6 @@ return function(C, R, UI)
         return (n == "Snow Chest") or (n:match("^Snow Chest%d+$") ~= nil)
     end
 
-    local function isHalloweenChestName(n)
-        return false
-    end
-
     local function snapshotInst(inst)
         local snap = {}
         if inst:IsA("BasePart") then
@@ -347,6 +342,10 @@ return function(C, R, UI)
         return getRemote("RequestStartDraggingItem", "StartDraggingItem")
     end
 
+    local function resolveOpenChestRemote()
+        return getRemote("RequestOpenItemChest")
+    end
+
     if _G.__AutoChestExtra and type(_G.__AutoChestExtra.Destroy) == "function" then
         pcall(function() _G.__AutoChestExtra.Destroy() end)
     end
@@ -357,6 +356,9 @@ return function(C, R, UI)
     if C.State.Toggles.ChestRun == nil then
         C.State.Toggles.ChestRun = false
     end
+    if C.State.Toggles.QuickChests == nil then
+        C.State.Toggles.QuickChests = false
+    end
     if C.State.Toggles.GrabNearby == nil then
         C.State.Toggles.GrabNearby = false
     end
@@ -364,12 +366,12 @@ return function(C, R, UI)
         C.State.Toggles.ItemSearch = false
     end
 
+    local OPEN_CHEST_MAX_DISTANCE = 20.0
+
     local CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN = 0.2
-    local CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS = 4.0
     local CHEST_COLLECT_WINDOW_SECONDS = 1.0
     local CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT = 0.05
     local CHEST_RETRY_WAIT_SECONDS = 2.0
-    local CHEST_CONFIRM_POLL_INTERVAL = 0.10
     local CHEST_COLLECT_POLL_INTERVAL = 0.08
 
     local CHEST_FAST_POLL_INTERVAL = 0.03
@@ -381,7 +383,6 @@ return function(C, R, UI)
     local AUTO_STOP_IF_EMPTY_SECONDS = 8.0
 
     C.State.ChestWaitAfterTeleportBeforeOpen = CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN
-    C.State.ChestOpenConfirmTimeoutSeconds = CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS
     C.State.ChestCollectWindowSeconds = CHEST_COLLECT_WINDOW_SECONDS
     C.State.ChestDelayAfterCollectionBeforeNext = CHEST_DELAY_AFTER_COLLECTION_BEFORE_NEXT
     C.State.ChestRetryWaitSeconds = CHEST_RETRY_WAIT_SECONDS
@@ -403,6 +404,20 @@ return function(C, R, UI)
     end
     refreshDragRemotes()
 
+    local RF_OpenChest = nil
+    local function refreshOpenChestRemote()
+        RF_OpenChest = resolveOpenChestRemote()
+    end
+    refreshOpenChestRemote()
+
+    local function fireOpenChest(chestModel)
+        refreshOpenChestRemote()
+        if not (RF_OpenChest and chestModel and chestModel.Parent) then return false end
+        return pcall(function()
+            RF_OpenChest:FireServer(chestModel)
+        end)
+    end
+
     local function getTakeRoots()
         local ugc = game:FindFirstChild("Ugc")
         if ugc and ugc:FindFirstChild("ReplicatedStorage") and ugc:FindFirstChild("Workspace") then
@@ -416,6 +431,7 @@ return function(C, R, UI)
         ["MedKit"] = true,
         ["Impact Grenade"] = true,
         ["Wildfire"] = true,
+        ["Rifle Ammo"] = true,
     }
 
     local SPECIAL_TAKE_NAMES = {
@@ -423,7 +439,6 @@ return function(C, R, UI)
         ["Strong Flashlight"] = true,
         ["Giant Sack"] = true,
         ["Tactical Shotgun"] = true,
-        ["Morningstar"] = true,
         ["Laser Cannon"] = true,
         ["Scythe"] = true,
         ["Rifle"] = true,
@@ -680,15 +695,6 @@ return function(C, R, UI)
         return pcall(function() RF_Stop:FireServer(m) end)
     end
 
-    local function finallyStopDrag(m)
-        safeStopDrag(m)
-        RunService.Heartbeat:Wait()
-        safeStopDrag(m)
-        task.delay(0.05, function() pcall(safeStopDrag, m) end)
-        task.delay(0.20, function() pcall(safeStopDrag, m) end)
-        task.delay(0.45, function() pcall(safeStopDrag, m) end)
-    end
-
     local function dragUntrack(m)
         local rec = DragActive[m]
         if not rec then return end
@@ -874,87 +880,6 @@ return function(C, R, UI)
         return ok and v == true
     end
 
-    local firePromptLastAt = setmetatable({}, { __mode = "k" })
-    local FIRE_PROMPT_COOLDOWN = 0.25
-
-    local function findChestPromptPreferred(chestModel)
-        if not (chestModel and chestModel.Parent) then return nil end
-        local main = chestModel:FindFirstChild("Main", true)
-        if main and main.Parent then
-            local proxAtt = main:FindFirstChild("ProximityAttachment")
-            if proxAtt and proxAtt.Parent then
-                local p = proxAtt:FindFirstChildWhichIsA("ProximityPrompt", true)
-                if p then return p end
-                local maybe = proxAtt:FindFirstChild("ProximityInteraction")
-                if maybe and maybe:IsA("ProximityPrompt") then return maybe end
-            end
-        end
-        return chestModel:FindFirstChildWhichIsA("ProximityPrompt", true)
-    end
-
-    local function promptWorldPos(prompt)
-        if not (prompt and prompt.Parent) then return nil end
-        local okA, adornee = pcall(function() return prompt.Adornee end)
-        if okA and adornee and adornee:IsA("BasePart") then
-            return adornee.Position
-        end
-        local parent = prompt.Parent
-        if parent:IsA("Attachment") then
-            local ok, wp = pcall(function() return parent.WorldPosition end)
-            if ok and wp then return wp end
-        end
-        if parent:IsA("BasePart") then
-            return parent.Position
-        end
-        if parent:IsA("Model") then
-            local mp = mainPart(parent)
-            return mp and mp.Position or nil
-        end
-        local mp = mainPart(parent)
-        return mp and mp.Position or nil
-    end
-
-    local function triggerPrompt(prompt)
-        if not (prompt and prompt.Parent and prompt.Enabled) then return false end
-
-        local t = firePromptLastAt[prompt]
-        if t and (os.clock() - t) < FIRE_PROMPT_COOLDOWN then return false end
-        firePromptLastAt[prompt] = os.clock()
-
-        pcall(function() prompt.RequiresLineOfSight = false end)
-        pcall(function()
-            if typeof(prompt.HoldDuration) == "number" and prompt.HoldDuration > 0.12 then
-                prompt.HoldDuration = 0.12
-            end
-        end)
-
-        RunService.Heartbeat:Wait()
-
-        local ok = pcall(function()
-            PPS:TriggerPrompt(prompt)
-        end)
-        if ok then return true end
-
-        local ok2 = pcall(function()
-            PPS:TriggerPrompt(prompt, lp)
-        end)
-        if ok2 then return true end
-
-        local hold = 0
-        pcall(function() hold = tonumber(prompt.HoldDuration) or 0 end)
-
-        local ok3 = pcall(function() prompt:InputHoldBegin() end)
-        if not ok3 then return false end
-
-        task.delay(math.max(0.03, hold + 0.03), function()
-            if prompt and prompt.Parent then
-                pcall(function() prompt:InputHoldEnd() end)
-            end
-        end)
-
-        return true
-    end
-
     local CHEST_FLOOR_RAY_DEPTH = 80.0
     local FRONT_DIST = 4.0
     local STAND_UP = 2.5
@@ -1074,7 +999,7 @@ return function(C, R, UI)
 
     local function teleportNearChest(m)
         if not (m and m.Parent and m:IsA("Model")) then return false end
-        if EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name) then
+        if EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) then
             return false
         end
 
@@ -1084,9 +1009,6 @@ return function(C, R, UI)
         local chestCenter = mp.Position
         local chestTopY = mp.Position.Y + (mp.Size.Y * 0.5)
 
-        local prompt = findChestPromptPreferred(m)
-        local ppos = prompt and promptWorldPos(prompt) or nil
-
         local root = hrp()
         local hingePos = hingeBackCenter(m)
 
@@ -1095,11 +1017,6 @@ return function(C, R, UI)
             if not v then return end
             if v.Magnitude < 1e-3 then return end
             dirs[#dirs+1] = v.Unit
-        end
-
-        if ppos then
-            addDir(ppos - chestCenter)
-            addDir(chestCenter - ppos)
         end
 
         if hingePos then
@@ -1148,7 +1065,7 @@ return function(C, R, UI)
         local list = {}
         for _,m in ipairs(items:GetChildren()) do
             if m:IsA("Model") and isChestName(m.Name) then
-                if not (EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name)) then
+                if not (EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name)) then
                     list[#list+1] = m
                 end
             end
@@ -1238,7 +1155,7 @@ return function(C, R, UI)
             if not (inst and inst.Parent) then return end
             if not isUnderItems(inst, items) then return end
             if isChestInst(inst) then return end
-            if isSnowChestName(inst.Name) or isHalloweenChestName(inst.Name) then return end
+            if isSnowChestName(inst.Name) then return end
             if seen[inst] then return end
             seen[inst] = true
             out[#out+1] = inst
@@ -1507,51 +1424,13 @@ return function(C, R, UI)
         return didAny
     end
 
-    local function confirmAndCaptureDropsForChest(chest, preSet)
-        local opened = false
+    local function collectDropsForChest(chest, preSet)
         local gotAny = false
 
-        local confirmTimeout = math.max(CHEST_OPEN_CONFIRM_TIMEOUT_SECONDS, 0.5)
         local spawnRadius = math.max(tonumber(C.State.ChestSpawnRadius) or 10.0, 2.0)
         local captureRadius = math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, spawnRadius + 12.0)
         local captureWindowMin = math.max(tonumber(C.State.ChestCollectWindowSeconds) or CHEST_COLLECT_WINDOW_SECONDS, 0.05)
         local captureWindowMax = math.max(CHEST_MAX_COLLECT_WINDOW_SECONDS, captureWindowMin)
-
-        local t0 = os.clock()
-        local tConfirmEnd = t0 + confirmTimeout
-
-        while alive and chest and chest.Parent and os.clock() <= tConfirmEnd do
-            local pos = modelWorldPos(chest)
-            if pos then
-                local cap = processNewSinceSnapshot(pos, captureRadius, preSet, CHEST_CAPTURE_MAX_PER_POLL)
-                if cap > 0 then
-                    gotAny = true
-                    opened = true
-                    break
-                end
-            end
-
-            local rayCap = processRaycastNewLoot(chest, preSet, CHEST_CAPTURE_MAX_PER_POLL)
-            if rayCap > 0 then
-                gotAny = true
-                opened = true
-                break
-            end
-
-            local p = findChestPromptPreferred(chest)
-            if not (p and p.Parent) then
-                opened = true
-                break
-            end
-
-            local dt = os.clock() - t0
-            local waitT = (dt <= CHEST_FAST_POLL_DURATION) and CHEST_FAST_POLL_INTERVAL or CHEST_CONFIRM_POLL_INTERVAL
-            task.wait(waitT)
-        end
-
-        if not opened then
-            return false, false
-        end
 
         local tOpen = os.clock()
         local tMinEnd = tOpen + captureWindowMin
@@ -1594,12 +1473,31 @@ return function(C, R, UI)
         if rayCapFinal > 0 then gotAny = true end
         task.wait(0.05)
 
-        return true, gotAny
+        return gotAny
+    end
+
+    local function chestsWithinDistance(centerPos, radius)
+        local items = itemsFolder()
+        if not items then return {} end
+        local out = {}
+        for _,m in ipairs(items:GetChildren()) do
+            if m:IsA("Model") and isChestName(m.Name) then
+                if not (EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name)) then
+                    if not chestOpened(m) then
+                        local p = modelWorldPos(m)
+                        if p and (p - centerPos).Magnitude <= radius then
+                            out[#out+1] = m
+                        end
+                    end
+                end
+            end
+        end
+        return out
     end
 
     local function openChestOnce(chest)
         if not (chest and chest.Parent) then return false end
-        if EXCLUDE_NAMES[chest.Name] or isSnowChestName(chest.Name) or isHalloweenChestName(chest.Name) then
+        if EXCLUDE_NAMES[chest.Name] or isSnowChestName(chest.Name) then
             pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
             return false
         end
@@ -1612,31 +1510,42 @@ return function(C, R, UI)
             return false
         end
 
+        local root = hrp()
+        if not root then return false end
+        if (root.Position - pos).Magnitude > OPEN_CHEST_MAX_DISTANCE then
+            return false
+        end
+
         local snapRad = math.max(math.max(tonumber(C.State.ChestCaptureRadius) or 22.0, tonumber(C.State.ChestSpawnRadius) or 10.0) + 16.0, 18.0)
         local preSet = snapshotNearChest(pos, snapRad)
 
-        local prompt = findChestPromptPreferred(chest)
-        if not prompt then
-            local cap = processAllNear(pos, tonumber(C.State.ChestCaptureRadius) or 22.0)
-            local rayCap = processRaycastNewLoot(chest, preSet, CHEST_CAPTURE_MAX_PER_POLL)
-            if (cap > 0) or (rayCap > 0) then
-                pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
-                return true, true
+        local nearbyChests = chestsWithinDistance(root.Position, OPEN_CHEST_MAX_DISTANCE)
+        if #nearbyChests == 0 then
+            nearbyChests = { chest }
+        end
+
+        local firedAny = false
+        for i=1,#nearbyChests do
+            local c = nearbyChests[i]
+            if fireOpenChest(c) then
+                firedAny = true
+                attemptedAt[c] = os.clock()
             end
+        end
+
+        if not firedAny then
             return false
         end
 
-        local okTrig = triggerPrompt(prompt)
-        if not okTrig then
-            return false
+        local gotAny = collectDropsForChest(chest, preSet)
+        pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
+        for i=1,#nearbyChests do
+            local c = nearbyChests[i]
+            if c ~= chest then
+                pcall(function() c:SetAttribute(UID_OPEN_KEY, true) end)
+            end
         end
-
-        local opened, gotAny = confirmAndCaptureDropsForChest(chest, preSet)
-        if opened then
-            pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
-            return true, gotAny
-        end
-        return false
+        return true, gotAny
     end
 
     local Tracked = {}
@@ -1862,7 +1771,7 @@ return function(C, R, UI)
 
         for _,m in ipairs(items:GetChildren()) do
             if m and m.Parent and m:IsA("Model") and isChestName(m.Name) then
-                if not (EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name) or isHalloweenChestName(m.Name)) then
+                if not (EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name)) then
                     if not chestOpened(m) then
                         local p = modelWorldPos(m)
                         if p then
@@ -1967,6 +1876,77 @@ return function(C, R, UI)
         setSkipGuiVisible(false)
         currentRunChest = nil
         emptySince = 0
+    end
+
+    local quickOn = false
+    local quickLoop = nil
+
+    local function quickOpenPass()
+        while alive and quickOn and trackOn do
+            pruneTracked()
+            local chest = nextChestFromTracked()
+            if not chest then break end
+
+            currentRunChest = chest
+            attemptedAt[chest] = os.clock()
+
+            local okTp = teleportNearChest(chest)
+            if okTp then
+                local waitBeforeOpen = tonumber(C.State.ChestWaitAfterTeleportBeforeOpen) or CHEST_WAIT_AFTER_TELEPORT_BEFORE_OPEN
+                if waitBeforeOpen > 0 then task.wait(waitBeforeOpen) end
+
+                local root = hrp()
+                local pos = modelWorldPos(chest)
+                if root and pos and (root.Position - pos).Magnitude <= OPEN_CHEST_MAX_DISTANCE then
+                    local nearbyChests = chestsWithinDistance(root.Position, OPEN_CHEST_MAX_DISTANCE)
+                    if #nearbyChests == 0 then nearbyChests = { chest } end
+                    for i=1,#nearbyChests do
+                        local c = nearbyChests[i]
+                        if fireOpenChest(c) then
+                            attemptedAt[c] = os.clock()
+                            pcall(function() c:SetAttribute(UID_OPEN_KEY, true) end)
+                        end
+                    end
+                end
+            end
+
+            removeTrackedChest(chest)
+            currentRunChest = nil
+            task.wait(0.10)
+        end
+    end
+
+    local function quickCollectPass()
+        local root = hrp()
+        if not root then return end
+        processAllNear(root.Position, tonumber(C.State.ChestCaptureRadius) or 22.0, CHEST_CAPTURE_MAX_PER_POLL)
+    end
+
+    local function startQuickChests()
+        if quickOn then return end
+        quickOn = true
+        C.State.Toggles.QuickChests = true
+        if not trackOn then
+            startTracking()
+        end
+        if quickLoop then return end
+        quickLoop = task.spawn(function()
+            while alive and quickOn do
+                quickOpenPass()
+                task.wait(0.30)
+                quickCollectPass()
+                task.wait(0.30)
+                if #Tracked == 0 then
+                    task.wait(1.0)
+                end
+            end
+            quickLoop = nil
+        end)
+    end
+
+    local function stopQuickChests()
+        quickOn = false
+        C.State.Toggles.QuickChests = false
     end
 
     local grabOn = false
@@ -2120,6 +2100,7 @@ return function(C, R, UI)
                 startTracking()
             else
                 stopRun()
+                stopQuickChests()
                 stopTracking()
             end
         end
@@ -2138,6 +2119,34 @@ return function(C, R, UI)
                 startRun()
             else
                 stopRun()
+            end
+        end
+    })
+
+    ExtraTab:Toggle({
+        Title = "Quick Chests",
+        Value = C.State.Toggles.QuickChests,
+        Callback = function(on)
+            C.State.Toggles.QuickChests = on
+            if on then
+                startQuickChests()
+            else
+                stopQuickChests()
+            end
+        end
+    })
+
+    ExtraTab:Button({
+        Title = "Open Chest",
+        Callback = function()
+            local root = hrp()
+            if not root then return end
+            local nearby = chestsWithinDistance(root.Position, OPEN_CHEST_MAX_DISTANCE)
+            for i=1,#nearby do
+                local c = nearby[i]
+                if fireOpenChest(c) then
+                    attemptedAt[c] = os.clock()
+                end
             end
         end
     })
@@ -2228,6 +2237,7 @@ return function(C, R, UI)
     function api.Destroy()
         alive = false
         stopRun()
+        stopQuickChests()
         stopTracking()
         stopGrabNearby()
         stopItemSearch()
@@ -2255,6 +2265,10 @@ return function(C, R, UI)
         end
     else
         setSkipGuiVisible(false)
+    end
+
+    if C.State.Toggles.QuickChests then
+        startQuickChests()
     end
 
     if C.State.Toggles.GrabNearby then
