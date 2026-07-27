@@ -443,6 +443,10 @@ return function(C, R, UI)
         ["Rifle Ammo"] = true,
     }
 
+    local CONSUME_ITEM_NAMES = {
+        ["Rifle Ammo"] = true,
+    }
+
     local SPECIAL_TAKE_NAMES = {
         ["Strong Axe"] = true,
         ["Strong Flashlight"] = true,
@@ -524,8 +528,36 @@ return function(C, R, UI)
         return false
     end
 
+    local function consumeItem(itemInst)
+        if not (itemInst and itemInst.Parent) then return false end
+
+        local itemsRoot = itemsFolder()
+        if not (itemsRoot and isUnderItems(itemInst, itemsRoot)) then return false end
+
+        local takeRS, _ = getTakeRoots()
+        local rf = takeRS:FindFirstChild("RemoteEvents")
+        if not rf then return false end
+        local consumeRF = rf:FindFirstChild("RequestConsumeItem")
+        if not consumeRF then return false end
+
+        local ok = pcall(function()
+            if consumeRF:IsA("RemoteFunction") then
+                consumeRF:InvokeServer(itemInst)
+            else
+                consumeRF:FireServer(itemInst)
+            end
+        end)
+        return ok
+    end
+
     local function takeItemToInventory(itemInst)
         if not (itemInst and itemInst.Parent) then return false end
+
+        if CONSUME_ITEM_NAMES[itemInst.Name] then
+            if consumeItem(itemInst) then
+                return true
+            end
+        end
 
         local itemsRoot = itemsFolder()
         if not (itemsRoot and isUnderItems(itemInst, itemsRoot)) then return false end
@@ -1081,7 +1113,7 @@ return function(C, R, UI)
         return (os.clock() - t) <= windowSec
     end
 
-    local function captureInst(inst)
+    local function captureInst(inst, forceHover)
         if not (inst and inst.Parent) then return false end
 
         local itemsRoot = itemsFolder()
@@ -1092,22 +1124,24 @@ return function(C, R, UI)
 
         local n = inst.Name
 
-        if n == "Thorn Body" then
-            if tryEquipThornBody(inst) then
-                return true
+        if not forceHover then
+            if n == "Thorn Body" then
+                if tryEquipThornBody(inst) then
+                    return true
+                end
             end
-        end
 
-        if ALWAYS_TAKE_NAMES[n] then
-            if takeItemToInventory(inst) then
-                return true
+            if ALWAYS_TAKE_NAMES[n] then
+                if takeItemToInventory(inst) then
+                    return true
+                end
             end
-        end
 
-        local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
-        if wantsTake and (not hasSpecialInInventory(n)) then
-            if takeItemToInventory(inst) then
-                return true
+            local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
+            if wantsTake and (not hasSpecialInInventory(n)) then
+                if takeItemToInventory(inst) then
+                    return true
+                end
             end
         end
 
@@ -1327,7 +1361,7 @@ return function(C, R, UI)
         return didAny
     end
 
-    local function processAllNear(pos, rad, maxCount)
+    local function processAllNear(pos, rad, maxCount, forceHover)
         local cands = getCandidatesNear(pos, rad)
         local didAny = 0
         for i=1,#cands do
@@ -1336,19 +1370,21 @@ return function(C, R, UI)
                 local n = inst.Name
                 local did = false
 
-                if n == "Thorn Body" then
-                    did = (tryEquipThornBody(inst) and true or false)
-                elseif ALWAYS_TAKE_NAMES[n] then
-                    did = takeItemToInventory(inst) and true or false
-                else
-                    local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
-                    if wantsTake and (not hasSpecialInInventory(n)) then
+                if not forceHover then
+                    if n == "Thorn Body" then
+                        did = (tryEquipThornBody(inst) and true or false)
+                    elseif ALWAYS_TAKE_NAMES[n] then
                         did = takeItemToInventory(inst) and true or false
+                    else
+                        local wantsTake = (SPECIAL_TAKE_NAMES[n] == true) or isSwordName(n)
+                        if wantsTake and (not hasSpecialInInventory(n)) then
+                            did = takeItemToInventory(inst) and true or false
+                        end
                     end
                 end
 
                 if (not did) and (not CapturedSet[inst]) then
-                    if captureInst(inst) then
+                    if captureInst(inst, forceHover) then
                         did = true
                     end
                 end
@@ -1969,7 +2005,7 @@ return function(C, R, UI)
             while alive and grabOn do
                 local root = hrp()
                 if root then
-                    processAllNear(root.Position, 10.0, 80)
+                    processAllNear(root.Position, 10.0, 80, true)
                 end
                 task.wait(0.35)
             end
