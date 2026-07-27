@@ -24,6 +24,9 @@ return function(C, R, UI)
         QuickCollectStepDelay = 0.04,
         QuickPassGapDelay = 0.10,
         QuickEmptyWait = 1.0,
+        QuickLastChestExtraWait = 0.60,
+        QuickCollectPollInterval = 0.08,
+        QuickCollectPollDuration = 0.35,
     }
 
     C.State = C.State or { Toggles = {} }
@@ -1892,11 +1895,17 @@ return function(C, R, UI)
 
             removeTrackedChest(chest)
             currentRunChest = nil
-            if Tuning.QuickOpenStepDelay > 0 then task.wait(Tuning.QuickOpenStepDelay) end
+
+            pruneTracked()
+            if #Tracked == 0 then
+                if Tuning.QuickLastChestExtraWait > 0 then task.wait(Tuning.QuickLastChestExtraWait) end
+            elseif Tuning.QuickOpenStepDelay > 0 then
+                task.wait(Tuning.QuickOpenStepDelay)
+            end
         end
     end
 
-    local function quickCollectPass()
+    local function quickSweepVisited()
         local captureRadius = tonumber(C.State.ChestCaptureRadius) or 22.0
         for i=1,#QuickVisited do
             if not (alive and quickOn) then break end
@@ -1905,10 +1914,23 @@ return function(C, R, UI)
                 local cf = CFrame.new(pos + Vector3.new(0, Tuning.STAND_UP, 0), pos)
                 teleportToCF(cf)
                 if Tuning.QuickCollectTeleportSettle > 0 then task.wait(Tuning.QuickCollectTeleportSettle) end
-                processAllNear(pos, captureRadius, Tuning.CHEST_CAPTURE_MAX_PER_POLL)
+
+                local tEnd = os.clock() + Tuning.QuickCollectPollDuration
+                repeat
+                    processAllNear(pos, captureRadius, Tuning.CHEST_CAPTURE_MAX_PER_POLL)
+                    if os.clock() >= tEnd then break end
+                    task.wait(Tuning.QuickCollectPollInterval)
+                until (not (alive and quickOn))
+
                 if Tuning.QuickCollectStepDelay > 0 then task.wait(Tuning.QuickCollectStepDelay) end
             end
         end
+    end
+
+    local function quickCollectPass()
+        quickSweepVisited()
+        if Tuning.QuickPassGapDelay > 0 then task.wait(Tuning.QuickPassGapDelay) end
+        quickSweepVisited()
         table.clear(QuickVisited)
     end
 
