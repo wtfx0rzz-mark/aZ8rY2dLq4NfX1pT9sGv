@@ -27,6 +27,7 @@ return function(C, R, UI)
         QuickLastChestExtraWait = 0.60,
         QuickCollectPollInterval = 0.08,
         QuickCollectPollDuration = 0.35,
+        MAX_CHEST_FAILED_ATTEMPTS = 3,
     }
 
     C.State = C.State or { Toggles = {} }
@@ -1113,6 +1114,26 @@ return function(C, R, UI)
         return (os.clock() - t) <= windowSec
     end
 
+    local failedAttempts = setmetatable({}, { __mode = "k" })
+    local function giveUpOnChest(chest)
+        if not chest then return end
+        pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
+        failedAttempts[chest] = nil
+    end
+
+    local function noteChestAttemptResult(chest, succeeded)
+        if not chest then return end
+        if succeeded then
+            failedAttempts[chest] = nil
+            return
+        end
+        local n = (failedAttempts[chest] or 0) + 1
+        failedAttempts[chest] = n
+        if n >= Tuning.MAX_CHEST_FAILED_ATTEMPTS then
+            giveUpOnChest(chest)
+        end
+    end
+
     local function captureInst(inst, forceHover)
         if not (inst and inst.Parent) then return false end
 
@@ -1859,6 +1880,7 @@ return function(C, R, UI)
 
                 local okTp = teleportNearChest(chest)
                 if not okTp then
+                    noteChestAttemptResult(chest, false)
                     task.wait(0.20)
                     continue
                 end
@@ -1867,6 +1889,7 @@ return function(C, R, UI)
                 if waitBeforeOpen > 0 then task.wait(waitBeforeOpen) end
 
                 local okOpen = openChestOnce(chest)
+                noteChestAttemptResult(chest, okOpen)
                 if okOpen then
                     removeTrackedChest(chest)
                     currentRunChest = nil
@@ -1927,6 +1950,9 @@ return function(C, R, UI)
                 end
             end
 
+            local succeeded = chestOpened(chest)
+            noteChestAttemptResult(chest, succeeded)
+
             removeTrackedChest(chest)
             currentRunChest = nil
 
@@ -1970,19 +1996,31 @@ return function(C, R, UI)
     local quickChestsToggleObj = nil
     local _settingQuickChestsToggle = false
     local function setQuickChestsToggleUI(v)
-        if not quickChestsToggleObj then return false end
+        if not quickChestsToggleObj then
+            warn("QuickChestsToggle: quickChestsToggleObj is nil, cannot set UI")
+            return false
+        end
         _settingQuickChestsToggle = true
         local ok = pcall(function()
             if quickChestsToggleObj.SetValue then
+                print("QuickChestsToggle: using SetValue")
                 quickChestsToggleObj:SetValue(v)
             elseif quickChestsToggleObj.Set then
+                print("QuickChestsToggle: using Set")
                 quickChestsToggleObj:Set(v)
             elseif quickChestsToggleObj.SetState then
+                print("QuickChestsToggle: using SetState")
                 quickChestsToggleObj:SetState(v)
             elseif quickChestsToggleObj.Update then
+                print("QuickChestsToggle: using Update")
                 quickChestsToggleObj:Update(v)
+            else
+                warn("QuickChestsToggle: no known set method found on toggle object")
             end
         end)
+        if not ok then
+            warn("QuickChestsToggle: pcall failed when setting UI value")
+        end
         _settingQuickChestsToggle = false
         return ok
     end
