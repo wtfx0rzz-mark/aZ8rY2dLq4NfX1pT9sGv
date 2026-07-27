@@ -1966,6 +1966,27 @@ return function(C, R, UI)
         table.clear(QuickVisited)
     end
 
+    local quickEmptySince = 0
+    local quickChestsToggleObj = nil
+    local _settingQuickChestsToggle = false
+    local function setQuickChestsToggleUI(v)
+        if not quickChestsToggleObj then return false end
+        _settingQuickChestsToggle = true
+        local ok = pcall(function()
+            if quickChestsToggleObj.SetValue then
+                quickChestsToggleObj:SetValue(v)
+            elseif quickChestsToggleObj.Set then
+                quickChestsToggleObj:Set(v)
+            elseif quickChestsToggleObj.SetState then
+                quickChestsToggleObj:SetState(v)
+            elseif quickChestsToggleObj.Update then
+                quickChestsToggleObj:Update(v)
+            end
+        end)
+        _settingQuickChestsToggle = false
+        return ok
+    end
+
     local function startQuickChests()
         if quickOn then return end
         quickOn = true
@@ -1973,6 +1994,7 @@ return function(C, R, UI)
         if not trackOn then
             startTracking()
         end
+        quickEmptySince = 0
         if quickLoop then return end
         quickLoop = task.spawn(function()
             while alive and quickOn do
@@ -1981,7 +2003,18 @@ return function(C, R, UI)
                 quickCollectPass()
                 if Tuning.QuickPassGapDelay > 0 then task.wait(Tuning.QuickPassGapDelay) end
                 if #Tracked == 0 then
+                    if Tuning.AUTO_STOP_IF_EMPTY_SECONDS and Tuning.AUTO_STOP_IF_EMPTY_SECONDS > 0 then
+                        if quickEmptySince == 0 then quickEmptySince = os.clock() end
+                        if (os.clock() - quickEmptySince) >= Tuning.AUTO_STOP_IF_EMPTY_SECONDS then
+                            quickOn = false
+                            C.State.Toggles.QuickChests = false
+                            setQuickChestsToggleUI(false)
+                            break
+                        end
+                    end
                     task.wait(Tuning.QuickEmptyWait)
+                else
+                    quickEmptySince = 0
                 end
             end
             quickLoop = nil
@@ -1991,6 +2024,7 @@ return function(C, R, UI)
     local function stopQuickChests()
         quickOn = false
         C.State.Toggles.QuickChests = false
+        quickEmptySince = 0
     end
 
     local grabOn = false
@@ -2163,10 +2197,14 @@ return function(C, R, UI)
         end
     })
 
-    ExtraTab:Toggle({
+    quickChestsToggleObj = ExtraTab:Toggle({
         Title = "Quick Chests",
         Value = C.State.Toggles.QuickChests,
         Callback = function(on)
+            if _settingQuickChestsToggle then
+                C.State.Toggles.QuickChests = on
+                return
+            end
             C.State.Toggles.QuickChests = on
             if on then
                 startQuickChests()
