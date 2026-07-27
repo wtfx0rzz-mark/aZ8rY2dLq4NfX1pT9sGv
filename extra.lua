@@ -1149,14 +1149,12 @@ return function(C, R, UI)
                 end
             end
         end
-        if #out == 0 then
-            for _,ch in ipairs(items:GetChildren()) do
-                if (ch:IsA("Model") or ch:IsA("BasePart")) and ch.Parent then
-                    local mp = mainPart(ch)
-                    if mp then
-                        if (mp.Position - pos).Magnitude <= rad then
-                            push(ch)
-                        end
+        for _,ch in ipairs(items:GetChildren()) do
+            if (ch:IsA("Model") or ch:IsA("BasePart")) and ch.Parent then
+                local mp = mainPart(ch)
+                if mp then
+                    if (mp.Position - pos).Magnitude <= rad then
+                        push(ch)
                     end
                 end
             end
@@ -1928,8 +1926,6 @@ return function(C, R, UI)
     end
 
     local function quickCollectPass()
-        quickSweepVisited()
-        if Tuning.QuickPassGapDelay > 0 then task.wait(Tuning.QuickPassGapDelay) end
         quickSweepVisited()
         table.clear(QuickVisited)
     end
