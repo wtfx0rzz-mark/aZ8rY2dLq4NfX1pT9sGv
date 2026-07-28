@@ -404,7 +404,10 @@ return function(C, R, UI)
         C.State.ChestSpawnRadius = 10.00
     end
 
-    local UID_OPEN_KEY = tostring(lp.UserId) .. "Opened"
+    local OpenedSet = setmetatable({}, { __mode = "k" })
+    local function markChestOpened(chest)
+        if chest then OpenedSet[chest] = true end
+    end
 
     local RF_Start = nil
     local RF_Stop = nil
@@ -903,8 +906,7 @@ return function(C, R, UI)
 
     local function chestOpened(chestModel)
         if not chestModel then return false end
-        local ok, v = pcall(function() return chestModel:GetAttribute(UID_OPEN_KEY) end)
-        return ok and v == true
+        return OpenedSet[chestModel] == true
     end
 
     local EXCLUDE_NAMES = {
@@ -1101,7 +1103,7 @@ return function(C, R, UI)
             if m and m.Parent and m ~= diamond then
                 local p = modelWorldPos(m)
                 if p and (p - dpos).Magnitude <= 15.0 then
-                    pcall(function() m:SetAttribute(UID_OPEN_KEY, true) end)
+                    markChestOpened(m)
                 end
             end
         end
@@ -1117,7 +1119,7 @@ return function(C, R, UI)
     local failedAttempts = setmetatable({}, { __mode = "k" })
     local function giveUpOnChest(chest)
         if not chest then return end
-        pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
+        markChestOpened(chest)
         failedAttempts[chest] = nil
     end
 
@@ -1532,7 +1534,7 @@ return function(C, R, UI)
     local function openChestOnce(chest)
         if not (chest and chest.Parent) then return false end
         if EXCLUDE_NAMES[chest.Name] or isSnowChestName(chest.Name) then
-            pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
+            markChestOpened(chest)
             return false
         end
 
@@ -1540,7 +1542,7 @@ return function(C, R, UI)
 
         local pos = modelWorldPos(chest)
         if not pos then
-            pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
+            markChestOpened(chest)
             return false
         end
 
@@ -1572,11 +1574,11 @@ return function(C, R, UI)
         end
 
         local gotAny = collectDropsForChest(chest, preSet)
-        pcall(function() chest:SetAttribute(UID_OPEN_KEY, true) end)
+        markChestOpened(chest)
         for i=1,#nearbyChests do
             local c = nearbyChests[i]
             if c ~= chest then
-                pcall(function() c:SetAttribute(UID_OPEN_KEY, true) end)
+                markChestOpened(c)
             end
         end
         return true, gotAny
@@ -1778,7 +1780,7 @@ return function(C, R, UI)
 
         local active = currentRunChest
         if active and active.Parent then
-            pcall(function() active:SetAttribute(UID_OPEN_KEY, true) end)
+            markChestOpened(active)
             attemptedAt[active] = os.clock()
             removeTrackedChest(active)
             currentRunChest = nil
@@ -1821,7 +1823,7 @@ return function(C, R, UI)
 
         if not (best and best.Parent) then return false end
 
-        pcall(function() best:SetAttribute(UID_OPEN_KEY, true) end)
+        markChestOpened(best)
         attemptedAt[best] = os.clock()
         removeTrackedChest(best)
         currentRunChest = nil
@@ -1940,7 +1942,7 @@ return function(C, R, UI)
                         local c = nearbyChests[i]
                         if fireOpenChest(c) then
                             attemptedAt[c] = os.clock()
-                            pcall(function() c:SetAttribute(UID_OPEN_KEY, true) end)
+                            markChestOpened(c)
                             local cpos = modelWorldPos(c)
                             if cpos then
                                 QuickVisited[#QuickVisited+1] = cpos
