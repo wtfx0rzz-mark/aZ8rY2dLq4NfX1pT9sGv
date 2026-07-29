@@ -18,7 +18,7 @@ return function(C, R, UI)
         AUTO_STOP_IF_EMPTY_SECONDS = 8.0,
         STAND_UP = 2.5,
         CHEST_LOOT_RAY_OFF = 1.05,
-        QuickOpenSettleWait = 0.05,
+        QuickOpenSettleWait = 0.2,
         QuickOpenStepDelay = 0.04,
         QuickCollectTeleportSettle = 0.05,
         QuickCollectStepDelay = 0.04,
@@ -404,9 +404,17 @@ return function(C, R, UI)
         C.State.ChestSpawnRadius = 10.00
     end
 
-    local OpenedSet = setmetatable({}, { __mode = "k" })
+    local NATIVE_OPEN_KEY = tostring(lp.UserId) .. "Opened"
+
+    local OpenedSet = {}
     local function markChestOpened(chest)
         if chest then OpenedSet[chest] = true end
+    end
+
+    local function nativeChestOpened(chest)
+        if not chest then return false end
+        local ok, v = pcall(function() return chest:GetAttribute(NATIVE_OPEN_KEY) end)
+        return ok and v == true
     end
 
     local RF_Start = nil
@@ -906,7 +914,7 @@ return function(C, R, UI)
 
     local function chestOpened(chestModel)
         if not chestModel then return false end
-        return OpenedSet[chestModel] == true
+        return nativeChestOpened(chestModel) or OpenedSet[chestModel] == true
     end
 
     local EXCLUDE_NAMES = {
