@@ -1118,29 +1118,27 @@ return function(C, R, UI)
     end
 
     local attemptedAt = setmetatable({}, { __mode = "k" })
-    local function recentlyAttempted(chest, windowSec)
-        local t = attemptedAt[chest]
+    local function recentlyAttemptedRec(rec, windowSec)
+        local t = rec and rec.lastAttemptAt
         if not t then return false end
         return (os.clock() - t) <= windowSec
     end
 
-    local failedAttempts = setmetatable({}, { __mode = "k" })
-    local function giveUpOnChest(chest)
-        if not chest then return end
-        markChestOpened(chest)
-        failedAttempts[chest] = nil
+    local function giveUpOnChestRec(rec)
+        if not rec then return end
+        rec.givenUp = true
+        if rec.model then markChestOpened(rec.model) end
     end
 
-    local function noteChestAttemptResult(chest, succeeded)
-        if not chest then return end
+    local function noteChestAttemptResultRec(rec, succeeded)
+        if not rec then return end
         if succeeded then
-            failedAttempts[chest] = nil
+            rec.failCount = 0
             return
         end
-        local n = (failedAttempts[chest] or 0) + 1
-        failedAttempts[chest] = n
-        if n >= Tuning.MAX_CHEST_FAILED_ATTEMPTS then
-            giveUpOnChest(chest)
+        rec.failCount = (rec.failCount or 0) + 1
+        if rec.failCount >= Tuning.MAX_CHEST_FAILED_ATTEMPTS then
+            giveUpOnChestRec(rec)
         end
     end
 
@@ -1630,10 +1628,13 @@ return function(C, R, UI)
     local function pruneTracked()
         for i = #Tracked, 1, -1 do
             local rec = Tracked[i]
-            local m = rec and rec.model or nil
-            if (not m) or (not m.Parent) or chestOpened(m) then
-                if m then TrackedSet[m] = nil end
-                table.remove(Tracked, i)
+            if rec then
+                local m = rec.model
+                local confirmedOpen = (m and m.Parent and chestOpened(m)) or false
+                if rec.givenUp or confirmedOpen then
+                    if m then TrackedSet[m] = nil end
+                    table.remove(Tracked, i)
+                end
             end
         end
     end
@@ -1652,8 +1653,24 @@ return function(C, R, UI)
             if m and m.Parent and (not chestOpened(m)) and (not TrackedSet[m]) then
                 local pos = modelWorldPos(m)
                 if pos then
-                    TrackedSet[m] = true
-                    Tracked[#Tracked+1] = { model = m, pos = pos }
+                    local relinked = nil
+                    for j=1,#Tracked do
+                        local rec = Tracked[j]
+                        if rec and (not rec.model) and rec.pos and (not rec.givenUp) then
+                            if (rec.pos - pos).Magnitude <= 4.0 then
+                                relinked = rec
+                                break
+                            end
+                        end
+                    end
+                    if relinked then
+                        relinked.model = m
+                        relinked.pos = pos
+                        TrackedSet[m] = true
+                    else
+                        TrackedSet[m] = true
+                        Tracked[#Tracked+1] = { model = m, pos = pos, failCount = 0 }
+                    end
                 end
             end
         end
@@ -1664,6 +1681,9 @@ return function(C, R, UI)
             if m and m.Parent then
                 local p = modelWorldPos(m)
                 if p then rec.pos = p end
+            elseif m and not m.Parent then
+                TrackedSet[m] = nil
+                rec.model = nil
             end
         end
 
@@ -1715,15 +1735,16 @@ return function(C, R, UI)
 
         for i=1,#Tracked do
             local rec = Tracked[i]
-            local m = rec and rec.model or nil
-            if m and m.Parent and (not chestOpened(m)) then
-                if not recentlyAttempted(m, skipWindow) then
-                    local p = rec.pos or modelWorldPos(m)
+            if rec and (not rec.givenUp) then
+                local m = rec.model
+                local isOpen = (m and m.Parent and chestOpened(m)) or false
+                if not isOpen and not recentlyAttemptedRec(rec, skipWindow) then
+                    local p = rec.pos
                     if p then
                         local d = (p - rpos).Magnitude
                         if d < bestD then
                             bestD = d
-                            best = m
+                            best = rec
                         end
                     end
                 end
@@ -1743,6 +1764,58 @@ return function(C, R, UI)
                 return
             end
         end
+    end
+
+    local function removeTrackedRec(rec)
+        if not rec then return end
+        if rec.model then TrackedSet[rec.model] = nil end
+        for i = #Tracked, 1, -1 do
+            if Tracked[i] == rec then
+                table.remove(Tracked, i)
+                return
+            end
+        end
+    end
+
+    local function ensureChestResolved(rec)
+        if not rec then return nil end
+        if rec.model and rec.model.Parent then
+            return rec.model
+        end
+        if not rec.pos then return nil end
+
+        local root = hrp()
+        if root then
+            local cf = CFrame.new(rec.pos + Vector3.new(0, Tuning.STAND_UP, 0), rec.pos)
+            teleportToCF(cf)
+        end
+
+        local items = itemsFolder()
+        local deadline = os.clock() + 3.0
+        while os.clock() < deadline do
+            if items then
+                local found = nil
+                for _,m in ipairs(items:GetChildren()) do
+                    if m:IsA("Model") and isChestName(m.Name) then
+                        if not (EXCLUDE_NAMES[m.Name] or isSnowChestName(m.Name)) then
+                            local p = modelWorldPos(m)
+                            if p and (p - rec.pos).Magnitude <= 4.0 then
+                                found = m
+                                break
+                            end
+                        end
+                    end
+                end
+                if found then
+                    rec.model = found
+                    TrackedSet[found] = true
+                    return found
+                end
+            end
+            task.wait(0.15)
+        end
+
+        return nil
     end
 
     local skipGui = nil
@@ -1879,9 +1952,18 @@ return function(C, R, UI)
 
                 emptySince = 0
 
-                local chest = nextChestFromTracked()
-                if not chest then
+                local rec = nextChestFromTracked()
+                if not rec then
                     task.wait(0.25)
+                    continue
+                end
+
+                rec.lastAttemptAt = os.clock()
+
+                local chest = ensureChestResolved(rec)
+                if not chest then
+                    noteChestAttemptResultRec(rec, false)
+                    task.wait(0.20)
                     continue
                 end
 
@@ -1890,7 +1972,7 @@ return function(C, R, UI)
 
                 local okTp = teleportNearChest(chest)
                 if not okTp then
-                    noteChestAttemptResult(chest, false)
+                    noteChestAttemptResultRec(rec, false)
                     task.wait(0.20)
                     continue
                 end
@@ -1899,9 +1981,9 @@ return function(C, R, UI)
                 if waitBeforeOpen > 0 then task.wait(waitBeforeOpen) end
 
                 local okOpen = openChestOnce(chest)
-                noteChestAttemptResult(chest, okOpen)
+                noteChestAttemptResultRec(rec, okOpen)
                 if okOpen then
-                    removeTrackedChest(chest)
+                    removeTrackedRec(rec)
                     currentRunChest = nil
                     local postDelay = tonumber(C.State.ChestDelayAfterCollectionBeforeNext) or 0.05
                     if postDelay > 0 then task.wait(postDelay) end
@@ -1931,39 +2013,46 @@ return function(C, R, UI)
         table.clear(QuickVisited)
         while alive and quickOn and trackOn do
             pruneTracked()
-            local chest = nextChestFromTracked()
-            if not chest then break end
+            local rec = nextChestFromTracked()
+            if not rec then break end
 
-            currentRunChest = chest
-            attemptedAt[chest] = os.clock()
+            rec.lastAttemptAt = os.clock()
 
-            local okTp = teleportNearChest(chest)
-            if okTp then
-                if Tuning.QuickOpenSettleWait > 0 then task.wait(Tuning.QuickOpenSettleWait) end
+            local chest = ensureChestResolved(rec)
+            if chest then
+                currentRunChest = chest
+                attemptedAt[chest] = os.clock()
 
-                local root = hrp()
-                local pos = modelWorldPos(chest)
-                if root and pos and (root.Position - pos).Magnitude <= Tuning.OPEN_CHEST_MAX_DISTANCE then
-                    local nearbyChests = chestsWithinDistance(root.Position, Tuning.OPEN_CHEST_MAX_DISTANCE)
-                    if #nearbyChests == 0 then nearbyChests = { chest } end
-                    for i=1,#nearbyChests do
-                        local c = nearbyChests[i]
-                        if fireOpenChest(c) then
-                            attemptedAt[c] = os.clock()
-                            markChestOpened(c)
-                            local cpos = modelWorldPos(c)
-                            if cpos then
-                                QuickVisited[#QuickVisited+1] = cpos
+                local okTp = teleportNearChest(chest)
+                if okTp then
+                    if Tuning.QuickOpenSettleWait > 0 then task.wait(Tuning.QuickOpenSettleWait) end
+
+                    local root = hrp()
+                    local pos = modelWorldPos(chest)
+                    if root and pos and (root.Position - pos).Magnitude <= Tuning.OPEN_CHEST_MAX_DISTANCE then
+                        local nearbyChests = chestsWithinDistance(root.Position, Tuning.OPEN_CHEST_MAX_DISTANCE)
+                        if #nearbyChests == 0 then nearbyChests = { chest } end
+                        for i=1,#nearbyChests do
+                            local c = nearbyChests[i]
+                            if fireOpenChest(c) then
+                                attemptedAt[c] = os.clock()
+                                markChestOpened(c)
+                                local cpos = modelWorldPos(c)
+                                if cpos then
+                                    QuickVisited[#QuickVisited+1] = cpos
+                                end
                             end
                         end
                     end
                 end
             end
 
-            local succeeded = chestOpened(chest)
-            noteChestAttemptResult(chest, succeeded)
+            local succeeded = chest and chestOpened(chest) or false
+            noteChestAttemptResultRec(rec, succeeded)
 
-            removeTrackedChest(chest)
+            if succeeded then
+                removeTrackedRec(rec)
+            end
             currentRunChest = nil
 
             pruneTracked()
