@@ -36,10 +36,6 @@ return function(C, R, UI)
     local AIR_DROP_WAVE_AMPLITUDE = 1.0
     local AIR_DROP_WAVE_FREQUENCY = 1.3
 
-    local SETTLE_SECONDS       = 0.25
-    local MAX_PASSES           = 6
-    local MAX_CONSECUTIVE_EMPTY = 2
-
     local _map  = workspace:FindFirstChild("Map")
     local _camp = _map and _map:FindFirstChild("Campground")
     local CAMPFIRE_PATH = _camp and _camp:FindFirstChild("MainFire")
@@ -209,7 +205,6 @@ end
     end
 
     local DragStarted = setmetatable({}, { __mode = "k" })
-    local firstSeenAt = setmetatable({}, { __mode = "k" })
 
     local function safeStartDrag(r, model)
         if r and r.StartDrag and model and model.Parent then
@@ -1095,14 +1090,9 @@ end
                         if not isExcludedModel(m) and not isLogWallBlocked(m, selectedSet) then
                             local mp = mainPart(m)
                             if mp then
-                                local seenAt = firstSeenAt[m]
-                                if not seenAt then
-                                    firstSeenAt[m] = now()
-                                elseif (now() - seenAt) >= SETTLE_SECONDS then
-                                    perNameCount[m.Name] = (perNameCount[m.Name] or 0) + 1
-                                    if (not limitOn) or perNameCount[m.Name] <= maxPerName then
-                                        queue[#queue+1] = m
-                                    end
+                                perNameCount[m.Name] = (perNameCount[m.Name] or 0) + 1
+                                if (not limitOn) or perNameCount[m.Name] <= maxPerName then
+                                    queue[#queue+1] = m
                                 end
                             end
                         end
@@ -1112,8 +1102,8 @@ end
             end
 
             local alreadyMoved = {}
-            local emptyPasses = 0
-            for pass = 1, MAX_PASSES do
+            local maxPasses = 3
+            for pass = 1, maxPasses do
                 if root then
                     requestMoreStreamingAround({ root.Position })
                 end
@@ -1121,23 +1111,18 @@ end
                 local queue = scanQueue(alreadyMoved)
 
                 if #queue == 0 then
-                    emptyPasses += 1
-                    if emptyPasses >= MAX_CONSECUTIVE_EMPTY then
-                        break
-                    end
                     if WS.StreamingEnabled and root then
                         requestMoreStreamingAround({ root.Position })
+                        task.wait(0.20)
+                    else
+                        break
                     end
-                    task.wait(0.20)
                 else
-                    emptyPasses = 0
                     local dropped = 0
                     for i=1,#queue do
                         local m = queue[i]
-                        if dropNearPlayer(m) then
-                            alreadyMoved[m] = true
-                            dropped += 1
-                        end
+                        alreadyMoved[m] = true
+                        if dropNearPlayer(m) then dropped += 1 end
                         if i % 25 == 0 then Run.Heartbeat:Wait() end
                     end
                     if WS.StreamingEnabled and dropped > 0 then
