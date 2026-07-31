@@ -15,6 +15,14 @@ return function(C, R, UI)
         local tab  = Tabs.Auto
         if not tab then return end
 
+        local SAPLING_NAMES = {
+            ["Sapling"] = true,
+            ["Birch Sapling"] = true,
+        }
+        local function isSaplingName(n)
+            return type(n) == "string" and SAPLING_NAMES[n] == true
+        end
+
         local function hrp()
             local ch = lp.Character or lp.CharacterAdded:Wait()
             return ch and ch:FindFirstChild("HumanoidRootPart")
@@ -468,7 +476,7 @@ return function(C, R, UI)
             if not (items and root) then return nil end
             local closest, bestDist = nil, math.huge
             for _,m in ipairs(items:GetChildren()) do
-                if m:IsA("Model") and m.Name == "Sapling" then
+                if m:IsA("Model") and isSaplingName(m.Name) then
                     local mp = mainPart(m)
                     if mp then
                         local d = (mp.Position - root.Position).Magnitude
@@ -1142,7 +1150,7 @@ return function(C, R, UI)
             local items = itemsFolder(); if not items then return {} end
             local list = {}
             for _,m in ipairs(items:GetChildren()) do
-                if m:IsA("Model") and m.Name == "Sapling" then
+                if m:IsA("Model") and isSaplingName(m.Name) then
                     local mp = mainPart(m)
                     if mp then list[#list+1] = m end
                 end
@@ -1636,7 +1644,7 @@ return function(C, R, UI)
             if not items then return end
             local saplings = {}
             for _,m in ipairs(items:GetChildren()) do
-                if m:IsA("Model") and m.Name == "Sapling" then
+                if m:IsA("Model") and isSaplingName(m.Name) then
                     saplings[#saplings+1] = m
                 end
             end
