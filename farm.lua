@@ -35,14 +35,12 @@ return function(C, R, UI)
 
         local SKIP_SEC = 2.5
         local NO_PROGRESS_SEC = 1.0
+        local AXE_COOLDOWN_SEC = 0.5
 
-        local SPACE_TAP_EVERY = 5.0
+        local SPACE_TAP_EVERY = 300.0
 
         local SMALL_GROUP_SIZE = 10
-        local SMALL_GROUP_SWITCH_EVERY = 0.4
-
-        local BIG_GROUP_SIZE = 12
-        local BIG_GROUP_SWITCH_EVERY = 0.6
+        local BIG_GROUP_SIZE = 24
 
         local MAP_CENTER = Vector3.new(0, 0, 0)
         local QUADRANT_RADIUS = 400
@@ -50,6 +48,7 @@ return function(C, R, UI)
         local QUADRANT_ALL_EMPTY_STOP_SEC = 6.0
 
         local RecentSkipUntil = {}
+        local HitCooldownUntil = {}
 
         local function shouldSkipTree(treeModel)
             local untilT = RecentSkipUntil[treeModel]
@@ -59,6 +58,16 @@ return function(C, R, UI)
         local function markSkip(treeModel, sec)
             if not treeModel then return end
             RecentSkipUntil[treeModel] = os.clock() + (sec or SKIP_SEC)
+        end
+
+        local function onHitCooldown(treeModel)
+            local untilT = HitCooldownUntil[treeModel]
+            return untilT ~= nil and os.clock() < untilT
+        end
+
+        local function markHitCooldown(treeModel)
+            if not treeModel then return end
+            HitCooldownUntil[treeModel] = os.clock() + AXE_COOLDOWN_SEC
         end
 
         local function hrp()
@@ -299,6 +308,7 @@ return function(C, R, UI)
             if SmallCandidates[inst] then SmallCandidates[inst] = nil end
             if BigCandidates[inst] then BigCandidates[inst] = nil end
             if RecentSkipUntil[inst] then RecentSkipUntil[inst] = nil end
+            if HitCooldownUntil[inst] then HitCooldownUntil[inst] = nil end
         end)
 
         local function farmJumpSendSpaceTap()
@@ -339,7 +349,8 @@ return function(C, R, UI)
             local newY = math.max(rootPos.Y, targetPos.Y + Y_ABOVE_TARGET_PAD)
             local newPos = Vector3.new(posXZ.X, newY, posXZ.Z)
 
-            local cf = CFrame.new(newPos, Vector3.new(targetPos.X, newY, targetPos.Z))
+            local currentRot = root.CFrame - root.CFrame.Position
+            local cf = CFrame.new(newPos) * currentRot
             pivotCharacterTo(cf)
             return newPos
         end
@@ -350,7 +361,8 @@ return function(C, R, UI)
             if dir.Magnitude < 1e-6 then dir = Vector3.new(1, 0, 0) end
             dir = dir.Unit
             local step = dir * NO_CANDIDATE_STEP
-            pivotCharacterTo(root.CFrame + step)
+            local currentRot = root.CFrame - root.CFrame.Position
+            pivotCharacterTo(CFrame.new(root.Position + step) * currentRot)
         end
 
         local moveSmall = false
@@ -393,28 +405,18 @@ return function(C, R, UI)
             return list
         end
 
-        local function makeGroupRotator(candidatesTable, isBig, groupSize, switchEvery)
+        local function makeGroupRotator(candidatesTable, isBig, groupSize)
             local state = {
                 group = nil,
                 index = 1,
-                lastSwitchAt = 0,
-                hitBaseline = setmetatable({}, { __mode = "k" }),
-                setAt = setmetatable({}, { __mode = "k" }),
-                trunkWasPresent = setmetatable({}, { __mode = "k" }),
-                switchEvery = switchEvery,
             }
 
             local function clear()
                 state.group = nil
                 state.index = 1
-                state.lastSwitchAt = 0
-                state.hitBaseline = setmetatable({}, { __mode = "k" })
-                state.setAt = setmetatable({}, { __mode = "k" })
-                state.trunkWasPresent = setmetatable({}, { __mode = "k" })
             end
 
             local function ensureGroup(root)
-                local nowT = os.clock()
                 local sorted = collectValidSorted(candidatesTable, isBig, root.Position)
                 if #sorted == 0 then
                     clear()
@@ -425,16 +427,6 @@ return function(C, R, UI)
                 for i = 1, n do grp[#grp + 1] = sorted[i].tree end
                 state.group = grp
                 state.index = 1
-                state.lastSwitchAt = 0
-                state.hitBaseline = setmetatable({}, { __mode = "k" })
-                state.setAt = setmetatable({}, { __mode = "k" })
-                state.trunkWasPresent = setmetatable({}, { __mode = "k" })
-                for i = 1, #grp do
-                    local t = grp[i]
-                    state.trunkWasPresent[t] = (findTrunkPart(t) ~= nil)
-                    state.hitBaseline[t] = getCurrentHitCount(t)
-                    state.setAt[t] = nowT
-                end
                 return true
             end
 
@@ -458,13 +450,11 @@ return function(C, R, UI)
                     if state.index > #state.group then state.index = 1 end
                     local t = state.group[state.index]
                     state.index += 1
-                    if t and isTreeValid(t, isBig) then
+                    if t and isTreeValid(t, isBig) and not onHitCooldown(t) then
                         return t
                     end
                 end
 
-                clear()
-                if not ensureGroup(root) then return nil end
                 return nil
             end
 
@@ -476,8 +466,8 @@ return function(C, R, UI)
             }
         end
 
-        local smallRotator = makeGroupRotator(SmallCandidates, false, SMALL_GROUP_SIZE, SMALL_GROUP_SWITCH_EVERY)
-        local bigRotator = makeGroupRotator(BigCandidates, true, BIG_GROUP_SIZE, BIG_GROUP_SWITCH_EVERY)
+        local smallRotator = makeGroupRotator(SmallCandidates, false, SMALL_GROUP_SIZE)
+        local bigRotator = makeGroupRotator(BigCandidates, true, BIG_GROUP_SIZE)
 
         local running = false
         local loopConn = nil
@@ -490,9 +480,6 @@ return function(C, R, UI)
         local targetSetAt = 0
         local trunkWasPresent = false
         local hitBaseline = 0
-
-        local lastSwitchAtSmall = 0
-        local lastSwitchAtBig = 0
 
         local emptyQuadrantIndex = 1
         local consecutiveEmptyScans = 0
@@ -561,6 +548,30 @@ return function(C, R, UI)
             end
         end
 
+        local function acquireTarget(root, nowT)
+            if moveBig then
+                local t = bigRotator.pickNext(root)
+                if t then
+                    currentTarget = t
+                    currentIsBig = true
+                    targetSetAt = nowT
+                    trunkWasPresent = (findTrunkPart(t) ~= nil)
+                    hitBaseline = getCurrentHitCount(t)
+                    return
+                end
+            end
+            if moveSmall then
+                local t = smallRotator.pickNext(root)
+                if t then
+                    currentTarget = t
+                    currentIsBig = false
+                    targetSetAt = nowT
+                    trunkWasPresent = (findTrunkPart(t) ~= nil)
+                    hitBaseline = getCurrentHitCount(t)
+                end
+            end
+        end
+
         local function startTeleportLoop()
             if loopConn then loopConn:Disconnect() loopConn = nil end
             running = true
@@ -568,8 +579,6 @@ return function(C, R, UI)
             acc = 0
             lastNoCandStepAt = 0
             lastSpaceTapAt = os.clock()
-            lastSwitchAtSmall = 0
-            lastSwitchAtBig = 0
             consecutiveEmptyScans = 0
             firstEmptyAt = 0
             clearTarget("start", false)
@@ -610,66 +619,35 @@ return function(C, R, UI)
                 end
                 consecutiveEmptyScans = 0
 
-                local pickedThisTick = false
-
-                if moveBig then
-                    if (nowT - lastSwitchAtBig) >= BIG_GROUP_SWITCH_EVERY or (not currentTarget) or (currentIsBig ~= true) then
-                        lastSwitchAtBig = nowT
-                        local t = bigRotator.pickNext(root)
-                        if t then
-                            currentTarget = t
-                            currentIsBig = true
-                            targetSetAt = nowT
-                            trunkWasPresent = (findTrunkPart(t) ~= nil)
-                            hitBaseline = getCurrentHitCount(t)
-                            pickedThisTick = true
-                        end
-                    end
-                elseif currentIsBig then
-                    clearTarget("big_off", false)
+                if currentTarget and moveBig ~= currentIsBig and moveSmall ~= (not currentIsBig) then
+                    clearTarget("mode_off", false)
                 end
 
-                if moveSmall and not pickedThisTick then
-                    if (nowT - lastSwitchAtSmall) >= SMALL_GROUP_SWITCH_EVERY or (not currentTarget) or (currentIsBig ~= false) then
-                        lastSwitchAtSmall = nowT
-                        local t = smallRotator.pickNext(root)
-                        if t then
-                            currentTarget = t
-                            currentIsBig = false
-                            targetSetAt = nowT
-                            trunkWasPresent = (findTrunkPart(t) ~= nil)
-                            hitBaseline = getCurrentHitCount(t)
+                if currentTarget then
+                    if not isTreeValid(currentTarget, currentIsBig) then
+                        clearTarget("invalid", true)
+                    elseif trunkWasPresent and findTrunkPart(currentTarget) == nil then
+                        clearTarget("trunk_removed", true)
+                    else
+                        local hits = getCurrentHitCount(currentTarget)
+                        if hits > hitBaseline then
+                            markHitCooldown(currentTarget)
+                            if currentIsBig and hits >= BIG_MAX_HITS_BEFORE_SKIP then
+                                clearTarget("big_hit_cap", true)
+                            else
+                                clearTarget("hit_landed", false)
+                            end
+                        elseif (nowT - targetSetAt) >= NO_PROGRESS_SEC then
+                            clearTarget("no_progress", true)
                         end
                     end
-                elseif (not moveSmall) and currentTarget and currentIsBig == false then
-                    clearTarget("small_off", false)
                 end
 
                 if not currentTarget then
-                    return
+                    acquireTarget(root, nowT)
                 end
 
-                if not isTreeValid(currentTarget, currentIsBig) then
-                    clearTarget("invalid", true)
-                    return
-                end
-
-                if trunkWasPresent and findTrunkPart(currentTarget) == nil then
-                    clearTarget("trunk_removed", true)
-                    return
-                end
-
-                local hits = getCurrentHitCount(currentTarget)
-                local noHitProgress = (hits <= hitBaseline)
-                local trunkStill = (findTrunkPart(currentTarget) ~= nil)
-
-                if (nowT - targetSetAt) >= NO_PROGRESS_SEC and noHitProgress and trunkStill then
-                    clearTarget("no_progress", true)
-                    return
-                end
-
-                if currentIsBig and hits >= BIG_MAX_HITS_BEFORE_SKIP then
-                    clearTarget("big_hit_cap", true)
+                if not currentTarget then
                     return
                 end
 
