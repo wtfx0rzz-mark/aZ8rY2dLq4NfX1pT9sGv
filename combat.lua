@@ -641,6 +641,8 @@ return function(C, R, UI)
     do
         local TREE_NAMES = {
             ["Small Tree"] = true,
+            ["Dead Tree1"] = true,
+            ["Dead Tree2"] = true,
             ["Snowy Small Tree"] = true,
             ["Small Webbed Tree"] = true,
             ["Christmas Pine"] = true,
