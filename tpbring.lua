@@ -268,7 +268,6 @@ return function(C, R, UI)
     local fuelModeSet  = { ["Coal"] = true, ["Fuel Canister"] = true, ["Oil Barrel"] = true, ["Log"] = true }
     local scrapModeSet = {}
     for k,v in pairs(junkSet) do if v then scrapModeSet[k] = true end end
-    scrapModeSet["Log"]               = true
     scrapModeSet["Cultist Gem"]       = true
     scrapModeSet["Gem of the Forest"] = true
     local logOnlySet   = { ["Log"] = true }
