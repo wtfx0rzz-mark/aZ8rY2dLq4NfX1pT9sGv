@@ -27,6 +27,7 @@ return function(C, R, UI)
         QuickLastChestExtraWait = 0.60,
         QuickCollectPollInterval = 0.08,
         QuickCollectPollDuration = 0.35,
+        DropRecaptureSettleWait = 0.15,
         MAX_CHEST_FAILED_ATTEMPTS = 3,
     }
 
@@ -882,9 +883,17 @@ return function(C, R, UI)
         ensureHoverOn()
     end
 
-    local function releaseAllCaptured()
+    local function releaseAllCaptured(waitForStops)
         ensureHoverOff()
         refreshDragRemotes()
+        local pendingStops = 0
+        local function scheduleStop(m, delaySeconds)
+            pendingStops += 1
+            task.delay(delaySeconds, function()
+                pcall(safeStopDrag, m)
+                pendingStops -= 1
+            end)
+        end
         for i = #CapturedList, 1, -1 do
             local m = CapturedList[i]
             if m and m.Parent then
@@ -898,9 +907,9 @@ return function(C, R, UI)
                 if RF_Stop then
                     pcall(function() RF_Stop:FireServer(m) end)
                 end
-                task.delay(0.05, function() pcall(safeStopDrag, m) end)
-                task.delay(0.20, function() pcall(safeStopDrag, m) end)
-                task.delay(0.45, function() pcall(safeStopDrag, m) end)
+                scheduleStop(m, 0.05)
+                scheduleStop(m, 0.20)
+                scheduleStop(m, 0.45)
                 dragUntrack(m)
             end
             CapturedSet[m] = nil
@@ -910,6 +919,11 @@ return function(C, R, UI)
         table.clear(CapturedList)
         for k,_ in pairs(CapturedSet) do CapturedSet[k] = nil end
         for k,_ in pairs(CapturedSnaps) do CapturedSnaps[k] = nil end
+        if waitForStops then
+            while pendingStops > 0 do
+                RunService.Heartbeat:Wait()
+            end
+        end
     end
 
     local function chestOpened(chestModel)
@@ -2177,6 +2191,46 @@ return function(C, R, UI)
         C.State.Toggles.GrabNearby = false
     end
 
+    local dropInProgress = false
+    local function dropCapturedWithRefresh()
+        if dropInProgress then return end
+        dropInProgress = true
+        local ok, err = pcall(function()
+            stopGrabNearby()
+
+            -- Keep the original batch: a nearby scan could collect unrelated items.
+            local droppedItems = table.create(#CapturedList)
+            for i = 1, #CapturedList do
+                droppedItems[i] = CapturedList[i]
+            end
+
+            -- Finish every delayed release before starting a new drag session.
+            releaseAllCaptured(true)
+            if not alive or #droppedItems == 0 then return end
+
+            for i = 1, #droppedItems do
+                if not alive then break end
+                local inst = droppedItems[i]
+                if inst and inst.Parent then
+                    -- Match Grab Nearby: hover the item instead of taking/equipping it.
+                    local capturedOk, captureErr = pcall(captureInst, inst, true)
+                    if not capturedOk then
+                        warn("[Extra] Item re-grab failed: " .. tostring(captureErr))
+                    end
+                end
+            end
+
+            if alive and #CapturedList > 0 then
+                task.wait(Tuning.DropRecaptureSettleWait)
+            end
+            releaseAllCaptured(true)
+        end)
+        dropInProgress = false
+        if not ok then
+            warn("[Extra] Drop/re-grab cycle failed: " .. tostring(err))
+        end
+    end
+
     local itemSearchOn = false
     local itemSearchLoop = nil
 
@@ -2416,8 +2470,7 @@ return function(C, R, UI)
     ExtraTab:Button({
         Title = "Drop All Captured Items",
         Callback = function()
-            stopGrabNearby()
-            releaseAllCaptured()
+            dropCapturedWithRefresh()
         end
     })
 
