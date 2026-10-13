@@ -643,6 +643,7 @@ return function(C, R, UI)
             ["Small Tree"] = true,
             ["Dead Tree1"] = true,
             ["Dead Tree2"] = true,
+            ["Dead Tree3"] = true,
             ["Snowy Small Tree"] = true,
             ["Small Webbed Tree"] = true,
             ["Christmas Pine"] = true,
